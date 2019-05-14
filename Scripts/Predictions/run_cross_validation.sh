@@ -21,4 +21,4 @@ module load R/3.5.0
 # Rscript cross_validation_cv2.R
 
 ## Parent-offspring validation
-# Rscript parent_offspring_validation.R
+Rscript parent_offspring_validation.R
