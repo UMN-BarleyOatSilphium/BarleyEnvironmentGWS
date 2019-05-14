@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # #PBS -l walltime=24:00:00,mem=62gb,nodes=1:ppn=24
-#PBS -l walltime=24:00:00,mem=64gb,nodes=1:ppn=24
-# #PBS -N cross-validation-CV12
-#PBS -N cross-validation-CVzeroLOEO
+#PBS -l walltime=24:00:00,mem=64gb,nodes=1:ppn=8
+# #PBS -N cross-validation-cv1
+# #PBS -N cross-validation-cv2
 # #PBS -N parent_offspring_validation
 #PBS -M neyha001@umn.edu
 #PBS -m abe
@@ -18,9 +18,7 @@ module load R/3.5.0
 # Cross validation
 # Rscript cross_validation_cv1.R
 
-Rscript cross_validation_CVzero_loeo.R
-
-# Rscript cross_validation_CVzero_future.R
+# Rscript cross_validation_cv2.R
 
 ## Parent-offspring validation
 # Rscript parent_offspring_validation.R
