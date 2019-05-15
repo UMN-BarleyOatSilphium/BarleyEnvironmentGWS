@@ -45,18 +45,18 @@ cv_data <- S2_MET_BLUEs %>%
          environment %in% tp_vp_env) %>%
   mutate(id = seq(nrow(.)))
 
-## Sample data
-set.seed(1512)
-sample_env <- cv_data %>% 
-  distinct(trait, environment) %>% 
-  group_by(environment) %>% 
-  filter(n() == 3) %>% 
-  distinct(environment) %>% 
-  pull() %>% 
-  sample(5)
+# ## Sample data
+# set.seed(1512)
+# sample_env <- cv_data %>% 
+#   distinct(trait, environment) %>% 
+#   group_by(environment) %>% 
+#   filter(n() == 3) %>% 
+#   distinct(environment) %>% 
+#   pull() %>% 
+#   sample(5)
 
 cv_data <- cv_data %>% 
-  filter(environment %in% sample_env) %>%
+  # filter(environment %in% sample_env) %>%
   droplevels() %>%
   mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno)))
 
