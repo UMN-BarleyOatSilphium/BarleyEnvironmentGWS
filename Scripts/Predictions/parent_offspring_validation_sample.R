@@ -35,6 +35,8 @@ n_core <- 8
 load(file.path(alt_proj_dir, "Results/distance_method_results.RData"))
 
 
+## Number of sample environments
+n_env_sample <- 10
 
 
 
@@ -56,7 +58,7 @@ sample_env <- pov_data %>%
   filter(n() == 3) %>%
   distinct(environment) %>%
   pull() %>%
-  sample(5)
+  sample(n_env_sample)
 
 pov_data_use <- pov_data %>% 
   filter(environment %in% sample_env) %>%
