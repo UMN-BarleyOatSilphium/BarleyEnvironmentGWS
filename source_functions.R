@@ -227,6 +227,55 @@ model2 <- function(train, test, Kg) {
 
 
 
+# Model 3 - fixed, environment, random genotype, random GxE with environmental covariance
+model3 <- function(train, test, Kg, Ke) {
+  
+  mf <- train %>%
+    mutate(environment = factor(environment, levels = unique(c(unique(train$environment), unique(test$environment))))) %>%
+    model.frame(value ~ line_name + environment, data = .)
+  
+  # Matrices
+  y <- model.response(mf)
+  X <- model.matrix(~ 1 + environment, data = droplevels(mf))
+  Zg <- model.matrix(~ -1 + line_name, mf)
+  colnames(Zg) <- colnames(Kg)
+  Ze <- model.matrix(~ -1 + environment, mf)
+  Zge <- model.matrix(~ -1 + line_name:environment, mf)
+  
+  ## Covariance matrix for GE
+  Kge <- kronecker(Ke, Kg, make.dimnames = TRUE)
+  colnames(Zge) <- colnames(Kge)
+  
+  # Fit
+  fit <- sommer::mmer(Y = y, X = X, Z = list(g = list(Z = Zg, K = Kg), ge = list(Z = Zge, K = Kge)), silent = TRUE)
+  
+  
+  # Extract PGVs
+  g <- fit$u.hat$g %>%
+    as.data.frame() %>%
+    rownames_to_column("line_name") %>%
+    rename(g = T1)
+  
+  ge <- fit$u.hat$ge %>% 
+    as.data.frame() %>%
+    rownames_to_column("term") %>%
+    separate(col = term, c("environment", "line_name"), sep = ":") %>%
+    rename(ge = T1)
+  
+  pgv <- full_join(g, ge, by = "line_name") %>% 
+    mutate(pred_value = g + ge)
+  
+  ## Measure accuracy
+  # Combine the PGVs with the phenotypic observations and calculate accuracy
+  comb <- left_join(test, pgv, by = c("environment", "line_name")) %>%
+    select(environment, line_name, value, pred_value)
+  acc <- cor(comb$value, comb$pred_value)
+  
+  # Return a list
+  list(accuracy = acc, pgv = comb)
+  
+}
+
 
 
   
