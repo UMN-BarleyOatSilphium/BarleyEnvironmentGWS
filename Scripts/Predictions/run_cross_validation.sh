@@ -24,4 +24,4 @@ module load R/3.5.0
 ## Parent-offspring validation
 # Rscript parent_offspring_validation.R
 
-Rscript parent_offspring_validation_sample.R
+Rscript prediction_validation_sample.R
