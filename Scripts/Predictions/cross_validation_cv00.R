@@ -26,7 +26,7 @@ library(modelr)
 
 ## Number of cores
 n_core <- detectCores()
-n_core <- 8
+n_core <- 16
 
 ## Number of folds
 k <- 5
