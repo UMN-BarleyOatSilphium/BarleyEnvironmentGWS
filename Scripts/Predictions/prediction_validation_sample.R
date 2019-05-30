@@ -29,6 +29,9 @@ library(modelr)
 n_core <- detectCores()
 n_core <- 8
 
+## Number of CV folds and reps
+nCV <- 25
+k <- 5
 
 
 ## Load the distance methods
@@ -220,6 +223,10 @@ pov1_predictions <- pov1_train_test %>%
   })
 
 
+
+## Data.frame of TP lines for generating CV folds
+cv_tp_df <- data.frame(line_name = factor(tp_geno, levels = c(tp_geno, vp_geno)))
+vp_df <- data_frame(line_name = vp_geno)
 
 
 ## CV00 - predict the untested TP (and VP) in untest tested environments
