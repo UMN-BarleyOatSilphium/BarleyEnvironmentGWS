@@ -267,8 +267,8 @@ cv00_predictions <- cv00_train_test %>%
     df <- .
     
     ## List of training sets
-    train_list <- map(df$train, ~left_join(., cv_data, by = c("environment", "line_name", "trait")))
-    test_list <- map(df$test, ~left_join(., cv_data, by = c("environment", "line_name", "trait")))
+    train_list <- map(df$train, ~left_join(., cv_data_use, by = c("environment", "line_name", "trait")))
+    test_list <- map(df$test, ~left_join(., cv_data_use, by = c("environment", "line_name", "trait")))
     
     ## Model 1 - fixed environment, random genotypic main effect
     m1_out_list <- map2(.x = train_list, .y = test_list, ~model1(train = .x, test = .y, Kg = K))
