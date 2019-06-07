@@ -29,9 +29,11 @@ library(modelr)
 n_core <- detectCores()
 n_core <- 8
 
-## Number of CV folds and reps
+## Number of CV replicates and proportions
 nCV <- 25
-k <- 5
+# k <- 5
+pTrain <- 0.80
+pTest <- 1 - pTrain
 
 
 ## Load the distance methods
@@ -39,7 +41,7 @@ load(file.path(alt_proj_dir, "Results/distance_method_results.RData"))
 
 
 ## Number of sample environments
-n_env_sample <- 8
+n_env_sample <- 10
 
 
 
@@ -93,23 +95,24 @@ E_mats_use <- env_rank_df %>%
 ## POV00 - prediction of the validation population in untested environments
 ## Leave-one-environment-out
 
+
 # Generate skeleton train/test sets
 pov00_train_test <- pov_data_use %>%
-  group_by(trait, environment) %>%
+  group_by(trait) %>%
   do({
     df <- .
     
-    ## The training set is just the TP and not the environment in df
-    train <- distinct(pov_data_use, trait, line_name, environment) %>% 
-      filter(line_name %in% tp_geno, environment != unique(df$environment), trait == unique(df$trait))
-    ## The test set is just the VP and ONLY the environment in df
-    test <- distinct(pov_data_use, trait, line_name, environment) %>% 
-      filter(line_name %in% vp_geno, environment == unique(df$environment), trait == unique(df$trait))
+    all_env_df <- distinct(df, environment)
+    df1 <- distinct(df, trait, line_name, environment, value)
+    # Partition environments
+    partition_envs <- tibble(.id = seq(nCV), train = replicate(n = nCV, sample_frac(tbl = all_env_df, size = pTrain), simplify = FALSE)) %>%
+      mutate(test = map(train, ~setdiff(all_env_df, .)))
     
-    data_frame(val_environment = unique(df$environment), train = list(train), test = list(test))
+    partition_envs %>%
+      mutate(train = map(train, ~left_join(., subset(df1, line_name %in% tp_geno), by = "environment")),
+             test = map(test, ~left_join(., subset(df1, line_name %in% vp_geno), by = "environment")))
     
-  }) %>% ungroup() %>%
-  select(-environment)
+  }) %>% ungroup()
 
 
 ## Iterate over trait-environment combinations
@@ -124,8 +127,8 @@ pov00_predictions <- pov00_train_test %>%
     for (i in seq_along(out)) {
       
       row <- core_df[i,]
-      train <- left_join(row$train[[1]], pov_data_use, by = c("environment", "line_name", "trait"))
-      test <- left_join(row$test[[1]], pov_data_use, by = c("environment", "line_name", "trait"))
+      train <- row$train[[1]]
+      test <- row$test[[1]]
       
       ## Model 1 - fixed environment, random genotypic main effect
       m1_out <- model1(train = train, test = test, Kg = K)
@@ -136,7 +139,7 @@ pov00_predictions <- pov00_train_test %>%
       E_mat1 <- subset(E_mats_use, trait == row$trait & model == "pheno_dist", cov, drop = T)[[1]]
       Ke <- E_mat1[unique(c(train$environment, test$environment)), unique(c(train$environment, test$environment))]
       
-      ## Environments to exnclude in the relationship matrix (unobserved)
+      ## Environments to exclude in the relationship matrix (unobserved)
       env_rm <- setdiff(unique(test$environment), unique(train$environment))
       env_keep <- setdiff(unique(train$environment), unique(test$environment))
       Ke_use <- as.matrix(.bdiag(lst = list(Ke[env_keep, env_keep], diag(length(env_rm)))))
@@ -150,10 +153,14 @@ pov00_predictions <- pov00_train_test %>%
       
       m3b_out <- model3(train = train, test = test, Kg = K, Ke = Ke_use)
       
+      ## List of accuracy
+      accuracy_list <- list(m1_out, m2_out, m3a_out, m3b_out) %>%
+        map("pgv") %>%
+        map(~group_by(., environment) %>% summarize(accuracy = cor(value, pred_value)))
+      
       
       ## Add accuracy to out
-      out[[i]] <- data.frame(model = c("M1", "M2", "M3A", "M3B"), scheme = "pov00", 
-                             accuracy = c(m1_out$accuracy, m2_out$accuracy, m3a_out$accuracy, m3b_out$accuracy))
+      out[[i]] <- tibble(model = c("M1", "M2", "M3A", "M3B"), scheme = "pov00", accuracy = accuracy_list) %>% unnest()
       
     }
     
@@ -163,6 +170,8 @@ pov00_predictions <- pov00_train_test %>%
       unnest(out)
     
   }) %>% bind_rows()
+
+
 
 
 ## POV1 - predict the untested VP in tested environments
@@ -236,24 +245,25 @@ cv00_train_test <- cv_data_use %>%
   do({
     df <- .
     
-    ## All environments
-    trait_env <- unique(df$environment)
-    df1 <- distinct(df, line_name, trait, environment)
+    all_env_df <- distinct(df, environment)
     
-    ## Generate 25 randomizations per environment
-    map(trait_env, ~{
-      env <- .
-      df_train <- subset(df1, environment != env)
-      df_test <- subset(df1, environment == env)
-      
-      replicate(n = nCV, expr = crossv_kfold(data = cv_tp_df, k = k), simplify = FALSE) %>% 
-        map2_df(.x = ., .y = seq_along(.), ~mutate(.x, rep = .y)) %>%
-        mutate_at(vars(train, test), ~map(., as.data.frame)) %>%
-        mutate(test = map(test, ~bind_rows(., vp_df))) %>%
-        mutate(train = map(train, ~left_join(., df_train, by = "line_name")),
-               test = map(test, ~left_join(., df_test, by = "line_name")))
-    }) %>%
-      map2_df(.x = ., .y = trait_env, ~mutate(.x, environment = .y))
+    df1 <- distinct(df, trait, line_name, environment, value)
+    
+    # Partition environments
+    partition_envs <- tibble(.id = seq(nCV), train = replicate(n = nCV, sample_frac(tbl = all_env_df, size = pTrain), simplify = FALSE)) %>%
+      mutate(test = map(train, ~setdiff(all_env_df, .)))
+    # Partition genotypes
+    partition_genos <- tibble(.id = seq(nCV), train = replicate(n = nCV, sample_frac(tbl = cv_tp_df, size = pTrain), simplify = FALSE)) %>%
+      mutate(test = map(train, ~setdiff(cv_tp_df, .) %>% bind_rows(., vp_df)))
+    
+    ## Merge
+    partitions <- partition_envs
+    partitions$train <- map2(partition_envs$train, partition_genos$train, crossing)
+    partitions$test <- map2(partition_envs$test, partition_genos$test, crossing)
+    
+    partitions %>%
+      mutate(train = map(train, ~inner_join(., df1, by = c("line_name", "environment"))),
+             test = map(test, ~inner_join(., df1, by = c("line_name", "environment"))))
     
   }) %>% ungroup()
 
@@ -261,75 +271,78 @@ cv00_train_test <- cv_data_use %>%
 
 ## Iterate over trait-environment combinations
 cv00_predictions <- cv00_train_test %>%
-  group_by(trait, environment, rep) %>%
-  do({
+  assign_cores(n_core = n_core) %>%
+  split(.$core) %>%
+  mclapply(X = ., mc.cores = n_core, FUN = function(core_df) {
     
-    df <- .
+    # Empty list for results
+    out <- vector("list", nrow(core_df))
+    for (i in seq_along(out)) {
+      
+      row <- core_df[i,]
     
-    ## List of training sets
-    train_list <- map(df$train, ~left_join(., cv_data_use, by = c("environment", "line_name", "trait")))
-    test_list <- map(df$test, ~left_join(., cv_data_use, by = c("environment", "line_name", "trait")))
+      train <- row$train[[1]]
+      test <- row$test[[1]]
+      
+      ## Model 1 - fixed environment, random genotypic main effect
+      m1_out <- model1(train = train, test = test, Kg = K)
+      ## Model 2 - fixed environment, random genotypic main effect, and random GxE (identity)
+      m2_out <- model2(train = train, test = test, Kg = K)
+      
+      ## Model 3a - fixed environment, random genotypic main effect, and random GxE (correlation)
+      E_mat1 <- subset(E_mats_use, trait == row$trait & model == "pheno_dist", cov, drop = T)[[1]]
+      Ke <- E_mat1[unique(c(train$environment, test$environment)), unique(c(train$environment, test$environment))]
+      
+      ## Environments to exclude in the relationship matrix (unobserved)
+      env_rm <- setdiff(unique(test$environment), unique(train$environment))
+      env_keep <- setdiff(unique(train$environment), unique(test$environment))
+      Ke_use <- as.matrix(.bdiag(lst = list(Ke[env_keep, env_keep], diag(length(env_rm)))))
+      dimnames(Ke_use) <- dimnames(Ke)
+      
+      m3a_out <- model3(train = train, test = test, Kg = K, Ke = Ke_use)
+      
+      ## Model 3b - fixed environment, random genotypic main effect, and random GxE (ECs)
+      E_mat1 <- subset(E_mats_use, trait == row$trait & model == "MYEC_IPCA", cov, drop = T)[[1]]
+      Ke_use <- E_mat1[unique(c(train$environment, test$environment)), unique(c(train$environment, test$environment))]
+      
+      m3b_out <- model3(train = train, test = test, Kg = K, Ke = Ke_use)
+      
+      ## Calculate accuracy
+      accuracy_list <- list(m1_out, m2_out, m3a_out, m3b_out) %>%
+        map("pgv") %>%
+        map(~mutate(., scheme = ifelse(line_name %in% tp_geno, "cv00", "pocv00")) %>% 
+              group_by(., environment, scheme) %>% summarize(accuracy = cor(value, pred_value)))
+      
+      out[[i]] <- tibble(model = c("M1", "M2", "M3A", "M3B"), accuracy = accuracy_list) %>% unnest()
+      
+    }
     
-    ## Model 1 - fixed environment, random genotypic main effect
-    m1_out_list <- map2(.x = train_list, .y = test_list, ~model1(train = .x, test = .y, Kg = K))
-    ## Model 2 - fixed environment, random genotypic main effect, random GxE
-    m2_out_list <- map2(.x = train_list, .y = test_list, ~model2(train = .x, test = .y, Kg = K))
-    
-    ## Model 3a - fixed environment, random genotypic main effect, and random GxE (correlation)
-    E_mat1 <- subset(E_mats_use, trait == df$trait[[1]] & model == "pheno_dist", cov, drop = T)[[1]]
-    # List of environments
-    env_use <- na.omit(c(unique(df$train[[1]]$environment), unique(df$test[[1]]$environment)))
-    Ke_use <- E_mat1[env_use, env_use]
-    
-    m3a_out_list <- map2(.x = train_list, .y = test_list, ~model3(train = .x, test = .y, Kg = K, Ke = Ke_use))
-    
-    ## Model 3b - fixed environment, random genotypic main effect, and random GxE (ECs)
-    E_mat1 <- subset(E_mats_use, trait == df$trait[[1]] & model == "MYEC_IPCA", cov, drop = T)[[1]]
-    Ke_use <- E_mat1[env_use, env_use]
-    
-    m3b_out_list <- map2(.x = train_list, .y = test_list, ~model3(train = .x, test = .y, Kg = K, Ke = Ke_use))
-    
-    ## CV accuracy
-    cv_acc <- list(M1 = m1_out_list, M2 = m2_out_list, M3A = m3a_out_list, M3B = m3b_out_list) %>%
-      map(~map_df(., "pgv")) %>%
-      map(~filter(., line_name %in% tp_geno, !is.na(value))) %>%
-      map2_df(.x = ., .y = names(.), ~mutate(.x, model = .y)) %>%
-      group_by(model, environment) %>%
-      summarize(accuracy = cor(value, pred_value)) %>%
-      ungroup() %>%
-      mutate(scheme = "cv00")
-    
-    ## POCV accuracy
-    pocv_acc <- list(M1 = m1_out_list, M2 = m2_out_list, M3A = m3a_out_list, M3B = m3b_out_list) %>%
-      map(~map(., "pgv") %>% map_df(., ~filter(., line_name %in% vp_geno, !is.na(value)) %>% summarize(accuracy = cor(value, pred_value)))) %>%
-      map2_df(.x = ., .y = names(.), ~mutate(.x, model = .y)) %>%
-      group_by(model) %>%
-      summarize(accuracy = mean(accuracy)) %>%
-      ungroup() %>%
-      mutate(scheme = "pocv00")
-    
-    bind_rows(cv_acc, pocv_acc) %>%
-      mutate(environment = df$environment[1])
+    core_df %>% 
+      mutate(out = out) %>% 
+      select(-train, -test, -core) %>%
+      unnest()
+      
     
   }) %>% bind_rows()
 
 
 
 
-## CV00 - predict the test TP (and VP) in test environments
+## CV0 - predict the tested TP (and VP) in untested environments
 # Generate skeleton train/test sets
 cv0_train_test <- cv_data_use %>%
   group_by(trait) %>%
   do({
     df <- .
     
-    ## All environments
-    trait_env <- unique(df$environment)
-    df1 <- distinct(df, line_name, trait, environment)
+    all_env_df <- distinct(df, environment)
+    df1 <- distinct(df, trait, line_name, environment, value)
     
-    tibble(environment = trait_env) %>%
-      mutate(train = map(environment, ~subset(df1, environment != .)),
-             test = map(environment, ~subset(df1, environment == .)))
+    # Partition environments
+    # Then assign phenotype data to the paritions
+    tibble(.id = seq(nCV), train = replicate(n = nCV, sample_frac(tbl = all_env_df, size = pTrain), simplify = FALSE)) %>%
+      mutate(test = map(train, ~setdiff(all_env_df, .))) %>%
+      mutate_at(vars(train, test), ~map(., ~inner_join(., df1, by = c("environment"))))
     
   }) %>% ungroup()
 
@@ -337,43 +350,60 @@ cv0_train_test <- cv_data_use %>%
 
 ## Iterate over trait-environment combinations
 cv0_predictions <- cv0_train_test %>%
-  group_by(trait, environment) %>%
-  do({
+  assign_cores(n_core = n_core) %>%
+  split(.$core) %>%
+  mclapply(X = ., mc.cores = n_core, FUN = function(core_df) {
     
-    row <- .
+    # Empty list for results
+    out <- vector("list", nrow(core_df))
+    for (i in seq_along(out)) {
+      
+      row <- core_df[i,]
+      
+      train <- row$train[[1]]
+      test <- row$test[[1]]
+      
+      ## Model 1 - fixed environment, random genotypic main effect
+      m1_out <- model1(train = train, test = test, Kg = K)
+      ## Model 2 - fixed environment, random genotypic main effect, and random GxE (identity)
+      m2_out <- model2(train = train, test = test, Kg = K)
+      
+      ## Model 3a - fixed environment, random genotypic main effect, and random GxE (correlation)
+      E_mat1 <- subset(E_mats_use, trait == row$trait & model == "pheno_dist", cov, drop = T)[[1]]
+      Ke <- E_mat1[unique(c(train$environment, test$environment)), unique(c(train$environment, test$environment))]
+      
+      ## Environments to exclude in the relationship matrix (unobserved)
+      env_rm <- setdiff(unique(test$environment), unique(train$environment))
+      env_keep <- setdiff(unique(train$environment), unique(test$environment))
+      Ke_use <- as.matrix(.bdiag(lst = list(Ke[env_keep, env_keep], diag(length(env_rm)))))
+      dimnames(Ke_use) <- dimnames(Ke)
+      
+      m3a_out <- model3(train = train, test = test, Kg = K, Ke = Ke_use)
+      
+      ## Model 3b - fixed environment, random genotypic main effect, and random GxE (ECs)
+      E_mat1 <- subset(E_mats_use, trait == row$trait & model == "MYEC_IPCA", cov, drop = T)[[1]]
+      Ke_use <- E_mat1[unique(c(train$environment, test$environment)), unique(c(train$environment, test$environment))]
+      
+      m3b_out <- model3(train = train, test = test, Kg = K, Ke = Ke_use)
+      
+      ## Calculate accuracy
+      accuracy_list <- list(m1_out, m2_out, m3a_out, m3b_out) %>%
+        map("pgv") %>%
+        map(~mutate(., scheme = ifelse(line_name %in% tp_geno, "cv00", "pocv00")) %>% 
+              group_by(., environment, scheme) %>% summarize(accuracy = cor(value, pred_value)))
+      
+      out[[i]] <- tibble(model = c("M1", "M2", "M3A", "M3B"), accuracy = accuracy_list) %>% unnest()
+      
+    }
     
-    train <- left_join(row$train[[1]], pov_data_use, by = c("environment", "line_name", "trait"))
-    test <- left_join(row$test[[1]], pov_data_use, by = c("environment", "line_name", "trait"))
+    core_df %>% 
+      mutate(out = out) %>% 
+      select(-train, -test, -core) %>%
+      unnest()
     
-    ## Model 1 - fixed environment, random genotypic main effect
-    m1_out <- model1(train = train, test = test, Kg = K)
-    ## Model 2 - fixed environment, random genotypic main effect, random GxE
-    m2_out <- model2(train = train, test = test, Kg = K)
-    
-    ## Model 3a - fixed environment, random genotypic main effect, and random GxE (correlation)
-    E_mat1 <- subset(E_mats_use, trait == row$trait & model == "pheno_dist", cov, drop = T)[[1]]
-    # List of environments
-    env_use <- na.omit(c(unique(row$train[[1]]$environment), unique(row$test[[1]]$environment)))
-    Ke_use <- E_mat1[env_use, env_use]
-    
-    m3a_out <- model3(train = train, test = test, Kg = K, Ke = Ke_use)
-    
-    ## Model 3b - fixed environment, random genotypic main effect, and random GxE (ECs)
-    E_mat1 <- subset(E_mats_use, trait == row$trait & model == "MYEC_IPCA", cov, drop = T)[[1]]
-    Ke_use <- E_mat1[env_use, env_use]
-    
-    m3b_out <- model3(train = train, test = test, Kg = K, Ke = Ke_use)
-    
-    ## Combine and calculate accuracy per model and environment
-    list(M1 = m1_out, M2 = m2_out, M3A = m3a_out, M3B = m3b_out) %>%
-      map("pgv") %>%
-      map2_df(.x = ., .y = names(.), ~mutate(.x, model = .y)) %>%
-      mutate(scheme = ifelse(line_name %in% tp_geno, "cv00", "pocv00")) %>%
-      group_by(model, environment, scheme) %>%
-      summarize(accuracy = cor(value, pred_value)) %>%
-      ungroup()
     
   }) %>% bind_rows()
+
 
 
 
