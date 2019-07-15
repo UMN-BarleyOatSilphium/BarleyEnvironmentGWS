@@ -26,7 +26,7 @@ library(modelr)
 
 ## Number of cores
 n_core <- detectCores()
-n_core <- 8
+n_core <- 16
 
 ## Number of folds
 k <- 5
@@ -39,30 +39,24 @@ nCV <- 25
 
 # Data to use
 cv_data <- S2_MET_BLUEs %>% 
-  filter(environment %in% tp_vp_env) %>%
   filter(line_name %in% c(tp_geno, vp_geno),
          trait %in% traits,
          environment %in% tp_vp_env) %>%
-  mutate(id = seq(nrow(.)))
-
-# ## Sample data
-# set.seed(1512)
-# sample_env <- cv_data %>%
-#   distinct(trait, environment) %>%
-#   group_by(environment) %>%
-#   filter(n() == 3) %>%
-#   distinct(environment) %>%
-#   pull() %>%
-#   sample(5)
-
-cv_data <- cv_data %>% 
-  # filter(environment %in% sample_env) %>%
+  mutate(id = seq(nrow(.))) %>%
+  ## Sample environments
+  filter(environment %in% sample_env) %>%
+  ##
   droplevels() %>%
   mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno)))
 
+
 ## Data.frame of TP lines for generating CV folds
 cv_tp_df <- data.frame(line_name = factor(tp_geno, levels = c(tp_geno, vp_geno)))
-vp_df <- data_frame(line_name = vp_geno)
+vp_df <- tibble(line_name = vp_geno)
+
+
+
+
 
 
 ## CV1 - prediction of the training (and validation) population in tested environments
@@ -74,7 +68,7 @@ cv1_train_test <- cv_data %>%
     df <- .
     
     ## The training and test sets originate from the training population
-    cv_data_test <- distinct(cv_data, trait, line_name, environment) %>% 
+    cv_data_test <- distinct(cv_data, trait, line_name, environment, id) %>% 
       filter(trait == unique(df$trait))
     cv_data_train <- filter(cv_data_test, line_name %in% tp_geno)
     
@@ -83,8 +77,8 @@ cv1_train_test <- cv_data %>%
       map2_df(.x = ., .y = seq_along(.), ~mutate(.x, rep = .y)) %>%
       mutate_at(vars(train, test), ~map(., as.data.frame)) %>%
       mutate(test = map(test, ~bind_rows(., vp_df))) %>%
-      mutate(train = map(train, ~left_join(., cv_data_train, by = "line_name")),
-             test = map(test, ~left_join(., cv_data_test, by = "line_name")))
+      mutate(train = map(train, ~left_join(., cv_data_train, by = "line_name")["id"]),
+             test = map(test, ~left_join(., cv_data_test, by = "line_name")["id"]))
     
   }) %>% ungroup()
 
@@ -104,8 +98,8 @@ cv1_predictions <- cv1_train_test %>%
       df <- core_df[[3]][[i]]
       
       ## List of training sets
-      train_list <- map(df$train, ~left_join(., cv_data, by = c("environment", "line_name", "trait")))
-      test_list <- map(df$test, ~left_join(., cv_data, by = c("environment", "line_name", "trait")))
+      train_list <- map(df$train, ~left_join(., cv_data, by = "id"))
+      test_list <- map(df$test, ~left_join(., cv_data, by = "id"))
     
       ## Model 1 - fixed environment, random genotypic main effect
       m1_out_list <- map2(.x = train_list, .y = test_list, ~model1(train = .x, test = .y, Kg = K))

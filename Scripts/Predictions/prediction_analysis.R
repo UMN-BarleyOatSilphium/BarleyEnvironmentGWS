@@ -451,69 +451,267 @@ ggsave(filename = "all_accuracy_analysis.jpg", plot = g_all_validation, path = f
 
 
 
-#### Sample results
-## Load the validation results
-file_list <- list.files(result_dir, "results_sample.RData$", full.names = TRUE)
-object_list <- unlist(lapply(file_list, load, envir = .GlobalEnv))
 
 
-pov00_predictions <- rename(pov00_predictions, environment = val_environment)
-
-results_df <- map(object_list, get) %>%
-  map_df(ungroup) %>%
-  select(-core) %>%
-  mutate(scheme_number = str_extract(scheme, "[0-9]{1,2}")) %>%
-  mutate_at(vars(model, scheme), as.factor)
 
 
-## 
-## Fit a model for POV
-## 
-## 
 
 
-pov_analysis <- results_df %>% 
-  mutate(zscore = ztrans(accuracy)) %>%
-  group_by(trait, scheme) %>%
-  nest() %>%
-  mutate(out = list(NULL))
-
-for (i in seq(nrow(pov_analysis))) {
-  
-  df <- pov_analysis$data[[i]]
-  
-  # Fit a model
-  fit <- lmer(zscore ~ model + (1|environment), data = df)
-  
-  ## Rescale accuracy and return
-  pov_analysis$out[[i]] <- data_frame(
-    model = list(fit),
-    effects = list(Effect(fit, focal.predictors = "model") %>% as.data.frame() %>% mutate_at(vars(-model), zexp)),
-    ranova = list(tidy(ranova(fit))),
-    anova = list(tidy(anova(fit)))
-  )
-  
-}
-
-pov_analysis1 <- unnest(pov_analysis, out)
-
-## Plot
-g_pov <- pov_analysis1 %>% 
-  unnest(effects) %>%
-  # mutate(model = str_replace_all(model, model_replace),
-  #        model = factor(model, levels = model_replace)) %>%
-  ggplot(aes(x = scheme, y = fit, ymax = upper, ymin = lower, color = model, group = model)) +
-  geom_errorbar(color = "black", position = position_dodge(0.7), width = 0.5) +
-  geom_point(position = position_dodge(0.7), size = 3) +
-  # facet_grid(trait ~ scheme_number, scales = "free_x") +
-  facet_grid(~ trait, scales = "free_x", labeller = labeller(trait = str_add_space)) +
-  scale_y_continuous(name = "Predicton accuracy", breaks = pretty) +
-  scale_x_discrete(name = "Validation scheme", labels = toupper) +
-  scale_color_discrete(name = "Model") +
-  theme_presentation2() +
-  theme(legend.position = "bottom")
 
 
+
+
+
+
+
+
+
+
+# #### Sample results
+# ## Load the validation results
+# file_list <- list.files(result_dir, "results_sample.RData$", full.names = TRUE)
+# object_list <- unlist(lapply(file_list, load, envir = .GlobalEnv))
+# # Rename
+# invisible(map(object_list, ~assign(x = paste0(., "_sample"), value = get(.), envir = .GlobalEnv)))
+# object_list <- ls(pattern = "predictions_sample$")
+# 
+# ## Fix cv0
+# cv0_predictions_sample <- mutate(cv0_predictions_sample, scheme = str_replace(scheme, "00", "0"))
+# 
+# 
+# results_df <- map(object_list, get) %>%
+#   map_df(ungroup) %>%
+#   select(-core) %>%
+#   rename(rep = .id) %>%
+#   mutate(scheme_number = str_extract(scheme, "[0-9]{1,2}")) %>%
+#   mutate_at(vars(model, scheme, rep), as.factor)
+# 
+# 
+# ## 
+# ## Fit models
+# ## 
+# ## 
+# 
+# 
+# ## POV00
+# ## 
+# ## 
+# 
+# pov00_analysis_sample <- results_df %>% 
+#   filter(scheme == "pov00") %>%
+#   mutate(zscore = ztrans(accuracy)) %>%
+#   group_by(trait, scheme) %>%
+#   nest() %>%
+#   mutate(out = list(NULL))
+# 
+# for (i in seq(nrow(pov00_analysis_sample))) {
+#   
+#   df <- pov00_analysis_sample$data[[i]]
+#   
+#   # Fit a model
+#   fit <- lmer(zscore ~ model + (1|environment:rep), data = df)
+#   
+#   ## Rescale accuracy and return
+#   pov00_analysis_sample$out[[i]] <- data_frame(
+#     model = list(fit),
+#     effects = list(Effect(fit, focal.predictors = "model") %>% as.data.frame() %>% mutate_at(vars(-model), zexp)),
+#     ranova = list(tidy(ranova(fit))),
+#     anova = list(tidy(anova(fit)))
+#   )
+#   
+# }
+# 
+# pov00_analysis_sample1 <- unnest(pov00_analysis_sample, out)
+# 
+# ## Plot
+# g_pov <- pov00_analysis_sample1 %>% 
+#   unnest(effects) %>%
+#   # mutate(model = str_replace_all(model, model_replace),
+#   #        model = factor(model, levels = model_replace)) %>%
+#   ggplot(aes(x = scheme, y = fit, ymax = upper, ymin = lower, color = model, group = model)) +
+#   geom_errorbar(color = "black", position = position_dodge(0.7), width = 0.5) +
+#   geom_point(position = position_dodge(0.7), size = 3) +
+#   # facet_grid(trait ~ scheme_number, scales = "free_x") +
+#   facet_grid(~ trait, scales = "free_x", labeller = labeller(trait = str_add_space)) +
+#   scale_y_continuous(name = "Predicton accuracy", breaks = pretty) +
+#   scale_x_discrete(name = "Validation scheme", labels = toupper) +
+#   scale_color_discrete(name = "Model") +
+#   theme_presentation2() +
+#   theme(legend.position = "bottom")
+# 
+# 
+# 
+# 
+# ## POV1
+# ## 
+# ## 
+# 
+# pov1_analysis_sample <- results_df %>% 
+#   filter(scheme == "pov1") %>%
+#   mutate(zscore = ztrans(accuracy)) %>%
+#   group_by(trait, scheme) %>%
+#   nest() %>%
+#   mutate(out = list(NULL))
+# 
+# for (i in seq(nrow(pov1_analysis_sample))) {
+#   
+#   df <- pov1_analysis_sample$data[[i]]
+#   
+#   # Fit a model
+#   fit <- lmer(zscore ~ 1 + model + (1|environment), data = df)
+#   
+#   ## Rescale accuracy and return
+#   pov1_analysis_sample$out[[i]] <- data_frame(
+#     model = list(fit),
+#     effects = list(Effect(fit, focal.predictors = "model") %>% as.data.frame() %>% mutate_at(vars(-model), zexp)),
+#     ranova = list(tidy(ranova(fit))),
+#     anova = list(tidy(anova(fit)))
+#   )
+#   
+# }
+# 
+# pov1_analysis_sample1 <- unnest(pov1_analysis_sample, out)
+# 
+# ## Plot
+# g_pov1 <- pov1_analysis_sample1 %>% 
+#   unnest(effects) %>%
+#   # mutate(model = str_replace_all(model, model_replace),
+#   #        model = factor(model, levels = model_replace)) %>%
+#   ggplot(aes(x = scheme, y = fit, ymax = upper, ymin = lower, color = model, group = model)) +
+#   geom_errorbar(color = "black", position = position_dodge(0.7), width = 0.5) +
+#   geom_point(position = position_dodge(0.7), size = 3) +
+#   # facet_grid(trait ~ scheme_number, scales = "free_x") +
+#   facet_grid(~ trait, scales = "free_x", labeller = labeller(trait = str_add_space)) +
+#   scale_y_continuous(name = "Predicton accuracy", breaks = pretty) +
+#   scale_x_discrete(name = "Validation scheme", labels = toupper) +
+#   scale_color_discrete(name = "Model") +
+#   theme_presentation2() +
+#   theme(legend.position = "bottom")
+# 
+# 
+# 
+# ## CV00
+# ## 
+# ## 
+# 
+# cv00_analysis_sample <- results_df %>% 
+#   filter(scheme %in% c("cv00", "pocv00")) %>%
+#   mutate(zscore = ztrans(accuracy)) %>%
+#   group_by(trait, scheme) %>%
+#   nest() %>%
+#   mutate(out = list(NULL))
+# 
+# for (i in seq(nrow(cv00_analysis_sample))) {
+#   
+#   df <- cv00_analysis_sample$data[[i]]
+#   
+#   # Fit a model
+#   fit <- lmer(zscore ~ 1 + model + (1|environment:rep), data = df)
+#   
+#   ## Rescale accuracy and return
+#   cv00_analysis_sample$out[[i]] <- data_frame(
+#     model = list(fit),
+#     effects = list(Effect(fit, focal.predictors = "model") %>% as.data.frame() %>% mutate_at(vars(-model), zexp)),
+#     ranova = list(tidy(ranova(fit))),
+#     anova = list(tidy(anova(fit)))
+#   )
+#   
+# }
+# 
+# cv00_analysis_sample1 <- unnest(cv00_analysis_sample, out)
+# 
+# ## Plot
+# g_cv00 <- cv00_analysis_sample1 %>% 
+#   unnest(effects) %>%
+#   # mutate(model = str_replace_all(model, model_replace),
+#   #        model = factor(model, levels = model_replace)) %>%
+#   ggplot(aes(x = scheme, y = fit, ymax = upper, ymin = lower, color = model, group = model)) +
+#   geom_errorbar(color = "black", position = position_dodge(0.7), width = 0.5) +
+#   geom_point(position = position_dodge(0.7), size = 3) +
+#   # facet_grid(trait ~ scheme_number, scales = "free_x") +
+#   facet_grid(~ trait, scales = "free_x", labeller = labeller(trait = str_add_space)) +
+#   scale_y_continuous(name = "Predicton accuracy", breaks = pretty) +
+#   scale_x_discrete(name = "Validation scheme", labels = toupper) +
+#   scale_color_discrete(name = "Model") +
+#   theme_presentation2() +
+#   theme(legend.position = "bottom")
+# 
+# 
+# 
+# 
+# 
+# ## CV0
+# ## 
+# ## 
+# 
+# cv0_analysis_sample <- results_df %>% 
+#   filter(scheme %in% c("cv0", "pocv0")) %>%
+#   mutate(zscore = ztrans(accuracy)) %>%
+#   group_by(trait, scheme) %>%
+#   nest() %>%
+#   mutate(out = list(NULL))
+# 
+# for (i in seq(nrow(cv0_analysis_sample))) {
+#   
+#   df <- cv0_analysis_sample$data[[i]]
+#   
+#   # Fit a model
+#   fit <- lmer(zscore ~ 1 + model + (1|environment:rep), data = df)
+#   
+#   ## Rescale accuracy and return
+#   cv0_analysis_sample$out[[i]] <- data_frame(
+#     model = list(fit),
+#     effects = list(Effect(fit, focal.predictors = "model") %>% as.data.frame() %>% mutate_at(vars(-model), zexp)),
+#     ranova = list(tidy(ranova(fit))),
+#     anova = list(tidy(anova(fit)))
+#   )
+#   
+# }
+# 
+# cv0_analysis_sample1 <- unnest(cv0_analysis_sample, out)
+# 
+# ## Plot
+# g_cv0 <- cv0_analysis_sample1 %>% 
+#   unnest(effects) %>%
+#   # mutate(model = str_replace_all(model, model_replace),
+#   #        model = factor(model, levels = model_replace)) %>%
+#   ggplot(aes(x = scheme, y = fit, ymax = upper, ymin = lower, color = model, group = model)) +
+#   geom_errorbar(color = "black", position = position_dodge(0.7), width = 0.5) +
+#   geom_point(position = position_dodge(0.7), size = 3) +
+#   # facet_grid(trait ~ scheme_number, scales = "free_x") +
+#   facet_grid(~ trait, scales = "free_x", labeller = labeller(trait = str_add_space)) +
+#   scale_y_continuous(name = "Predicton accuracy", breaks = pretty) +
+#   scale_x_discrete(name = "Validation scheme", labels = toupper) +
+#   scale_color_discrete(name = "Model") +
+#   theme_presentation2() +
+#   theme(legend.position = "bottom")
+# 
+# 
+# 
+# ## Plot all
+# all_analyses_sample <- ls(pattern = "analysis_sample1") %>%
+#   subset(. != "cv2_analysis1") %>%
+#   map_df(get) %>%
+#   mutate(scheme_number = str_extract(scheme, "[0-9]{1,2}"))
+# 
+# 
+# g_all_validation <- all_analyses_sample %>% 
+#   unnest(effects) %>%
+#   # mutate(model = str_replace_all(model, model_replace),
+#   #        model = factor(model, levels = model_replace)) %>%
+#   ggplot(aes(x = scheme, y = fit, ymax = upper, ymin = lower, color = model, group = model)) +
+#   geom_errorbar(color = "black", position = position_dodge(0.7), width = 0.5) +
+#   geom_point(position = position_dodge(0.7), size = 2) +
+#   # facet_grid(trait ~ scheme_number, scales = "free_x") +
+#   facet_grid(trait ~ scheme_number, scales = "free_x", space = "free_x", labeller = labeller(trait = str_add_space)) +
+#   scale_y_continuous(name = "Predicton accuracy", breaks = pretty) +
+#   scale_x_discrete(name = "Validation scheme", labels = toupper) +
+#   scale_color_discrete(name = "Model") +
+#   theme_presentation2() +
+#   theme(legend.position = "bottom")
+# 
+# 
+# ggsave(filename = "all_accuracy_analysis_sample.jpg", plot = g_all_validation, path = fig_dir, width = 8, height = 6, dpi = 1000)
 
 
 
