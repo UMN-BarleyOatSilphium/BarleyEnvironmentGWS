@@ -6,7 +6,7 @@
 ## accuracy.
 ## 
 ## Author: Jeff Neyhart
-## Last modified: May 14, 2019
+## Last modified: 15 July 2019
 ## 
 
 
@@ -26,7 +26,7 @@ library(modelr)
 
 ## Number of cores
 n_core <- detectCores()
-n_core <- 8
+n_core <- 16
 
 ## Number of folds
 k <- 5
@@ -39,30 +39,24 @@ nCV <- 25
 
 # Data to use
 cv_data <- S2_MET_BLUEs %>% 
-  filter(environment %in% tp_vp_env) %>%
   filter(line_name %in% c(tp_geno, vp_geno),
          trait %in% traits,
          environment %in% tp_vp_env) %>%
-  mutate(id = seq(nrow(.)))
-
-# ## Sample data
-# set.seed(1512)
-# sample_env <- cv_data %>% 
-#   distinct(trait, environment) %>% 
-#   group_by(environment) %>% 
-#   filter(n() == 3) %>% 
-#   distinct(environment) %>% 
-#   pull() %>% 
-#   sample(5)
-
-cv_data <- cv_data %>% 
-  # filter(environment %in% sample_env) %>%
+  mutate(id = seq(nrow(.))) %>%
+  ## Sample environments
+  filter(environment %in% sample_env) %>%
+  ##
   droplevels() %>%
   mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno)))
 
+
 ## Data.frame of TP lines for generating CV folds
 cv_tp_df <- data.frame(line_name = factor(tp_geno, levels = c(tp_geno, vp_geno)))
-vp_df <- data_frame(line_name = vp_geno)
+vp_df <- tibble(line_name = vp_geno)
+
+
+
+
 
 
 ## CV2 - prediction of tested training population in tested environments
@@ -75,7 +69,7 @@ cv2_train_test <- cv_data %>%
     df <- .
     
     ## 
-    cv_data_train <- distinct(df, trait, line_name, environment) %>%
+    cv_data_train <- distinct(df, environment, id) %>%
       group_by(environment)
     
     ## Generate train/test folds per environment
@@ -84,7 +78,7 @@ cv2_train_test <- cv_data %>%
         ungroup() %>% 
         mutate_at(vars(train, test), ~map(., as.data.frame)) %>% 
         split(.$.id) %>% 
-        map_df(~do(., data_frame(train = list(bind_rows(.$train)), test = list(bind_rows(.$test)), .id = .$.id[1])))
+        map_df(~do(., tibble(train = list(bind_rows(.$train)), test = list(bind_rows(.$test)), .id = .$.id[1])))
     }, simplify = FALSE) %>%
       map2_df(.x = ., .y = seq_along(.), ~mutate(.x, rep = .y))
                          
@@ -93,11 +87,7 @@ cv2_train_test <- cv_data %>%
 
 
 
-# ## Iterate over trait-environment combinations
-# cv2_predictions <- cv2_train_test %>%
-#   group_by(trait, rep) %>%
-#   do({
-
+## Iterate over trait-environment combinations
 
 cv2_predictions <- cv2_train_test %>%
   group_by(trait, rep) %>% nest() %>%
@@ -112,8 +102,8 @@ cv2_predictions <- cv2_train_test %>%
       df <- core_df[[3]][[i]]
       
       ## List of training sets
-      train_list <- map(df$train, ~left_join(., cv_data, by = c("environment", "line_name", "trait")))
-      test_list <- map(df$test, ~left_join(., cv_data, by = c("environment", "line_name", "trait")))
+      train_list <- map(df$train, ~left_join(., cv_data, by = c("environment", "id")))
+      test_list <- map(df$test, ~left_join(., cv_data, by = c("environment", "id")))
       
       ## Model 1 - fixed environment, random genotypic main effect
       m1_out_list <- map2(.x = train_list, .y = test_list, ~model1(train = .x, test = .y, Kg = K))
@@ -149,106 +139,6 @@ cv2_predictions <- cv2_train_test %>%
     
   }) %>% bind_rows()
 
-
-
-## POCV2 - prediction of tested training population and validation population in tested environments
-
-# Generate skeleton train/test sets
-pocv2_train_test <- cv_data %>%
-  group_by(trait) %>%
-  do({
-    df <- .
-    
-    ## 
-    cv_data_train <- distinct(df, trait, line_name, environment) %>%
-      group_by(environment)
-    
-    ## Generate train/test folds per environment
-    replicate(n = nCV, expr = {
-      do(cv_data_train, crossv_kfold(data = ., k = k))  %>% 
-        ungroup() %>% 
-        mutate_at(vars(train, test), ~map(., as.data.frame)) %>% 
-        split(.$.id) %>% 
-        map_df(~do(., data_frame(train = list(bind_rows(.$train)), test = list(bind_rows(.$test)), .id = .$.id[1])))
-    }, simplify = FALSE) %>%
-      map2_df(.x = ., .y = seq_along(.), ~mutate(.x, rep = .y))
-    
-    
-  }) %>% ungroup()
-
-
-
-# ## Iterate over trait-environment combinations
-# cv2_predictions <- cv2_train_test %>%
-#   group_by(trait, rep) %>%
-#   do({
-
-
-pocv2_predictions <- pocv2_train_test %>%
-  group_by(trait, rep) %>% nest() %>%
-  assign_cores(n_core = n_core) %>%
-  split(.$core) %>%
-  mclapply(X = ., mc.cores = n_core, FUN = function(core_df) {
-    
-    ## List for accuracy
-    out <- vector("list", nrow(core_df))
-    for (i in seq_along(out)) {
-      
-      df <- core_df[[3]][[i]]
-      
-      ## List of training sets
-      train_list <- map(df$train, ~left_join(., cv_data, by = c("environment", "line_name", "trait")))
-      test_list <- map(df$test, ~left_join(., cv_data, by = c("environment", "line_name", "trait")))
-      
-      ## Model 1 - fixed environment, random genotypic main effect
-      m1_out_list <- map2(.x = train_list, .y = test_list, ~model1(train = .x, test = .y, Kg = K))
-      ## Model 2 - fixed environment, random genotypic main effect, random GxE
-      m2_out_list <- map2(.x = train_list, .y = test_list, ~model2(train = .x, test = .y, Kg = K))
-      
-      ## Combine, calculate accuracy across reps
-      m1_cv_acc <- m1_out_list %>%
-        map("pgv") %>%
-        map_df(~subset(., line_name %in% tp_geno)) %>%
-        group_by(environment) %>% 
-        summarize(accuracy = cor(value, pred_value)) %>%
-        mutate(scheme = "cv2", model = "M1")
-      
-      m1_pocv_acc <- m1_out_list %>%
-        map("pgv") %>%
-        map(~subset(., line_name %in% vp_geno)) %>%
-        map_df(~group_by(., environment) %>% summarize(M1 = cor(value, pred_value))) %>%
-        group_by(., environment) %>%
-        summarize(accuracy = mean(M1)) %>%
-        mutate(scheme = "pocv2", model = "M1")
-      
-      ## Combine, calculate accuracy across reps
-      m2_cv_acc <- m2_out_list %>%
-        map("pgv") %>%
-        map_df(~subset(., line_name %in% tp_geno)) %>%
-        group_by(environment) %>% 
-        summarize(accuracy = cor(value, pred_value)) %>%
-        mutate(scheme = "cv2", model = "M2")
-      
-      m2_pocv_acc <- m2_out_list %>%
-        map("pgv") %>%
-        map(~subset(., line_name %in% vp_geno)) %>%
-        map_df(~group_by(., environment) %>% summarize(M2 = cor(value, pred_value))) %>%
-        group_by(., environment) %>%
-        summarize(accuracy = mean(M2)) %>%
-        mutate(scheme = "pocv2", model = "M2")
-      
-      ## Combine and return
-      out[[i]] <- bind_rows(m1_cv_acc, m1_pocv_acc, m2_cv_acc, m2_pocv_acc)
-      
-    }
-    
-    ## Add out to the core_df and return
-    core_df %>%
-      select(-core) %>%
-      mutate(out = out) %>%
-      unnest(out)
-    
-  }) %>% bind_rows()
 
 
 

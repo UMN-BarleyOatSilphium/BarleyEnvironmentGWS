@@ -389,7 +389,7 @@ cv0_predictions <- cv0_train_test %>%
       ## Calculate accuracy
       accuracy_list <- list(m1_out, m2_out, m3a_out, m3b_out) %>%
         map("pgv") %>%
-        map(~mutate(., scheme = ifelse(line_name %in% tp_geno, "cv00", "pocv00")) %>% 
+        map(~mutate(., scheme = ifelse(line_name %in% tp_geno, "cv0", "pocv0")) %>% 
               group_by(., environment, scheme) %>% summarize(accuracy = cor(value, pred_value)))
       
       out[[i]] <- tibble(model = c("M1", "M2", "M3A", "M3B"), accuracy = accuracy_list) %>% unnest()
