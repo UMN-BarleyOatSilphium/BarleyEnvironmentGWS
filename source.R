@@ -203,6 +203,14 @@ cv_replace <- c("cv1", "pov1", "pocv1",  "cv2" , "pocv2", "cv0", "pov0", "pocv0"
   setNames(object = toupper(.), .)
 
 
+## Create codes for the scheme numbers (designate genotype/environment tested/untested)
+scheme_number_replace <- c("00" = "G^u~E^u", "0" = "G^t~E^u", "1" = "G^u~E^t", "2" = "G^t~E^t")
+
+
+
+
+
+
 
 ## Sample environments common to all traits
 ## Sample data

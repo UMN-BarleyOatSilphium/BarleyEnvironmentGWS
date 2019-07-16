@@ -31,6 +31,19 @@ alpha <- 0.05
 model_replace <- c("M1" = "M1 (Main effect)", "M2" = "M2 (GxE)")
 
 
+## For all dfs, add the heritability and calculate prediction accuracy
+for (obj in object_list) {
+  get(obj) %>%
+    left_join(., env_trait_herit,  by = c("trait", "environment")) %>%
+    mutate(ability = accuracy,
+           accuracy = ability / sqrt(heritability),
+           zscore = ztrans(accuracy),
+           model = as.factor(model)) %>%
+    assign(x = obj, value = ., envir = .GlobalEnv)
+}
+  
+
+
 # ## combine all data and assign the scheme number
 # pov00_predictions <- rename(pov00_predictions, environment = val_environment)
 # 
@@ -98,8 +111,6 @@ model_replace <- c("M1" = "M1 (Main effect)", "M2" = "M2 (GxE)")
 ## POV00
 ## 
 pov00_analysis <- pov00_predictions %>% 
-  rename(environment = val_environment) %>%
-  mutate(zscore = ztrans(accuracy)) %>%
   group_by(trait, scheme) %>%
   nest() %>%
   mutate(out = list(NULL))
@@ -109,10 +120,12 @@ for (i in seq(nrow(pov00_analysis))) {
   df <- pov00_analysis$data[[i]]
   
   # Fit a model
-  fit <- lmer(zscore ~ model + (1|environment), data = df)
+  # fit <- lmer(zscore ~ model + (1|environment), data = df)
+  fit <- lmer(accuracy ~ model + (1|environment), data = df)
+  
   
   ## Rescale accuracy and return
-  pov00_analysis$out[[i]] <- data_frame(
+  pov00_analysis$out[[i]] <- tibble(
     model = list(fit),
     effects = list(Effect(fit, focal.predictors = "model") %>% as.data.frame() %>% mutate_at(vars(-model), zexp)),
     ranova = list(tidy(ranova(fit))),
@@ -153,11 +166,8 @@ ggsave(filename = "pov00_accuracy_analysis.jpg", plot = g_pov00, path = fig_dir,
 # Histogram
 qplot(x = accuracy, data = pov1_predictions, geom = "density", facets = ~trait)
 
-## Needs transformation
 
 pov1_analysis <- pov1_predictions %>% 
-  mutate(zscore = ztrans(accuracy),
-         model = as.factor(model)) %>%
   group_by(trait, scheme) %>%
   nest() %>%
   mutate(out = list(NULL))
@@ -167,7 +177,9 @@ for (i in seq(nrow(pov1_analysis))) {
   df <- pov1_analysis$data[[i]]
   
   # Fit a model
-  fit <- lmer(zscore ~ model + (1|environment), data = df, control = lmerControl(check.nobs.vs.nlev = "ignore", check.nobs.vs.nRE = "ignore"))
+  # fit <- lmer(zscore ~ model + (1|environment), data = df, control = lmerControl(check.nobs.vs.nlev = "ignore", check.nobs.vs.nRE = "ignore"))
+  fit <- lmer(accuracy ~ model + (1|environment), data = df)
+  
   
   ## Rescale accuracy and return
   pov1_analysis$out[[i]] <- data_frame(
@@ -200,6 +212,14 @@ g_pov1 <- pov1_analysis1 %>%
 ggsave(filename = "pov1_accuracy_analysis.jpg", plot = g_pov1, path = fig_dir, width = 7, height = 4, dpi = 1000)
 
 
+
+
+
+
+
+
+
+
 ## Model within scheme
 ## 
 ## CV1
@@ -207,10 +227,6 @@ ggsave(filename = "pov1_accuracy_analysis.jpg", plot = g_pov1, path = fig_dir, w
 
 # Histogram
 qplot(x = accuracy, data = cv1_predictions, geom = "density", facets = scheme~trait)
-
-cv1_predictions %>%
-  mutate(zscore = ztrans(accuracy)) %>%
-  qplot(x = zscore, data = ., geom = "density", facets = scheme~trait)
 
 
 ## Variance heterogeneity between schemes within models?
@@ -223,7 +239,6 @@ cv1_predictions %>%
 
 ## Model scheme separately
 cv1_analysis <- cv1_predictions %>% 
-  mutate(zscore = ztrans(accuracy)) %>%
   mutate_at(vars(model, rep), as.factor) %>%
   group_by(trait, scheme) %>%
   nest() %>%
@@ -235,7 +250,9 @@ for (i in seq(nrow(cv1_analysis))) {
   df <- cv1_analysis$data[[i]]
   
   # Fit a model
-  fit <- lmer(zscore ~ model + (1|environment) + (1|environment:model) + (1|rep:model), data = df)
+  # fit <- lmer(zscore ~ model + (1|environment) + (1|environment:model) + (1|rep:model), data = df)
+  fit <- lmer(accuracy ~ model + (1|environment:model) + (1|rep:model), data = df)
+  
   
   ## Rescale accuracy and return
   cv1_analysis$out[[i]] <- data_frame(
@@ -282,22 +299,9 @@ ggsave(filename = "cv1_accuracy_analysis.jpg", plot = g_cv2, path = fig_dir, wid
 # Histogram
 qplot(x = accuracy, data = cv2_predictions, geom = "density", facets = ~trait)
 
-cv2_predictions %>%
-  mutate(zscore = ztrans(accuracy)) %>%
-  qplot(x = zscore, data = ., geom = "density", facets = scheme~trait)
-
-
-## Variance heterogeneity between schemes within models?
-cv2_predictions %>%
-  mutate(zscore = ztrans(accuracy),
-         model = as.factor(model)) %>%
-  group_by(trait, scheme) %>%
-  do(test = leveneTest(zscore ~ model, data = .)) %>%
-  pull(test)
 
 ## Model scheme separately
 cv2_analysis <- cv2_predictions %>% 
-  mutate(zscore = ztrans(accuracy)) %>%
   mutate_at(vars(model, rep), as.factor) %>%
   group_by(trait, scheme) %>%
   nest() %>%
@@ -350,24 +354,10 @@ ggsave(filename = "cv2_accuracy_analysis.jpg", plot = g_cv2, path = fig_dir, wid
 ## 
 
 # Histogram
-qplot(x = accuracy, data = pocv2_predictions, geom = "density", facets = ~trait)
-
-pocv2_predictions %>%
-  mutate(zscore = ztrans(accuracy)) %>%
-  qplot(x = zscore, data = ., geom = "density", facets = scheme~trait)
-
-
-## Variance heterogeneity between schemes within models?
-pocv2_predictions %>%
-  mutate(zscore = ztrans(accuracy),
-         model = as.factor(model)) %>%
-  group_by(trait) %>%
-  do(test = leveneTest(zscore ~ model * scheme, data = .)) %>%
-  pull(test)
+qplot(x = accuracy, data = pocv2_predictions, geom = "density", facets = scheme~trait)
 
 ## Model scheme separately
 pocv2_analysis <- pocv2_predictions %>% 
-  mutate(zscore = ztrans(accuracy)) %>%
   mutate_at(vars(model, rep), as.factor) %>%
   group_by(trait, scheme) %>%
   nest() %>%
@@ -415,23 +405,154 @@ ggsave(filename = "pocv2_accuracy_analysis.jpg", plot = g_pocv2, path = fig_dir,
 
 
 
-## Plot everything
-all_analyses <- ls(pattern = "analysis1") %>%
-  subset(. != "cv2_analysis1") %>%
-  map_df(get) %>%
-  mutate(scheme_number = str_extract(scheme, "[0-9]{1,2}"))
 
 
-g_all_validation <- all_analyses %>% 
+## Model within scheme
+## 
+## CV0 and POCV0
+## 
+
+# Histogram
+qplot(x = accuracy, data = cv0_predictions, geom = "density", facets = scheme~trait)
+
+## Model scheme separately
+cv0_analysis <- cv0_predictions %>% 
+  group_by(trait, scheme) %>%
+  nest() %>%
+  mutate(out = list(NULL))
+
+
+
+for (i in seq(nrow(cv0_analysis))) {
+  
+  df <- cv0_analysis$data[[i]]
+  
+  # Fit a model
+  fit <- lmer(zscore ~ model + (1|environment), data = df)
+  
+  ## Rescale accuracy and return
+  cv0_analysis$out[[i]] <- data_frame(
+    model = list(fit),
+    effects = list(Effect(fit, focal.predictors = "model") %>% as.data.frame() %>% mutate_at(vars(-model), zexp)),
+    ranova = list(tidy(ranova(fit))),
+    anova = list(tidy(anova(fit)))
+  )
+  
+}
+
+cv0_analysis1 <- unnest(cv0_analysis, out)
+
+## Plot
+g_cv0 <- cv0_analysis1 %>% 
   unnest(effects) %>%
   mutate(model = str_replace_all(model, model_replace),
          model = factor(model, levels = model_replace)) %>%
   ggplot(aes(x = scheme, y = fit, ymax = upper, ymin = lower, color = model, group = model)) +
   geom_errorbar(color = "black", position = position_dodge(0.7), width = 0.5) +
+  geom_point(position = position_dodge(0.7), size = 3) +
+  # facet_grid(trait ~ scheme_number, scales = "free_x") +
+  facet_grid(~ trait, scales = "free_x", labeller = labeller(trait = str_add_space)) +
+  scale_y_continuous(name = "Predicton accuracy", breaks = pretty) +
+  scale_x_discrete(name = "Validation scheme", labels = toupper) +
+  scale_color_discrete(name = "Model") +
+  theme_presentation2() +
+  theme(legend.position = "bottom")
+
+ggsave(filename = "cv0_accuracy_analysis.jpg", plot = g_cv0, path = fig_dir, width = 7, height = 4, dpi = 1000)
+
+
+
+
+## Model within scheme
+## 
+## CV00 and POCV00
+## 
+
+# Histogram
+qplot(x = accuracy, data = cv00_predictions, geom = "density", facets = scheme~trait)
+
+## Model scheme separately
+cv00_analysis <- cv00_predictions %>% 
+  mutate_at(vars(model, rep), as.factor) %>%
+  group_by(trait, scheme) %>%
+  nest() %>%
+  mutate(out = list(NULL))
+
+
+
+for (i in seq(nrow(cv00_analysis))) {
+  
+  df <- cv00_analysis$data[[i]]
+  
+  # Fit a model
+  fit <- lmer(zscore ~ model + (1|environment) + (1|environment:model) + (1|rep:model), data = df)
+  
+  ## Rescale accuracy and return
+  cv00_analysis$out[[i]] <- data_frame(
+    model = list(fit),
+    effects = list(Effect(fit, focal.predictors = "model") %>% as.data.frame() %>% mutate_at(vars(-model), zexp)),
+    ranova = list(tidy(ranova(fit))),
+    anova = list(tidy(anova(fit)))
+  )
+  
+}
+
+cv00_analysis1 <- unnest(cv00_analysis, out)
+
+## Plot
+g_cv00 <- cv00_analysis1 %>% 
+  unnest(effects) %>%
+  mutate(model = str_replace_all(model, model_replace),
+         model = factor(model, levels = model_replace)) %>%
+  ggplot(aes(x = scheme, y = fit, ymax = upper, ymin = lower, color = model, group = model)) +
+  geom_errorbar(color = "black", position = position_dodge(0.7), width = 0.5) +
+  geom_point(position = position_dodge(0.7), size = 3) +
+  # facet_grid(trait ~ scheme_number, scales = "free_x") +
+  facet_grid(~ trait, scales = "free_x", labeller = labeller(trait = str_add_space)) +
+  scale_y_continuous(name = "Predicton accuracy", breaks = pretty) +
+  scale_x_discrete(name = "Validation scheme", labels = toupper) +
+  scale_color_discrete(name = "Model") +
+  theme_presentation2() +
+  theme(legend.position = "bottom")
+
+ggsave(filename = "cv00_accuracy_analysis.jpg", plot = g_cv00, path = fig_dir, width = 7, height = 4, dpi = 1000)
+
+
+
+
+
+
+
+
+####
+# All analyses
+####
+
+
+## Plot everything
+all_analyses <- ls(pattern = "analysis1") %>%
+  subset(. != "cv2_analysis1") %>%
+  map_df(get) %>%
+  mutate(scheme_number = str_extract(scheme, "[0-9]{1,2}"),
+         scheme_code = str_replace_all(scheme_number, scheme_number_replace),
+         scheme_code = factor(scheme_code, levels = rev(scheme_number_replace)))
+
+
+g_all_validation <- all_analyses %>% 
+  unnest(effects) %>%
+  # Remove some schema
+  filter(!scheme %in% c("pocv00", "pocv1")) %>%
+  # Rename some schema
+  mutate(scheme = str_replace(scheme, "pocv", "pov"),
+         model = str_replace_all(model, model_replace),
+         model = factor(model, levels = model_replace)) %>%
+  ggplot(aes(x = scheme, y = fit, ymax = upper, ymin = lower, color = model, group = model)) +
+  geom_errorbar(color = "black", position = position_dodge(0.7), width = 0.5) +
   geom_point(position = position_dodge(0.7), size = 2) +
   # facet_grid(trait ~ scheme_number, scales = "free_x") +
-  facet_grid(trait ~ scheme_number, scales = "free_x", space = "free_x", labeller = labeller(trait = str_add_space)) +
-  scale_y_continuous(name = "Predicton accuracy", breaks = pretty) +
+  facet_grid(trait ~ scheme_code, scales = "free_x", space = "free_x", 
+             labeller = labeller(trait = str_add_space, scheme_code = label_parsed)) +
+  scale_y_continuous(name = "Prediction accuracy", breaks = pretty) +
   scale_x_discrete(name = "Validation scheme", labels = toupper) +
   scale_color_discrete(name = "Model") +
   theme_presentation2() +

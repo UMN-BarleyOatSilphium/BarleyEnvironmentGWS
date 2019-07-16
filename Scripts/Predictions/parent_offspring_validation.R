@@ -29,8 +29,7 @@ library(modelr)
 
 ## Number of cores
 n_core <- detectCores()
-n_core <- 8
-
+n_core <- 16
 
 
 
@@ -45,7 +44,7 @@ pov_data <- S2_MET_BLUEs %>%
          environment %in% tp_vp_env) %>%
   mutate(id = seq(nrow(.))) %>%
   ## Sample environments
-  filter(environment %in% sample_env) %>%
+  # filter(environment %in% sample_env) %>%
   ##
   droplevels() %>%
   mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno)))
