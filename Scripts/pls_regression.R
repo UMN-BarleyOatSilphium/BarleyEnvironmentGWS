@@ -15,6 +15,7 @@ source(file.path(repo_dir, "source.R"))
 # Other packages
 library(modelr)
 library(pls)
+library(broom)
 
 
 ## Load the distance methods
@@ -49,19 +50,16 @@ data(vargas.wheat1.traits)
 
 # Tidy
 df <- vargas.wheat1.traits %>% 
-  group_by(year, gen) %>%
-  summarize(yield = mean(yield)) %>%
-  ungroup() %>%
   mutate_at(vars(gen, year), as.factor)
 
 # Fit a g + y main effect model
-fit <- lm(yield ~ gen + year, df, contrasts = list(gen = "contr.sum", year = "contr.sum"))
-
-## Add residuals to df
-df2 <- add_residuals(data = df, model = fit)
+fit <- lm(yield ~ gen + year + gen:year, df, contrasts = list(gen = "contr.sum", year = "contr.sum"))
 
 # Create GxE matrix
-Y_gxe <- scale(xtabs(resid ~ year + gen, df2))
+Y_gxe <- model.tables(aov(fit), type = "effects", cterms = c("gen:year"))
+Y_gxe <- Y_gxe$tables$`gen:year` %>% 
+  as.matrix() %>%
+  t()
 
 ## Prepare covariates
 # Yield as a function of environment covariates
@@ -74,103 +72,54 @@ cov_mat <- vargas.wheat1.covs %>%
 pls_fit <- plsr(Y_gxe ~ cov_mat)
 # Get the coefficients
 ec_beta <- loadings(pls_fit)[,1]
-# Number of coefficients
-m <- ncol(cov_mat)
-
-# Create a weight matrix
-D <- diag(1 / (m * abs(ec_beta)))
-E <- cov_mat %*% D %*% t(cov_mat)
-
-## The alternative is simply to divide by m
-E1 <- tcrossprod(cov_mat) / m
-
-## Lastly, the correlation among environments
-E2 <- cor(xtabs(yield ~ gen + year, df2))
-
-## Relationship matrix of individuals
-K <- diag(ncol(Y_gxe)); dimnames(K) <- list(colnames(Y_gxe), colnames(Y_gxe))
-Kge <- kronecker(E, K, make.dimnames = T)
-Kge1 <- kronecker(E1, K, make.dimnames = T)
-Kge2 <- kronecker(E2, K, make.dimnames = T)
 
 
 ## Factorial regression using ECs in order of descending PLS coefficient
 ec_order <- names(ec_beta)[order(abs(ec_beta), decreasing = TRUE)]
-# Only use the first n ECs, where n is the number of environments
-ec_order_use <- ec_order[seq_along(levels(df_tomodel$year))]
 
 ## Combine ECs with df
 df_tomodel <- left_join(df, mutate(vargas.wheat1.covs, year = as.factor(year)))
 
+# Only use the first n ECs, where n is the number of environments
+ec_order_use <- ec_order[seq_along(levels(df_tomodel$year))]
+
 # Define the maximum model for forward stepwise regression
-max_model <- add_predictors(f = formula(fit), as.formula(paste0("~", paste0("gen:", ec_order_use, collapse = " + "))))
+# First drop gxe term
+formula_noGxE <- formula(drop.terms(termobj = terms(formula(fit)), dropx = 3, keep.response = T))
+  
+max_model <- formula_noGxE %>%
+  # Add ECs
+  add_predictors(as.formula(paste0("~", paste0("gen:", ec_order_use, collapse = " + ")))) %>%
+  # Add GxE
+  add_predictors(~ gen:year)
+
+
 # update the model with new data
 fit1 <- update(object = fit, data = df_tomodel)
+fit_noGxE <- lm(formula_noGxE, df_tomodel)
+
+## Regular model anova
+anova_base <- anova(fit1)
+
+## Fit a g + y + beta h model with the first EC with the largest PLS coefficient
+formula_ec1 <- yield ~ gen + year + gen:SHF + gen:year
+fit_ec1 <- lm(formula = formula_ec1, data = df_tomodel)
+
+## Proper F test is EC versus GxE
+anova_ec1 <- tidy(anova(fit_ec1)) %>%
+  mutate(gxe_meansq = list(subset(anova_ec1, term == "gen:year", c(df, meansq)))) %>%
+  unnest() %>%
+  mutate(fstat = ifelse(str_detect(term, ":"), meansq / meansq1, NA),
+         pvalue = pf(q = fstat, df1 = df, df2 = df1, lower.tail = FALSE))
+
+fit_ecAll <- lm(formula = max_model, data = df_tomodel)
+
+
+
 
 # Fit a g + y + beta h with forward stepwise regression
-fit_step <- step(object = fit1, direction = "both", scope = max_model, data = df_tomodel)
+fit_step <- step(object = fit_noGxE, direction = "forward", scope = max_model, data = df_tomodel)
 
-
-
-## Fit a model
-library(lmerTest)
-library(lme4qtl)
-
-# Prepare for modeling
-df3 <- df %>%
-  mutate(year2 = year, gen2 = gen)
-
-mm_fit1 <- relmatLmer(yield ~ (1|gen) + (1|year), df3)
-VarProp(mm_fit1)
-
-# With year matrix
-mm_fit2 <- relmatLmer(yield ~ (1|gen) + (1|year2), df3, relmat = list(year2 = E))
-VarProp(mm_fit2)
-
-
-## What matrix leads to the highest predictions?
-# Leave-one-year-out CV
-uniq_year <- unique(df2$year)
-year_acc <- numeric(length(uniq_year))
-
-for (i in seq_along(year_acc)) {
-  # Subset data.frame
-  mf <- model.frame(yield ~ gen + year, df2, subset = year != uniq_year[i])
-  y <- model.response(mf)
-  X <- model.matrix(~ 1, mf)
-  Zg <- model.matrix(~ -1 + gen, mf); colnames(Zg) <-  levels(mf$gen)
-  Ze <- model.matrix(~ -1 + year, mf); colnames(Ze) <-  levels(mf$year)
-  Zge <- model.matrix(~ -1 + gen:year, mf); colnames(Zge) <- colnames(Kge)
-
-  
-  # ## Fit models
-  # fit_somm1 <- sommer::mmer(Y = y, X = X, Z = list(gen = list(Z = Zg, K = K), year = list(Z = Ze, K = E)), silent = T)
-  # fit_somm2 <- sommer::mmer(Y = y, X = X, Z = list(gen = list(Z = Zg, K = K), year = list(Z = Ze, K = E1)), silent = T)
-  # fit_somm3 <- sommer::mmer(Y = y, X = X, Z = list(gen = list(Z = Zg, K = K), year = list(Z = Ze, K = E2)), silent = T)
-  
-  # Fit models
-  fit_somm1 <- sommer::mmer(Y = y, X = X, silent = T,
-                            Z = list(gen = list(Z = Zg, K = K), year = list(Z = Ze, K = E), int = list(Z = Zge, K = Kge)))
-  fit_somm2 <- sommer::mmer(Y = y, X = X, silent = T,
-                            Z = list(gen = list(Z = Zg, K = K), year = list(Z = Ze, K = E1), int = list(Z = Zge, K = Kge1)))
-  fit_somm3 <- sommer::mmer(Y = y, X = X, silent = T,
-                            Z = list(gen = list(Z = Zg, K = K), year = list(Z = Ze, K = E2), int = list(Z = Zge, K = Kge2)))
-  
-  ## List and calculate phenotypes
-  predictions_list <- list(fit_somm1, fit_somm2, fit_somm3) %>%
-    map(~map(.$u.hat, ~as.data.frame(.) %>% rownames_to_column("term")) %>% 
-          map2(.x = ., .y = names(.), ~{names(.) <- c(.y, "value"); return(.)}) %>%
-          do.call("crossing", .) %>% 
-          separate(col = int, into = c("year1", "gen1"), sep = ":") %>%
-          filter(gen == gen1, year == year1) %>%
-          mutate(yield_hat = value + value1 + value2) )
-  
-  ## Calculate accuracy
-  year_acc[i] <- predictions_list %>%
-    setNames(object = ., nm = c("scaled", "unscaled", "cor")) %>%
-    map_df(~left_join(subset(df2, year == uniq_year[i]), .) %>% summarize(acc = cor(yield, yield_hat)))
-  
-}
 
 
 

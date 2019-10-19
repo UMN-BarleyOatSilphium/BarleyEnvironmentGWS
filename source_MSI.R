@@ -29,6 +29,7 @@ alt_proj_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/S2MET_Pr
 
 geno_dir <-  "/panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/Data/Genos"
 pheno_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/Data/Phenos"
+enviro_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/Data/EnvironmentalData" 
 
 # Other directories
 fig_dir <- file.path(proj_dir, "Figures")

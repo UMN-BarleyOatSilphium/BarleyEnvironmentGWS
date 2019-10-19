@@ -7,11 +7,7 @@ Figures/*
 Summaries/*
 Results/*
 Scripts/Other/*
-Data/RData
-Data/*RData
-Data/environmental_data_compiled.RData
-Data/Climate_Data/*
-Data/Soil_Data/*
+Data/*
 *.e[0-9]*
 *.o[0-9]*
 Rplots.pdf
