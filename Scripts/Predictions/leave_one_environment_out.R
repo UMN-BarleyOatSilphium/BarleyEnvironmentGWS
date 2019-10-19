@@ -18,7 +18,7 @@ source(file.path(repo_dir, "source_MSI.R"))
 
 ## Number of cores
 n_core <- detectCores()
-n_core <- 16
+n_core <- 8
 
 
 

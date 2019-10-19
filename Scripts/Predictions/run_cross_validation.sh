@@ -1,15 +1,16 @@
 #!/bin/bash
 
-# #PBS -l walltime=24:00:00,mem=48gb,nodes=1:ppn=8
-#PBS -l walltime=36:00:00,mem=62gb,nodes=1:ppn=8
+#PBS -l walltime=12:00:00,mem=48gb,nodes=1:ppn=8
+# #PBS -l walltime=36:00:00,mem=62gb,nodes=1:ppn=8
 # #PBS -l walltime=02:00:00,mem=62gb,nodes=1:ppn=16
 # #PBS -N cross-validation-cv1
 # #PBS -N cross-validation-cv2
 # #PBS -N cross-validation-pocv2
 # #PBS -N cross-validation-cv00
 # #PBS -N cross-validation-cv0
-#PBS -N parent-offspring-validation
+# #PBS -N parent-offspring-validation
 # #PBS -N prediction-validation-sample
+#PBS -N leave-one-env-out
 #PBS -M neyha001@umn.edu
 #PBS -m abe
 #PBS -r n
@@ -32,8 +33,11 @@ module load R/3.5.0
 # Rscript cross_validation_cv0.R
 
 ## Parent-offspring validation
-Rscript parent_offspring_validation.R
+# Rscript parent_offspring_validation.R
 
 ## Sample script
 # Rscript prediction_validation_sample.R
+
+## Leave-one-environment-out
+Rscript leave_one_environment_out.R
 
