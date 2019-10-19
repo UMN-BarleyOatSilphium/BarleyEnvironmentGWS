@@ -6,7 +6,7 @@
 ## accuracy.
 ## 
 ## Author: Jeff Neyhart
-## Last modified: May 13, 2019
+## Last modified: 17 July 2019
 ## 
 
 # # Parent-offspring cross-validation
@@ -51,6 +51,7 @@ pov_data <- S2_MET_BLUEs %>%
 
 
 ## POV00 - prediction of the validation population in untested environments
+##
 ## Leave-one-environment-out
 
 # Generate skeleton train/test sets

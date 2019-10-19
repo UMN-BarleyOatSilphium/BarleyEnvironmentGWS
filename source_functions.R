@@ -5,22 +5,6 @@
 
 
 
-## Other/utility functions
-# A function to assign cores to a data.frame
-assign_cores <- function(df, n_core) {
-  df$core <- sort(rep(seq(n_core), length.out = nrow(df)))
-  return(df)
-}
-
-# A function to replace a character vector and convert it to a factor
-as_replaced_factor <- function(x, replacement) {
-  x_repl <- str_replace_all(string = x, pattern = replacement)
-  factor(x_repl, levels = replacement)
-}
-
-
-
-
 # ## A generic prediction function that takes training and test data and returns
 # ## PGVs and accuracy
 # gblup <- function(formula, random, K, train, test, fun = c("rrblup", "sommer"), fit.env = TRUE, bootreps = NULL, add.mu = FALSE) {
@@ -295,8 +279,25 @@ model3 <- function(train, test, Kg, Ke) {
 
 
 
-## A function to calculate growing degree days based on temperature input
-gdd <- function(Tavg, T0) Tavg - T0
+
+
+####
+## Function to analyze GxE
+## 
+## Used variance components and comparison of lack of correlation versus variance heterogeneity
+####
+
+
+analyze_gxe <- function(data) {
+  
+  
+  
+}
+  
+
+
+
+
 
 
 
