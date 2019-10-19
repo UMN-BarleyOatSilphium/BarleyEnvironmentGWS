@@ -296,6 +296,10 @@ for (i in seq(nrow(predictions_out))) {
     mutate(model4_prediction, model = "model4")
     )
   
+  
+  ## Notify user
+  cat("\nPredictions for trait", row$trait, "in environment", as.character(row$environment), "complete.")
+  
 }
 
 
