@@ -7,7 +7,7 @@
 if (version$minor == "5.2") .libPaths(gsub(pattern = "lab_library", replacement = "mesabi_library", x = .libPaths()))
 
 # Load packages
-packages <- c("dplyr", "tidyr", "tibble", "stringr", "readxl", "readr", "parallel",
+packages <- c("sommer", "dplyr", "tidyr", "tibble", "stringr", "readxl", "readr", "parallel",
               "rrBLUP", "purrr", "boot", "pbr", "lme4", "modelr", "neyhart")
 
 # ## Determine the package directory by assessing the version of R

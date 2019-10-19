@@ -29,7 +29,7 @@ library(modelr)
 
 ## Number of cores
 n_core <- detectCores()
-n_core <- 16
+n_core <- 8
 
 
 
@@ -97,7 +97,7 @@ pov00_predictions <- pov00_train_test %>%
       mutate(out = out) %>%
       unnest(out)
     
-  }) %>% bind_rows()
+  }) # %>% bind_rows()
     
 
 ## POV1 - predict the untested VP in tested environments
