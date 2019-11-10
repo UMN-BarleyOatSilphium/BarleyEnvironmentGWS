@@ -38,6 +38,3 @@ module load R/3.5.0
 ## Sample script
 # Rscript prediction_validation_sample.R
 
-## Leave-one-environment-out
-Rscript leave_one_environment_out.R
-

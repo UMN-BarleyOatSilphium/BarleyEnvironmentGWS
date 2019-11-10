@@ -758,5 +758,3 @@ ec_interaction_coef_herit <- ec_interaction_coef %>%
 
 ## Write table
 write_csv(x = ec_interaction_coef_herit, path = file.path(fig_dir, "covariate_slope_heritability.csv"))
-
-
