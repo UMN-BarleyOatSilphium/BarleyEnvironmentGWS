@@ -71,6 +71,205 @@ grain_fill_maxt_summary <- daily_ec_select %>%
 
   
 
+#### Example daily temperature for a drought, non-drought location-year
+
+## color vector for growth stage
+growth_stage_color <- setNames(neyhart_palette("umn2")[c(4, 5, 2)], names(growth_stage_rename))
+growth_stage_color["vegetative"] <- neyhart_palette()[5]
+
+# what covariate to plot
+ec_to_plot <- "maxt"
+
+daily_ec_example_plots <- daily_ec_select %>%
+  gather(covariate, value, -environment, -dap, -growth_stage) %>%
+  # Re-order growth stages
+  mutate(growth_stage = factor(growth_stage, levels = c("vegetative", "flowering", "grain_fill"))) %>%
+  filter(environment %in% c("EON16", "CRM16"), covariate == ec_to_plot) %>%
+  mutate(min_dap = min(dap), max_dap = max(dap)) %>%
+  ## calculate ranges for each covariate
+  group_by(covariate) %>%
+  mutate_at(vars(value), list(~min, ~max)) %>%
+  group_by(covariate, environment) %>%
+  do(plot = {
+    df <- .
+    
+    ## Create segments for growth stages
+    gs_seg <- df %>% 
+      group_by(growth_stage) %>% 
+      summarize(start = min(dap) - 1, end = max(dap))
+    
+    ec_name <- covariate_variable_rename[unique(df$covariate)]
+    ec_unit <- names(covariate_variable_unit[covariate_variable_unit == ec_name])
+    
+    # x axis limits
+    x_limit <- c(df$min_dap[1] - 1, df$max_dap[1])
+    
+    # y axis limits
+    y_limit <- c(df$min[1], df$max[1])
+    y_end <- quantile(y_limit, 0.75)
+    
+    ## Plot
+    ggplot(data = df, aes(x = dap, y = value)) +
+      geom_segment(data = gs_seg, mapping = aes(x = start, xend = end, y = y_end, yend = y_end, color = growth_stage), lwd = 10) +
+      geom_line() +
+      scale_y_continuous(name = parse(text = paste0(str_to_title(ec_name), "~(", ec_unit, ")")), breaks = pretty, limits = y_limit) +
+      scale_x_continuous(breaks = pretty, name = "Days after planting", limits = x_limit) +
+      scale_color_manual(values = growth_stage_color, name = "Predicted\ngrowth stage",
+                         labels = function(x) str_to_title(str_remove_all(x, "_"))) +
+      labs(subtitle = unique(df$environment)) +
+      theme_presentation2() +
+      theme(legend.position = "bottom")
+      
+  })
+
+  
+# Extract sample plots
+plot_list <- daily_ec_example_plots %>%
+  pull(plot) %>%
+  map(~. + theme(legend.position = "none", axis.title = element_blank()))
+plot_list[[1]] <- plot_list[[1]] + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+# Merge
+select_ec_plot_merge <- plot_grid(plotlist = plot_list, ncol = 1)
+
+# y_axis label
+ec_name <- covariate_variable_rename[ec_to_plot]
+ec_unit <- names(covariate_variable_unit[covariate_variable_unit == ec_name])
+y_label <- grid::textGrob(label = parse(text = paste0(str_to_title(ec_name), "~(", ec_unit, ")")), rot = 90) 
+
+x_label <- grid::textGrob(label = "Days after planting")
+
+select_ec_plot_merge1 <- plot_grid(y_label, select_ec_plot_merge, nrow = 1, rel_widths = c(0.05, 1))  %>%
+  plot_grid(., x_label, get_legend(daily_ec_example_plots$plot[[1]]),ncol = 1, rel_heights = c(1, 0.05, 0.2)) 
+
+
+ggsave(filename = "sample_maxt_growth_stage.jpg", plot = select_ec_plot_merge1, path = fig_dir,
+       height = 6, width = 7, dpi = 1000)
+
+
+
+
+# what covariate to plot
+ec_to_plot <- "water_stress"
+
+daily_ec_example_plots <- daily_ec_select %>%
+  gather(covariate, value, -environment, -dap, -growth_stage) %>%
+  # Re-order growth stages
+  mutate(growth_stage = factor(growth_stage, levels = c("vegetative", "flowering", "grain_fill"))) %>%
+  filter(environment %in% c("EON16", "CRM16"), covariate == ec_to_plot) %>%
+  mutate(min_dap = min(dap), max_dap = max(dap)) %>%
+  ## calculate ranges for each covariate
+  group_by(covariate) %>%
+  mutate_at(vars(value), list(~min, ~max)) %>%
+  group_by(covariate, environment) %>%
+  do(plot = {
+    df <- .
+    
+    ## Create segments for growth stages
+    gs_seg <- df %>% 
+      group_by(growth_stage) %>% 
+      summarize(start = min(dap) - 1, end = max(dap))
+    
+    ec_name <- covariate_variable_rename[unique(df$covariate)]
+    ec_unit <- names(covariate_variable_unit[covariate_variable_unit == ec_name])
+    
+    # x axis limits
+    x_limit <- c(df$min_dap[1] - 1, df$max_dap[1])
+    
+    # y axis limits
+    y_limit <- c(df$min[1], df$max[1])
+    y_end <- quantile(y_limit, 0.75)
+    
+    ## Plot
+    ggplot(data = df, aes(x = dap, y = value)) +
+      geom_segment(data = gs_seg, mapping = aes(x = start, xend = end, y = y_end, yend = y_end, color = growth_stage), lwd = 10) +
+      geom_line() +
+      scale_y_continuous(name = parse(text = paste0(str_to_title(ec_name), "~(", ec_unit, ")")), breaks = pretty, limits = y_limit) +
+      scale_x_continuous(breaks = pretty, name = "Days after planting", limits = x_limit) +
+      scale_color_manual(values = growth_stage_color, name = "Predicted\ngrowth stage",
+                         labels = function(x) str_to_title(str_remove_all(x, "_"))) +
+      labs(subtitle = unique(df$environment)) +
+      theme_presentation2() +
+      theme(legend.position = "bottom")
+    
+  })
+
+
+# Extract sample plots
+plot_list <- daily_ec_example_plots %>%
+  pull(plot) %>%
+  map(~. + theme(legend.position = "none", axis.title = element_blank()))
+plot_list[[1]] <- plot_list[[1]] + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+# Merge
+select_ec_plot_merge <- plot_grid(plotlist = plot_list, ncol = 1)
+
+# y_axis label
+ec_name <- covariate_variable_rename[ec_to_plot]
+ec_unit <- names(covariate_variable_unit[covariate_variable_unit == ec_name])
+y_label <- grid::textGrob(label = parse(text = paste0(str_to_title(ec_name), "~(", ec_unit, ")")), rot = 90) 
+
+x_label <- grid::textGrob(label = "Days after planting")
+
+select_ec_plot_merge1 <- plot_grid(y_label, select_ec_plot_merge, nrow = 1, rel_widths = c(0.05, 1))  %>%
+  plot_grid(., x_label, get_legend(daily_ec_example_plots$plot[[1]]),ncol = 1, rel_heights = c(1, 0.05, 0.2)) 
+
+
+ggsave(filename = "sample_maxt_growth_stage.jpg", plot = select_ec_plot_merge1, path = fig_dir,
+       height = 6, width = 7, dpi = 1000)
+
+
+
+##########################
+## Investiate time-dependent stressors
+##########################
+
+## Look at "number of days above some threshold temperature x during grainfill" with x = 15, 16, ..., max(T)
+# Determine the threshold that explains the most GxE variance
+temp_thresh <- seq(20, 40)
+
+grain_fill_temperature_stress <- map(temp_thresh, ~{
+  growth_stage_weather %>%
+    filter(growth_stage == "grain_fill") %>%
+    group_by(environment) %>%
+    summarize(stress_days = sum(maxt > .x), threshold = .x) 
+})
+
+## format s2met data for modeling
+s2_met_tomodel <- S2_MET_BLUEs %>%
+  filter(line_name %in% tp) %>%
+  filter(trait == "GrainYield") %>%
+  group_by(trait) %>%
+  nest() %>%
+  mutate(data = map(data, ~mutate(., line_name = as.factor(line_name),
+                                  line_name = `contrasts<-`(line_name, value = `colnames<-`(contr.sum(levels(line_name)), head(levels(line_name), -1))))
+  ))
+
+
+## fit models
+s2_met_tomodel_stress_days <- s2_met_tomodel %>%
+  crossing(., stress = grain_fill_temperature_stress) %>%
+  mutate(data = map2(data, stress, ~left_join(.x, .y, by = "environment")),
+         threshold = map_dbl(stress, ~unique(.$threshold)))
+
+  
+## Extract p-values from anova
+stress_days_fit1 <- s2_met_tomodel_stress_days %>%
+  group_by(trait, threshold) %>%
+  do(fit = lm(value ~ line_name + line_name:stress_days, data = .$data[[1]])) %>%
+  ungroup() %>%
+  mutate(pvalue = map_dbl(fit, ~as.data.frame(anova(.))[2,5]))
+  
+
+plot(-log10(pvalue) ~ threshold, stress_days_fit1)
+
+## Look at regression from lowest pvalue
+best_fit <- stress_days_fit1 %>%
+  filter(pvalue == min(pvalue, na.rm = TRUE)) %>%
+  pull(fit)
+
+plot(best_fit[[1]])
+
 
 
 
@@ -398,53 +597,6 @@ covariate_reg_coefs <- ec_model_building %>%
                    separate(term, c("covariate", "line_name"), sep = ":") ))
                    
 
-## Plot
-g_coef_hist <- covariate_reg_coefs %>% 
-  unnest(apriori_model) %>%
-  ggplot(aes(x = estimate)) +
-  geom_histogram() +
-  facet_wrap(~ trait + covariate, scale = "free") +
-  theme_presentation2(base_size = 8)
-ggsave(filename = "apriori_covariate_coef.jpg", plot = g_coef_hist, path = fig_dir, height = 6, width = 6, dpi = 1000)
-
-g_coef_hist <- covariate_reg_coefs %>% 
-  unnest(final_model) %>%
-  ggplot(aes(x = estimate)) +
-  geom_histogram() +
-  facet_wrap(~ trait + covariate, scale = "free") +
-  theme_presentation2(base_size = 8)
-ggsave(filename = "final_covariate_coef.jpg", plot = g_coef_hist, path = fig_dir, height = 6, width = 6, dpi = 1000)
-
-
-## Plot phenotypic value against covariate
-s2_met_tomodel %>%
-  select(trait, environment, line_name, value, environmental_covariates) %>%
-  gather(covariate, env_value, environmental_covariates) %>%
-  ## Add top and bottom coefficients from regression
-  left_join(group_by(unnest(covariate_reg_coefs, apriori_model), trait, covariate) %>% mutate(rank = min_rank(estimate)) %>% 
-              filter(rank %in% c(1:5, c(max(rank) - 4, max(rank)))), ., by = c("trait", "line_name", "covariate")) %>%
-  ggplot(aes(x = env_value, y = value, group = line_name)) +
-  geom_point() +
-  geom_smooth(method = "lm", se = FALSE) +
-  facet_wrap(~ trait + covariate, scales = "free")+
-  theme_presentation2(base_size = 8)
-ggsave(filename = "geno_coef_response_apriori.jpg", path = fig_dir, height = 12, width = 8, dpi = 1000)
-
-## Plot phenotypic value against covariate
-s2_met_tomodel %>%
-  select(trait, environment, line_name, value, environmental_covariates) %>%
-  gather(covariate, env_value, environmental_covariates) %>%
-  ## Add top and bottom coefficients from regression
-  left_join(group_by(unnest(covariate_reg_coefs, final_model), trait, covariate) %>% mutate(rank = min_rank(estimate)) %>% 
-              filter(rank %in% c(1:5, c(max(rank) - 4, max(rank)))), ., by = c("trait", "line_name", "covariate")) %>%
-  ggplot(aes(x = env_value, y = value, group = line_name)) +
-  geom_point() +
-  geom_smooth(method = "lm", se = FALSE) +
-  facet_wrap(~ trait + covariate, scales = "free")+
-  theme_presentation2(base_size = 8)
-ggsave(filename = "geno_coef_response_final.jpg", path = fig_dir, height = 12, width = 8, dpi = 1000)
-
-
 
 ## Save these results
 save("ec_model_building", "env_effect_models", "covariate_reg_coefs", "s2_met_tomodel", "ec_tomodel", "ec_tomodel_centers", 
@@ -606,162 +758,5 @@ ec_interaction_coef_herit <- ec_interaction_coef %>%
 
 ## Write table
 write_csv(x = ec_interaction_coef_herit, path = file.path(fig_dir, "covariate_slope_heritability.csv"))
-
-
-
-
-
-
-
-
-
-
-
-### Calculation of daily temperature and precipitation stats
-
-# Load both climate data
-load(file.path(data_dir, "Climate_Data/NOAA_Data/noaa_stations_trial_data.RData"))
-
-### One-year environmental covariates
-oneyear_env_data_unnest <- noaa_trial_data_oneyear_complete %>%
-  unnest(data)
-
-## Add trial data
-oneyear_trial_env_data <- trial_info %>% 
-  distinct(environment, location, year, planting_date) %>%
-  mutate_all(parse_guess) %>%
-  left_join(., oneyear_env_data_unnest) %>%
-  mutate_at(vars(planting_date, date), ymd) %>%
-  # Convert tenth of value to value
-  mutate(value = value / 10)
-
-
-## Subset data only after planting, then add 30-day intervals
-oneyear_trial_env_data_use <- oneyear_trial_env_data %>% 
-  select(environment, planting_date, date, month, datatype, value) %>% 
-  filter(date >= planting_date) %>% 
-  mutate(dap = as.numeric(date - planting_date))
-
-## Calculate some transformed stats
-## Range = max - min
-## Avg = mean
-one_year_daily_stats <- oneyear_trial_env_data_use %>% 
-  # Filter for environments used in this analysis
-  filter(environment %in% unique(S2_MET_BLUEs$environment)) %>%
-  select(environment, dap, datatype, value) %>% 
-  spread(datatype, value) %>% 
-  mutate(TAVG = (TMAX + TMIN) / 2,
-         TRANGE = TMAX - TMIN)
-
-## Remove daps after which not all environments have data
-max_dap <- one_year_daily_stats %>% 
-  group_by(dap) %>% 
-  summarize(nE = n_distinct(environment)) %>%
-  filter(nE != n_distinct(one_year_daily_stats$environment)) %>% 
-  pull(dap) %>% 
-  min()
-
-
-
-## For each environment, create intervals of 0 dap to max(dap) in steps of 1 day
-## Calculate the average of all daily ECs within each interval
-intervals <- crossing(start = seq(0, max(one_year_daily_stats$dap)), end = start) %>%
-  filter(end >= start, end <= max_dap)
-
-one_year_interval_ecs <- intervals %>%
-  mutate(data = map2(start, end, ~subset(one_year_daily_stats, between(dap, .x, .y)) %>% 
-                       group_by(environment) %>% summarize_at(vars(PRCP, TMAX, TMIN, TAVG, TRANGE), mean, na.rm = T))) %>%
-  unnest(data)
-
-
-## For each trait, calculate environmental means
-## Fit a general linear model with weights
-## Only use TP data
-main_effect_model <- S2_MET_BLUEs %>%
-  filter(line_name %in% tp, trait %in% traits) %>%
-  group_by(trait) %>%
-  do({
-    
-    df <- .
-    # Contrasts
-    df1 <- mutate_at(df, vars(line_name, environment), as.factor)
-    
-    contrasts(df1$line_name) <- contr.sum(levels(df1$line_name)) %>%
-      `colnames<-`(., head(row.names(.), -1))
-    contrasts(df1$environment) <- contr.sum(levels(df1$environment)) %>%
-      `colnames<-`(., head(row.names(.), -1))
-    
-    # Fit the linear model
-    fit <- lm(value ~ 1 + line_name + environment, data = df1, weights = 1 / df1$std_error)
-    
-    # Get environmenal effects (and means)
-    tidy(fit) %>%
-      filter(str_detect(term, "environment")) %>%
-      mutate(term = str_remove(term, "environment")) %>%
-      select(environment = term, effect = estimate) %>%
-      add_row(environment = tail(levels(df1$environment), 1), effect = -sum(.$effect)) %>%
-      # Add intercept
-      mutate(mean = effect + coef(fit)[1])
-    
-  }) %>% ungroup()
-
-
-
-## For each interval, correlate the observed EC in each environment with the environmental effect
-environment_effect_and_ec <- full_join(main_effect_model, one_year_interval_ecs)
-
-## Calculate correlation coefficients
-interval_correlations <- environment_effect_and_ec %>%
-  group_by(trait, start, end) %>%
-  summarize_at(vars(PRCP, TMAX, TMIN, TAVG, TRANGE), funs(cor(., effect))) %>%
-  ungroup() %>%
-  gather(covariate, cor, -trait, -start, -end)
-
-
-## Visualize via heatmap
-interval_correlations %>%
-  ggplot(aes(x = start, y = end, fill = cor)) +
-  geom_tile() +
-  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
-  facet_grid(trait ~ covariate)
-
-
-## Grab the interval with the greatest abs(correlation) for each trait
-
-
-
-
-
-
-## Fit a bunch of models
-interval_models <- environment_effect_and_ec %>%
-  mutate(HEAT = TAVG - TMIN) %>%
-  group_by(trait, start, end) %>%
-  do(fit = lm(effect ~ PRCP * HEAT, data = .))
-
-## Extract R2
-interval_models_R2 <- interval_models %>%
-  ungroup() %>%
-  mutate(R2 = map_dbl(fit, ~summary(.)$r.square))
-
-## Visualize via heatmap
-interval_models_R2 %>%
-  ggplot(aes(x = start, y = end, fill = R2)) +
-  geom_tile() +
-  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
-  facet_grid(~ trait)
-
-## Find the model with the largest R2
-best_models <- interval_models_R2 %>%
-  group_by(trait) %>%
-  filter(R2 == max(R2))
-
-
-
-
-
-
-
-
 
 
