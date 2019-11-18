@@ -7,7 +7,7 @@ Figures/*
 Summaries/*
 Results/*
 Scripts/Other/*
-Data/*
+Data/*.RData
 *.e[0-9]*
 *.o[0-9]*
 Rplots.pdf
