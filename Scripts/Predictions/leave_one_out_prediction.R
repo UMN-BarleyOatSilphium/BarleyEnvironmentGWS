@@ -688,4 +688,3 @@ loyo_predictions_out <- data_train_test1 %>%
 
 ## Save the results
 save("loeo_predictions_out", "loyo_predictions_out", file = file.path(result_dir, "loo_predictions_out.RData"))
-

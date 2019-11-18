@@ -12,4 +12,3 @@ Data/*.RData
 *.o[0-9]*
 Rplots.pdf
 Scripts/Predictions/CrossValidation/cv_starting_material_sample.RData
-Scripts/Predictions/CrossValidation/cv_starting_material.RData
