@@ -7,9 +7,9 @@
 ## Last modified: 14 October 2019
 ## 
 
-# # Run on a local machine
-# repo_dir <- getwd()
-# source(file.path(repo_dir, "source.R"))
+# Run on a local machine
+repo_dir <- getwd()
+source(file.path(repo_dir, "source.R"))
 
 
 # Run the source script
@@ -18,7 +18,7 @@ source(file.path(repo_dir, "source_MSI.R"))
 
 ## Number of cores
 n_core <- detectCores()
-n_core <- 4
+n_core <- 16
 
 
 # Other packages
@@ -39,10 +39,9 @@ load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariat
 ### Models
 
 # Cross-validation will use the following models:
-# M1 - random genotype (K), random environment
-# M2 - random genotype (K), random environment (E)
-# M3 - random genotype (K), random environment (E), random gxe (GE)
-# M4 - random genotype (K), random environment, random regression slopes
+# M1 - random genotype (K), fixed environment
+# M2 - random genotype (K), fixed environment by covariate
+# M4 - random genotype (K), fixed environment by covariate, random regression slopes
 
 
 
@@ -149,7 +148,7 @@ loeo_predictions_out <- data_train_test1 %>%
       
       
       ###################
-      ### Model 1 - random genotype (covariate) and environment
+      ### Model 1 - random genotype (covariate) and fixed environment
       ###################
       
       ## Copy line_name as new factor / variable
@@ -160,15 +159,16 @@ loeo_predictions_out <- data_train_test1 %>%
       
       
       # Random effect formula
-      random_form1 <- ~vs(line_name, Gu = K) + environment
+      fixed_form1 <- value ~ 1 + environment
+      random_form1 <- ~vs(line_name, Gu = K)
       
       ## Fit with sommer
-      model1_fit <- mmer(fixed = value ~ 1, random = random_form1, data = train2, date.warning = FALSE)
+      model1_fit <- mmer(fixed = fixed_form1, random = random_form1, data = train2, date.warning = FALSE)
       
       
       # Predict
       # Fixed effects
-      model1_fixed_prediction <- model1_fit$Beta$Estimate
+      model1_fixed_prediction <- subset(model1_fit$Beta, Effect == "(Intercept)", Estimate, drop = TRUE)
       
       # Random effects
       model1_prediction <- model1_fit$U %>% 
@@ -184,7 +184,7 @@ loeo_predictions_out <- data_train_test1 %>%
       
       
       ###################
-      ### Model 2 - random genotype (K) + random environment (E)
+      ### Model 2 - random genotype (K) + fixed environment based on covariate
       ###################
       
       ## Copy line_name as new factor / variable
@@ -206,30 +206,31 @@ loeo_predictions_out <- data_train_test1 %>%
       test_covariate_x <- t(as.matrix(ec_df[as.character(row$environment),, drop = FALSE]))
       
       
-      ## Calculate standardized difference between environments for each covariate
-      ec_dist_mat <- map(ec_df, ~{
-        dist_mat <- as.matrix(dist(.x))
-        dimnames(dist_mat) <- list(row.names(ec_df), row.names(ec_df))
-        ## Standardize
-        dist_mat / diff(range(.x))
-      })
+      # ## Calculate standardized difference between environments for each covariate
+      # ec_dist_mat <- map(ec_df, ~{
+      #   dist_mat <- as.matrix(dist(.x))
+      #   dimnames(dist_mat) <- list(row.names(ec_df), row.names(ec_df))
+      #   ## Standardize
+      #   dist_mat / diff(range(.x))
+      # })
+      # 
+      # ## Calculate the covariance matrix
+      # ## This line will sum each of the same coordinate element in the list of matrices
+      # E_mat <- 1 - reduce(ec_dist_mat, `+`)
       
-      ## Calculate the covariance matrix
-      ## This line will sum each of the same coordinate element in the list of matrices
-      E_mat <- 1 - reduce(ec_dist_mat, `+`)
-      
-      
-      
+      # Fixed formula
+      fixed_form2 <- as.formula(paste0("value ~ 1 +", paste0(test_covariates, collapse = " + ")))
       # Random effect formula
-      random_form2 <- ~vs(line_name, Gu = K) + vs(environment, Gu = E_mat)
+      # random_form2 <- ~vs(line_name, Gu = K) + vs(environment, Gu = E_mat)
+      random_form2 <- random_form1
       
       ## Fit with sommer
-      model2_fit <- mmer(fixed = value ~ 1, random = random_form2, data = train2, date.warning = FALSE)
+      model2_fit <- mmer(fixed = fixed_form2, random = random_form2, data = train2, date.warning = FALSE)
       
       
       # Predict
       # Fixed effects
-      model2_fixed_prediction <- model2_fit$Beta$Estimate
+      model2_fixed_prediction <- c(model2_fit$Beta$Estimate %*% c(1, test_covariate_x))
       
       # Random effects
       model2_prediction <- model2_fit$U %>% 
@@ -238,72 +239,75 @@ loeo_predictions_out <- data_train_test1 %>%
         map2(., names(.), ~tibble(term = names(.x), estimate = .x) %>% `names<-`(., c(str_remove(.y, "^u:"), "estimate"))) %>%
         reduce(crossing) %>%
         mutate(prediction = rowSums(select(., contains("estimate")))) %>% 
-        select(line_name, environment, prediction) %>% 
+        select(line_name, prediction) %>% 
         mutate(prediction = prediction + model2_fixed_prediction) %>%
-        left_join(test, ., by = c("line_name", "environment"))
+        left_join(test, ., by = c("line_name"))
       
       
       
-      ###################
-      ### Model 3 - random genotype (K) + random environment (E) + random regression of K * E
-      ###################
+      # ###################
+      # ### Model 3 - random genotype (K) + random environment (E) + random regression of K * E
+      # ###################
+      # 
+      # 
+      # 
+      # ## Calculate GxE matrix
+      # GE_mat <- kronecker(K, E_mat, make.dimnames = TRUE)
+      # 
+      # 
+      # ## Add GxE term to formula
+      # random_form3 <- add_predictors(random_form2, ~vs(line_name:environment, Gu = GE_mat))
+      # 
+      # ## Fit with sommer
+      # model3_fit <- mmer(fixed = fixed_form1, random = random_form3, data = train2, date.warning = FALSE)
+      # 
+      # 
+      # # Predict
+      # # Fixed effects
+      # model3_fixed_prediction <- model3_fit$Beta$Estimate[1]
+      # 
+      # # Random effects
+      # model3_random_prediction <- model3_fit$U %>% 
+      #   subset(., str_detect(names(.), "u:")) %>% 
+      #   map("value") %>%
+      #   map2(., names(.), ~tibble(term = names(.x), estimate = .x) %>% `names<-`(., c(str_remove(.y, "^u:"), paste0(.y, "_estimate"))))
+      # 
+      # model3_prediction <- model3_random_prediction %>%
+      #   map(~{
+      #     if (str_detect(names(.x)[1], ":")) {
+      #       separate(.x, names(.x)[1], str_split(names(.x)[1], ":")[[1]], sep = ":")
+      #     } else {
+      #       .x
+      #     }
+      #     
+      #   }) %>%
+      #   rev(.) %>%
+      #   reduce(., .f = left_join) %>%
+      #   mutate(prediction = rowSums(select(., contains("_estimate")))) %>% 
+      #   select(line_name, environment, prediction) %>% 
+      #   mutate(prediction = prediction + model3_fixed_prediction) %>%
+      #   left_join(test, ., by = c("line_name", "environment"))
+      # 
+      # 
+      # ###################
+      # ### Model 4 - random genotype (K) + fixed environment covariate + random regression of covariate on K
+      # ###################
       
-      
-      
-      ## Calculate GxE matrix
-      GE_mat <- kronecker(K, E_mat, make.dimnames = TRUE)
-      
-      
-      ## Add GxE term to formula
-      random_form3 <- add_predictors(random_form2, ~vs(line_name:environment, Gu = GE_mat))
-      
-      ## Fit with sommer
-      model3_fit <- mmer(fixed = value ~ 1, random = random_form3, data = train2, date.warning = FALSE)
-      
-      
-      # Predict
-      # Fixed effects
-      model3_fixed_prediction <- model3_fit$Beta$Estimate[1]
-      
-      # Random effects
-      model3_random_prediction <- model3_fit$U %>% 
-        subset(., str_detect(names(.), "u:")) %>% 
-        map("value") %>%
-        map2(., names(.), ~tibble(term = names(.x), estimate = .x) %>% `names<-`(., c(str_remove(.y, "^u:"), paste0(.y, "_estimate"))))
-      
-      model3_prediction <- model3_random_prediction %>%
-        map(~{
-          if (str_detect(names(.x)[1], ":")) {
-            separate(.x, names(.x)[1], str_split(names(.x)[1], ":")[[1]], sep = ":")
-          } else {
-            .x
-          }
-          
-        }) %>%
-        rev(.) %>%
-        reduce(., .f = left_join) %>%
-        mutate(prediction = rowSums(select(., contains("_estimate")))) %>% 
-        select(line_name, environment, prediction) %>% 
-        mutate(prediction = prediction + model3_fixed_prediction) %>%
-        left_join(test, ., by = c("line_name", "environment"))
-      
-      
-      ###################
-      ### Model 4 - random genotype (K) + random environment + random regression of covariate on K
-      ###################
+      # Fixed formula
+      fixed_form4 <- fixed_form2
       
       # Random effect formula
       # vs(x, y) specifies an interaction
-      random_form4 <- formula(paste0("~ vs(line_name, Gu = K) + environment + ", 
+      random_form4 <- formula(paste0("~ vs(line_name, Gu = K) + ", 
                                      paste0("vs(", test_covariates, ", line_name, Gu = K)", collapse = " + ")))
       
       ## Fit with sommer
-      model4_fit <- mmer(fixed = value ~ 1, random = random_form4, data = train2, date.warning = FALSE)
+      model4_fit <- mmer(fixed = fixed_form4, random = random_form4, data = train2, date.warning = FALSE)
       
       
       # Predict
       # Fixed effects
-      model4_fixed_prediction <- model4_fit$Beta$Estimate[1]
+      model4_fixed_prediction <- c(model4_fit$Beta$Estimate %*% c(1, test_covariate_x))
       
       # Random effects
       model4_random_prediction <- model4_fit$U %>% 
@@ -343,7 +347,7 @@ loeo_predictions_out <- data_train_test1 %>%
       out[[i]] <- bind_rows(
         mutate(model1_prediction, model = "model1"),
         mutate(model2_prediction, model = "model2"),
-        mutate(model3_prediction, model = "model3"),
+        # mutate(model3_prediction, model = "model3"),
         mutate(model4_prediction, model = "model4")
       )
       
@@ -470,15 +474,16 @@ loyo_predictions_out <- data_train_test1 %>%
       
       
       # Random effect formula
-      random_form1 <- ~vs(line_name, Gu = K) + environment
+      fixed_form1 <- value ~ 1 + environment
+      random_form1 <- ~vs(line_name, Gu = K)
       
       ## Fit with sommer
-      model1_fit <- mmer(fixed = value ~ 1, random = random_form1, data = train2, date.warning = FALSE)
+      model1_fit <- mmer(fixed = fixed_form1, random = random_form1, data = train2, date.warning = FALSE)
       
       
       # Predict
       # Fixed effects
-      model1_fixed_prediction <- model1_fit$Beta$Estimate
+      model1_fixed_prediction <- subset(model1_fit$Beta, Effect == "(Intercept)", Estimate, drop = TRUE)
       
       # Random effects
       model1_prediction <- model1_fit$U %>% 
@@ -506,37 +511,38 @@ loyo_predictions_out <- data_train_test1 %>%
         column_to_rownames("environment")
       
       # Matrix of covariates for the test environment
-      test_covariate_x <- t(as.matrix(ec_df[as.character(row$environment),, drop = FALSE]))
-      
-      
-      # Matrix of covariates for the test environment
       test_covariate_x <- t(as.matrix(ec_df[unique(test$environment),, drop = FALSE]))
+    
+      
+      # ## Calculate standardized difference between environments for each covariate
+      # ec_dist_mat <- map(ec_df, ~{
+      #   dist_mat <- as.matrix(dist(.x))
+      #   dimnames(dist_mat) <- list(row.names(ec_df), row.names(ec_df))
+      #   ## Standardize
+      #   dist_mat / diff(range(.x))
+      # })
+      # 
+      # ## Calculate the covariance matrix
+      # ## This line will sum each of the same coordinate element in the list of matrices
+      # E_mat <- 1 - reduce(ec_dist_mat, `+`)
       
       
-      ## Calculate standardized difference between environments for each covariate
-      ec_dist_mat <- map(ec_df, ~{
-        dist_mat <- as.matrix(dist(.x))
-        dimnames(dist_mat) <- list(row.names(ec_df), row.names(ec_df))
-        ## Standardize
-        dist_mat / diff(range(.x))
-      })
-      
-      ## Calculate the covariance matrix
-      ## This line will sum each of the same coordinate element in the list of matrices
-      E_mat <- 1 - reduce(ec_dist_mat, `+`)
-      
-      
-      
+      # Fixed formula
+      fixed_form2 <- as.formula(paste0("value ~ 1 +", paste0(test_covariates, collapse = " + ")))
       # Random effect formula
-      random_form2 <- ~vs(line_name, Gu = K) + vs(environment, Gu = E_mat)
+      # random_form2 <- ~vs(line_name, Gu = K) + vs(environment, Gu = E_mat)
+      random_form2 <- random_form1
       
       ## Fit with sommer
-      model2_fit <- mmer(fixed = value ~ 1, random = random_form2, data = train2, date.warning = FALSE)
+      model2_fit <- mmer(fixed = fixed_form2, random = random_form2, data = train2, date.warning = FALSE)
       
       
       # Predict
       # Fixed effects
-      model2_fixed_prediction <- model2_fit$Beta$Estimate
+      model2_fixed_prediction <- (cbind(mu = 1, t(test_covariate_x)) %*% model2_fit$Beta$Estimate) %>%
+        as.data.frame() %>%
+        rename(fixed_estimate = V1) %>%
+        rownames_to_column("environment")
       
       # Random effects
       model2_prediction <- model2_fit$U %>% 
@@ -544,73 +550,80 @@ loyo_predictions_out <- data_train_test1 %>%
         map("value") %>%
         map2(., names(.), ~tibble(term = names(.x), estimate = .x) %>% `names<-`(., c(str_remove(.y, "^u:"), "estimate"))) %>%
         reduce(crossing) %>%
+        crossing(., model2_fixed_prediction) %>%
         mutate(prediction = rowSums(select(., contains("estimate")))) %>% 
         select(line_name, environment, prediction) %>% 
-        mutate(prediction = prediction + model2_fixed_prediction) %>%
         left_join(test, ., by = c("line_name", "environment"))
       
       
       
-      ###################
-      ### Model 3 - random genotype (K) + random environment (E) + random regression of K * E
-      ###################
+      # ###################
+      # ### Model 3 - random genotype (K) + random environment (E) + random regression of K * E
+      # ###################
+      # 
+      # 
+      # 
+      # ## Calculate GxE matrix
+      # GE_mat <- kronecker(K, E_mat, make.dimnames = TRUE)
+      # 
+      # 
+      # ## Add GxE term to formula
+      # random_form3 <- add_predictors(random_form2, ~vs(line_name:environment, Gu = GE_mat))
+      # 
+      # ## Fit with sommer
+      # model3_fit <- mmer(fixed = value ~ 1, random = random_form3, data = train2, date.warning = FALSE)
+      # 
+      # 
+      # # Predict
+      # # Fixed effects
+      # model3_fixed_prediction <- model3_fit$Beta$Estimate[1]
+      # 
+      # # Random effects
+      # model3_random_prediction <- model3_fit$U %>% 
+      #   subset(., str_detect(names(.), "u:")) %>% 
+      #   map("value") %>%
+      #   map2(., names(.), ~tibble(term = names(.x), estimate = .x) %>% `names<-`(., c(str_remove(.y, "^u:"), paste0(.y, "_estimate"))))
+      # 
+      # model3_prediction <- model3_random_prediction %>%
+      #   map(~{
+      #     if (str_detect(names(.x)[1], ":")) {
+      #       separate(.x, names(.x)[1], str_split(names(.x)[1], ":")[[1]], sep = ":")
+      #     } else {
+      #       .x
+      #     }
+      #     
+      #   }) %>%
+      #   rev(.) %>%
+      #   reduce(., .f = left_join) %>%
+      #   mutate(prediction = rowSums(select(., contains("_estimate")))) %>% 
+      #   select(line_name, environment, prediction) %>% 
+      #   mutate(prediction = prediction + model3_fixed_prediction) %>%
+      #   left_join(test, ., by = c("line_name", "environment"))
+      # 
+      # 
+      # ###################
+      # ### Model 4 - random genotype (K) + random environment + random regression of covariate on K
+      # ###################
       
-      
-      
-      ## Calculate GxE matrix
-      GE_mat <- kronecker(K, E_mat, make.dimnames = TRUE)
-      
-      
-      ## Add GxE term to formula
-      random_form3 <- add_predictors(random_form2, ~vs(line_name:environment, Gu = GE_mat))
-      
-      ## Fit with sommer
-      model3_fit <- mmer(fixed = value ~ 1, random = random_form3, data = train2, date.warning = FALSE)
-      
-      
-      # Predict
-      # Fixed effects
-      model3_fixed_prediction <- model3_fit$Beta$Estimate[1]
-      
-      # Random effects
-      model3_random_prediction <- model3_fit$U %>% 
-        subset(., str_detect(names(.), "u:")) %>% 
-        map("value") %>%
-        map2(., names(.), ~tibble(term = names(.x), estimate = .x) %>% `names<-`(., c(str_remove(.y, "^u:"), paste0(.y, "_estimate"))))
-      
-      model3_prediction <- model3_random_prediction %>%
-        map(~{
-          if (str_detect(names(.x)[1], ":")) {
-            separate(.x, names(.x)[1], str_split(names(.x)[1], ":")[[1]], sep = ":")
-          } else {
-            .x
-          }
-          
-        }) %>%
-        rev(.) %>%
-        reduce(., .f = left_join) %>%
-        mutate(prediction = rowSums(select(., contains("_estimate")))) %>% 
-        select(line_name, environment, prediction) %>% 
-        mutate(prediction = prediction + model3_fixed_prediction) %>%
-        left_join(test, ., by = c("line_name", "environment"))
-      
-      
-      ###################
-      ### Model 4 - random genotype (K) + random environment + random regression of covariate on K
-      ###################
+
+      # Fixed formula
+      fixed_form4 <- fixed_form2
       
       # Random effect formula
       # vs(x, y) specifies an interaction
-      random_form4 <- formula(paste0("~ vs(line_name, Gu = K) + environment + ", 
+      random_form4 <- formula(paste0("~ vs(line_name, Gu = K) + ", 
                                      paste0("vs(", test_covariates, ", line_name, Gu = K)", collapse = " + ")))
       
       ## Fit with sommer
-      model4_fit <- mmer(fixed = value ~ 1, random = random_form4, data = train2, date.warning = FALSE)
+      model4_fit <- mmer(fixed = fixed_form4, random = random_form4, data = train2, date.warning = FALSE)
       
       
       # Predict
       # Fixed effects
-      model4_fixed_prediction <- model4_fit$Beta$Estimate[1]
+      model4_fixed_prediction <- (cbind(mu = 1, t(test_covariate_x)) %*% model4_fit$Beta$Estimate) %>%
+        as.data.frame() %>%
+        rename(fixed_estimate = V1) %>%
+        rownames_to_column("environment")
       
       # Random effects
       model4_random_prediction <- model4_fit$U %>% 
@@ -635,9 +648,9 @@ loyo_predictions_out <- data_train_test1 %>%
         gather(environment, response_estimate, -line_name)
       
       model4_prediction <- left_join(model4_random_prediction, model4_random_response_prediction, by = "line_name") %>%
+        crossing(., model4_fixed_prediction) %>%
         mutate(prediction = rowSums(select(., contains("_estimate")))) %>% 
         select(line_name, environment, prediction) %>% 
-        mutate(prediction = prediction + model4_fixed_prediction) %>%
         left_join(test, ., by = c("line_name", "environment"))
       
       
@@ -654,7 +667,7 @@ loyo_predictions_out <- data_train_test1 %>%
       out[[i]] <- bind_rows(
         mutate(model1_prediction, model = "model1"),
         mutate(model2_prediction, model = "model2"),
-        mutate(model3_prediction, model = "model3"),
+        # mutate(model3_prediction, model = "model3"),
         mutate(model4_prediction, model = "model4")
       )
       

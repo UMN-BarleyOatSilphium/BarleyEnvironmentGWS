@@ -16,6 +16,8 @@ library(effects) # For ls means / marginal means
 library(broom)
 library(car)
 library(lmerTest)
+library(patchwork)
+library(cowplot)
 
 
 ## Load the validation results
@@ -35,11 +37,26 @@ model_replace <- c("model1" = "G + e", "model2" = "G + E", "model3" = "G + E + G
 ### Leave-one-environment-out
 ###################################
 
-#
+## Add pop information
+loeo_predictions_df <- loeo_predictions_out %>%
+  mutate(pop = ifelse(line_name %in% tp, "tp", "vp"))
+  
+
+# Plot predicted versus observed value
+loeo_predictions_df %>%
+  filter(pop == "tp") %>%
+  ggplot(aes(x = prediction, y = value, color = environment)) +
+  geom_point() +
+  facet_wrap(trait ~ model, scales = "free", ncol = 4) +
+  theme_presentation2(10)
+
+
+
+
+
 
 ## Calculate accuracy per environment, model, and population
 loeo_predictions_ability <- loeo_predictions_df %>%
-  mutate(pop = ifelse(line_name %in% tp, "tp", "vp")) %>%
   group_by(trait, environment, model, pop) %>%
   summarize(ability = cor(prediction, value), bias = mean(prediction - value)) %>%
   ungroup() %>%
@@ -59,11 +76,44 @@ loeo_predictions_accuracy %>%
   theme_presentation(16)
 
 
-## Calculate average
-loeo_predictions_accuracy %>%
+## Calculate average and 1 sd
+loeo_predictions_accuracy_summ <- loeo_predictions_accuracy %>%
   group_by(trait, pop, model) %>%
-  summarize(accuracy = mean(accuracy)) %>%
-  spread(model, accuracy)
+  summarize_at(vars(accuracy, ability, bias), list(~mean, ~sd, lower = ~mean(.) - sd(.), upper = ~mean(.) + sd(.))) %>%
+  ungroup()
+
+
+# Function to add truncation to axis text
+axis_mod <- function(x, w) str_pad(string = x, width = w, side = "left", pad = " ")
+
+## Plot accuracy versus bias
+g_loeo_predictions_accuracy_list <- loeo_predictions_accuracy_summ %>%
+  # Determine the max width of axis variables
+  mutate(x_width = max(nchar(pretty(accuracy_lower))),
+         y_width = max(nchar(pretty(bias_lower)))) %>%
+  split(.$trait) %>%
+  map(~{
+    ggplot(data = .x, aes(x = accuracy_mean, y = bias_mean, xmin = accuracy_lower, xmax = accuracy_upper, 
+               ymin = bias_lower, ymax = bias_upper)) +
+      geom_errorbar(color = "grey85") + 
+      geom_errorbarh(color = "grey85") +
+      geom_point(aes(color = model, shape = pop), size = 2) +
+      scale_x_continuous(breaks = pretty) + 
+      scale_y_continuous(breaks = pretty, labels = function(x) str_pad(string = x, width = unique(.x$y_width), 
+                                                                       side = "left", pad = " ")) +
+      facet_grid(~ trait, scales = "free") +
+      theme_presentation2(base_size = 10) +
+      theme(axis.title = element_blank(), panel.grid.minor = element_blank())
+  })
+
+
+## Combine plots
+g_loeo_predictions_accuracy_summ <- plot_grid(plotlist = map(g_loeo_predictions_accuracy_list, ~.+theme(legend.position = "none")),
+                                              nrow = 1)
+# Save
+ggsave(filename = "loeo_accuracy_bias_combined.jpg", plot = g_loeo_predictions_accuracy_summ, path = fig_dir,
+       height = 2, width = 8.5, dpi = 1000)
+                                              
 
 
 
@@ -75,7 +125,7 @@ loeo_predictions_accuracy %>%
 #
 
 ## Calculate accuracy per environment, model, and population
-loyo_predictions_ability <- loyo_predictions_df %>%
+loyo_predictions_ability <- loyo_predictions_out %>%
   mutate(pop = ifelse(line_name %in% tp, "tp", "vp")) %>%
   group_by(trait, year, environment, model, pop) %>%
   summarize(ability = cor(prediction, value), bias = mean(prediction - value)) %>%
@@ -96,6 +146,43 @@ loyo_predictions_accuracy %>%
   scale_x_discrete(drop = FALSE) +
   facet_grid(trait ~ ., switch = "y") +
   theme_presentation2(16)
+
+## Calculate average and 1 sd
+loyo_predictions_accuracy_summ <- loyo_predictions_accuracy %>%
+  group_by(trait, pop, model) %>%
+  summarize_at(vars(accuracy, ability, bias), list(~mean, ~sd, lower = ~mean(.) - sd(.), upper = ~mean(.) + sd(.))) %>%
+  ungroup()
+
+
+## Plot accuracy versus bias
+g_loyo_predictions_accuracy_list <- loyo_predictions_accuracy_summ %>%
+  # Determine the max width of axis variables
+  mutate(x_width = max(nchar(pretty(accuracy_lower))),
+         y_width = max(nchar(pretty(bias_lower)))) %>%
+  split(.$trait) %>%
+  map(~{
+    ggplot(data = .x, aes(x = accuracy_mean, y = bias_mean, xmin = accuracy_lower, xmax = accuracy_upper, 
+                          ymin = bias_lower, ymax = bias_upper)) +
+      geom_errorbar(color = "grey85") + 
+      geom_errorbarh(color = "grey85") +
+      geom_point(aes(color = model, shape = pop), size = 2) +
+      scale_x_continuous(breaks = pretty) + 
+      scale_y_continuous(breaks = pretty, labels = function(x) str_pad(string = x, width = unique(.x$y_width), 
+                                                                       side = "left", pad = " ")) +
+      facet_grid(~ trait, scales = "free") +
+      theme_presentation2(base_size = 10) +
+      theme(axis.title = element_blank(), panel.grid.minor = element_blank())
+  })
+
+
+## Combine plots
+g_loyo_predictions_accuracy_summ <- plot_grid(plotlist = map(g_loyo_predictions_accuracy_list, ~.+theme(legend.position = "none")),
+                                              nrow = 1)
+# Save
+ggsave(filename = "loyo_accuracy_bias_combined.jpg", plot = g_loyo_predictions_accuracy_summ, path = fig_dir,
+       height = 2, width = 8.5, dpi = 1000)
+
+
 
 
 
