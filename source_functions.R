@@ -230,11 +230,12 @@ predict_gv <- function(train, test, model = c("model1", "model2", "model3"),
       map(~rename_at(.x, vars(1), ~str_remove(., "u:"))) %>% 
       modify_if(.x = ., .p = ~str_detect(names(.)[1], ":"), ~separate(data = .x, col = 1, into = c("line_name", "environment"), sep = ":")) %>%
       # Include the testing df, but only the columns (ranefs no int). This makes merging easier
-      c(list(select(test, ranefs_no_int)), .) %>%
+      c(list( distinct(select(test, ranefs_no_int)) ), .) %>%
       reduce(.x = ., .f = left_join) %>%
       ## Sum predictions
       mutate(prediction = rowMeans(select(., contains("pred")))) %>%
       select(ranefs_no_int, prediction)
+    
     
     ## Merge with test
     test1 <- left_join(x = test, y = fit_pred, by = ranefs_no_int)

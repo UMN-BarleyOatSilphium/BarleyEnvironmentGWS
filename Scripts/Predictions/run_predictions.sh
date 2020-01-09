@@ -1,8 +1,8 @@
 #!/bin/bash
 
-#PBS -l walltime=36:00:00,mem=62gb,nodes=1:ppn=8
+#PBS -l walltime=24:00:00,mem=64gb,nodes=1:ppn=4
 #PBS -N loeo_predictions
-# #PBS -N loeo_predictions
+# #PBS -N loyo_predictions
 #PBS -M neyha001@umn.edu
 #PBS -m abe
 #PBS -r n
@@ -13,7 +13,10 @@ cd /panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/S2MET_Predictions_Mode
 module load R/3.5.0
 # module load R/3.5.2_mkl
 
-# Predictions by environmental rank
+# Leave-one-environment-out
 Rscript environment_loeo_predictions.R
+
+# Leave-one-year-out
+Rscript environment_loyo_predictions.R
 
 

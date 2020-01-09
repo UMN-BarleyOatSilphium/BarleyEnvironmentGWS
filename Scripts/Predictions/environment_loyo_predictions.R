@@ -2,7 +2,7 @@
 ## 
 ## Environment-specific predictions
 ## 
-## Leave-one-environment-out prediction
+## Leave-one-year-out prediction
 ## 
 ## Author: Jeff Neyhart
 ## Last modified: 8 January 2020
@@ -70,16 +70,16 @@ data_to_model <- S2_MET_BLUEs %>%
 
 
 # Generate skeleton train/test sets for LOEO
-loeo_train_test <- data_to_model %>%
+loyo_train_test <- data_to_model %>%
   group_by(trait) %>%
-  do({crossv_loo2(data = group_by(., environment))}) %>%
+  do({crossv_loo2(data = group_by(.x, year))}) %>%
   ungroup() %>%
   mutate(train = map(train, ~filter(as.data.frame(.), line_name %in% tp_geno)),
          test = map(test, ~filter(as.data.frame(.), line_name %in% c(tp_geno, vp_geno))))
   
 
 ## Assign cores and split
-data_train_test1 <- loeo_train_test %>% 
+data_train_test1 <- loyo_train_test %>% 
   assign_cores(df = ., n_core = n_core, split = TRUE)
 
 
@@ -89,7 +89,7 @@ data_train_test1 <- loeo_train_test %>%
 
 
 ## Parallelize
-loeo_predictions_out <- data_train_test1 %>%
+loyo_predictions_out <- data_train_test1 %>%
   coreApply(X = ., FUN = function(core_df) {
     
     ## Output list
@@ -191,7 +191,7 @@ loeo_predictions_out <- data_train_test1 %>%
 
 
 ## Save the results
-save("loeo_predictions_out", file = file.path(result_dir, "loeo_predictions.RData"))
+save("loyo_predictions_out", file = file.path(result_dir, "loyo_predictions.RData"))
 
 
 
