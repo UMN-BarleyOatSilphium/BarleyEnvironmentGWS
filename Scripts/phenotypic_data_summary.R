@@ -15,6 +15,7 @@ library(nlme)
 library(modelr)
 library(broom)
 library(effects)
+library(Bilinear)
 
 # Repository directory
 repo_dir <- getwd()
@@ -402,33 +403,33 @@ stage_two_fits_HD_varcomp <- stage_two_fits_HD %>%
 #######
 
 
-## Calculate genotype-location means
-S2_MET_Loc_BLUEs_model <- S2_MET_BLUEs_tomodel %>%
-  filter(population == "all") %>%
-  group_by(trait) %>%
-  nest() %>%
-  mutate(out = list(NULL))
-
-for (i in seq(nrow(S2_MET_Loc_BLUEs_model))) {
-  
-  df <- S2_MET_Loc_BLUEs_model$data[[i]]
-  wts <- df$std_error^2
-
-  # print(unique(df$trait))
-    
-  ## Fit a model to estimate genotype-location means
-  fit <- lmer(value ~ line_name + location + (1|year) + (1|line_name:year), data = df, weights = wts)
-  
-  # Get the effects
-  effs <- Effect(focal.predictors = c("line_name", "location"), mod = fit)
-  S2_MET_Loc_BLUEs_model$out[[i]] <- as.data.frame(effs)
-  
-}
-
-S2_MET_Loc_BLUEs <- unnest(S2_MET_Loc_BLUEs_model, out)
-
-## Save
-save("S2_MET_Loc_BLUEs", file = file.path(data_dir, "S2MET_Location_BLUEs.RData"))
+# ## Calculate genotype-location means
+# S2_MET_Loc_BLUEs_model <- S2_MET_BLUEs_tomodel %>%
+#   filter(population == "all") %>%
+#   group_by(trait) %>%
+#   nest() %>%
+#   mutate(out = list(NULL))
+# 
+# for (i in seq(nrow(S2_MET_Loc_BLUEs_model))) {
+#   
+#   df <- S2_MET_Loc_BLUEs_model$data[[i]]
+#   wts <- df$std_error^2
+# 
+#   # print(unique(df$trait))
+#     
+#   ## Fit a model to estimate genotype-location means
+#   fit <- lmer(value ~ line_name + location + (1|year) + (1|line_name:year), data = df, weights = wts)
+#   
+#   # Get the effects
+#   effs <- Effect(focal.predictors = c("line_name", "location"), mod = fit)
+#   S2_MET_Loc_BLUEs_model$out[[i]] <- as.data.frame(effs)
+#   
+# }
+# 
+# S2_MET_Loc_BLUEs <- unnest(S2_MET_Loc_BLUEs_model, out)
+# 
+# ## Save
+# save("S2_MET_Loc_BLUEs", file = file.path(data_dir, "S2MET_Location_BLUEs.RData"))
 
 
 
@@ -828,3 +829,234 @@ var_comp_table <- select(stage_two_fits_GYL_varprop1, trait, population, source,
 
 write_csv(x = var_comp_table, path = file.path(fig_dir, "population_variance_components_decomposed.csv"))
 
+
+
+
+
+
+
+
+###########################
+## AMMI model fit
+###########################
+
+## Amend K to include non-genotyped lines
+non_genotyped <- c(setdiff(tp, tp_geno), setdiff(vp, vp_geno))
+K_ng <- diag(length(non_genotyped))
+dimnames(K_ng) <- list(non_genotyped, non_genotyped)
+
+# Add to K
+K1 <- as.matrix(bdiag(K, K_ng))
+dimnames(K1) <- replicate(2, c(colnames(K), colnames(K_ng)), simplify = FALSE)
+# Sort names
+K1 <- K1[order(colnames(K1)), order(colnames(K1))]
+
+
+# Fit per trait
+ammi_fit <- S2_MET_BLUEs_tomodel %>%
+  filter(population == "tp") %>%
+  group_by(trait) %>%
+  do({
+    df <- .
+    
+    ## Create interaction factor
+    df1 <- droplevels(df) %>%
+      mutate(environment = as.factor(environment),
+             ge = interaction(line_name, environment, sep = ":", drop = FALSE)) %>%
+      # Create contrasts
+      mutate_at(vars(line_name, environment), ~`contrasts<-`(., value = `colnames<-`(x = contr.sum(levels(.)), value = head(levels(.), -1))))
+    
+    # Create two-way table of genos and enviros
+    ge_mat <- df1 %>% 
+      select(line_name, environment, value) %>% 
+      spread(environment, value) %>% 
+      as.data.frame() %>% 
+      column_to_rownames("line_name") %>% 
+      as.matrix()
+    
+    ## Calculate correlation matrix between environments
+    E_cor <- cor(x = ge_mat, use = "pairwise.complete.obs")
+    # Use this to create G-E relationship matrix
+    K_ge <- kronecker(K1[levels(df1$line_name), levels(df1$line_name)], E_cor, make.dimnames = TRUE)
+    
+    ## fit a mixed model to predict all genotype-environment means ##
+    # MF
+    mf <- model.frame(value ~ line_name + environment, df1)
+    y <- model.response(mf)
+    X <- model.matrix(~ 1 + line_name + environment, data = mf)
+    Z <- model.matrix(~ -1 + line_name:environment, mf)
+    
+    fit1 <- mixed.solve(y = y, Z = Z, K = K_ge, X = X, method = "REML")
+    
+    ## Pull out effects
+    grand_mean <- fit1$beta[1]
+    g_effects <- fit1$beta %>% subset(., str_detect(names(.), "line_name"))
+    e_effects <- fit1$beta %>% subset(., str_detect(names(.), "environment"))
+    # Add last level
+    g_effects <- c(g_effects, -sum(g_effects))
+    e_effects <- c(e_effects, -sum(e_effects))
+    
+    # Create df
+    g_effects_df <- tibble(line_name = levels(mf$line_name), effect = g_effects)
+    e_effects_df <- tibble(environment = levels(mf$environment), effect = e_effects)
+    
+    ## Random effects
+    rand_eff_df <- fit1$u %>% 
+      tibble(term = names(.), effect = .) %>%
+      separate(term, c("line_name", "environment"), sep = ":")
+    
+    ## Combine and calculate y_hat
+    y_hat_df <- rand_eff_df %>%
+      full_join(., g_effects_df, by = "line_name") %>%
+      full_join(., e_effects_df, by = "environment") %>%
+      mutate(y_hat = grand_mean + rowSums(select(., contains("effect")))) %>%
+      select(-contains("effect"))
+    
+    ## Calculate prediction accuracy
+    acc <- with(left_join(df1, y_hat_df, by = c("environment", "line_name")), cor(value, y_hat))
+    
+    
+    # Fit the ammi model using the bilinear package
+    # Use Ftest for speed - we don't care about significance
+    fit_ammi <- bilinear(x = y_hat_df, G = "line_name", E = "environment", y = "y_hat", model = "AMMI", alpha = alpha, B = 10000)
+    
+    ## Output a tibble
+    tibble(y_hat = list(y_hat_df), model_acc = acc, fit_ammi = list(fit_ammi))
+    
+  }) %>% ungroup()
+
+
+
+
+## Extract genotype and environment scores
+ammi_scores <- ammi_fit %>% 
+  mutate(anova = map(fit_ammi, "ANOVA") %>% map(~rownames_to_column(., "term")),
+         # Calculate variance explained by PCs using eigenvalues or sums of squares
+         varprop = map(fit_ammi, "svdE") %>% map(~tibble(PC = paste0("PC", seq_along(.$d)), eigenvalue = .$d, 
+                                                         propvar_eigen = eigenvalue / sum(eigenvalue))),
+         varprop = map2(varprop, anova, left_join, by = c("PC" = "term")),
+         varprop = map(varprop, ~mutate(.x, propvar_SS = SS / sum(SS, na.rm = TRUE), PC_num = parse_number(PC)) %>% 
+                         select(-Df, -MS, -testStatistic)))
+
+
+## Display proportion of variance explained using normalized eigenvalues
+ammi_scores %>%
+  unnest(varprop) %>% 
+  # Plot
+  ggplot(aes(x = PC_num, y = propvar_SS)) +
+  geom_point() + 
+  facet_wrap(~ trait, scales = "free")
+
+## Determine significant PCs using "elbow" method
+# Tolerance for difference in variance explained
+tol <- 0.03
+
+ammi_sig_PCs <- ammi_scores %>%
+  unnest(varprop) %>%
+  #
+  mutate(propvar = propvar_SS) %>%
+  #
+  arrange(trait, PC_num) %>%
+  split(.$trait) %>% 
+  ## Calculate the difference between steps of adding PCs. Find the first step when the difference is
+  ## below the tolerance threshold
+  map_df(~mutate(., propvar_diff = c(abs(diff(propvar)), 0), 
+                 stop = which.min(propvar_diff >= tol), 
+                 nPC = stop - 1))
+
+## Summary df of number of sig PCs
+ammi_sig_PCs_summ <- ammi_sig_PCs %>%
+  group_by(trait) %>%
+  filter(PC_num %in% seq(1, unique(nPC))) %>%
+  summarize(total_propvar = sum(propvar), nPC = unique(nPC))
+
+
+## Fit a model for that number of PCS
+ammiN_fit <- ammi_fit %>%
+  left_join(., ammi_sig_PCs_summ, by = "trait") %>%
+  group_by(trait) %>%
+  do({
+    
+    row <- .
+    nPC <- row$nPC
+  
+    # Get data
+    df <- row$y_hat[[1]] %>%
+      rename(value = y_hat) %>%
+      # Create contrasts
+      mutate_at(vars(line_name, environment), as.factor) %>%
+      mutate_at(vars(line_name, environment), ~`contrasts<-`(., value = `colnames<-`(x = contr.sum(levels(.)), value = head(levels(.), -1))))
+    
+    ## AOV of main effects
+    fit1 <- aov(value ~ 1 + line_name + environment, data = df)
+    
+    ## Get effects
+    mu <- coef(fit1)[1]
+    fit1_effect <- model.tables(x = fit1, type = "effect")
+    
+    # Get residuals and create two-way table
+    df1 <- add_residuals(data = df, model = fit1)
+    resid_mat <- df1 %>%
+      select(-value) %>% 
+      spread(environment, resid) %>%
+      as.data.frame() %>%
+      column_to_rownames("line_name") %>%
+      as.matrix()
+    
+    ## SVD
+    resid_svd <- svd(x = resid_mat, nu = nPC, nv = nPC)
+    
+    ## Calculate scores and grab the means
+    gscores <- (resid_svd$u %*% sqrt(resid_svd$d[seq(1, nPC)])) %>%
+      `rownames<-`(., rownames(resid_mat)) %>%
+      as.data.frame() %>%
+      rownames_to_column("line_name") %>%
+      rename(score = V1) %>%
+      left_join(., fit1_effect$tables$line_name %>% tibble(line_name = names(.), effect = .), by = "line_name")
+      
+    escores <- (resid_svd$v %*% sqrt(resid_svd$d[seq(1, nPC)])) %>%
+      `rownames<-`(., colnames(resid_mat)) %>%
+      as.data.frame() %>%
+      rownames_to_column("environment") %>%
+      rename(score = V1) %>%
+      left_join(., fit1_effect$tables$environment %>% tibble(environment = names(.), effect = .), by = "environment")
+    
+    # Extract matrices
+    A <- resid_svd$u
+    d <- resid_svd$d[seq(1:nPC)]
+    D <- diag(seq_along(d))
+    diag(D) <- d
+    B <- resid_svd$v
+    
+    ## Calculate phi
+    phi <- A %*% D %*% t(B)
+    # Add names
+    dimnames(phi) <- dimnames(resid_mat)
+    
+    
+    ## Return tibble
+    tibble(mu = mu, scores = list(list(gscores = gscores, escores = escores)), phi = list(phi))
+    
+  }) %>% ungroup()
+
+
+
+
+## Save
+save("ammi_fit", "ammiN_fit", file = file.path(result_dir, "ammi_model_fit.RData"))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 

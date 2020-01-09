@@ -12,9 +12,9 @@ repo_dir <- getwd()
 source(file.path(repo_dir, "source.R"))
 
 
-# Run the source script
-repo_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/S2MET_Predictions_Models/"
-source(file.path(repo_dir, "source_MSI.R"))
+# # Run the source script
+# repo_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/S2MET_Predictions_Models/"
+# source(file.path(repo_dir, "source_MSI.R"))
 
 ## Number of cores
 n_core <- detectCores()
@@ -30,6 +30,8 @@ library(parallel)
 
 ## Load environmental covariables
 load(file = file.path(result_dir, "ec_model_building.RData"))
+# Rename
+ec_model_building <- unified_ec_models
 
 ## Load the environmental covariates
 load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates.RData"))
@@ -45,7 +47,7 @@ load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariat
 
 
 
-### Parent-offspring validation
+### CV0 and POV0
 
 # Data to use
 data_to_model <- S2_MET_BLUEs %>% 
@@ -88,8 +90,7 @@ data_train_test <- data_to_model %>%
 
 ## Assign cores and split
 data_train_test1 <- data_train_test %>% 
-  assign_cores(df = ., n_core = n_core) %>% 
-  split(.$core)
+  assign_cores(df = ., n_core = n_core, split = TRUE)
 
 
 # Iterate over rows
@@ -99,7 +100,7 @@ data_train_test1 <- data_train_test %>%
 
 ## Parallelize
 loeo_predictions_out <- data_train_test1 %>%
-  mclapply(X = ., mc.cores = n_core, FUN = function(core_df) {
+  coreApply(X = ., FUN = function(core_df) {
     
     ## Output list
     out <- vector("list", nrow(core_df))
@@ -114,34 +115,48 @@ loeo_predictions_out <- data_train_test1 %>%
         select(environment, line_name, value)
       
       ## Get the covariate model
-      ec_model_i <- subset(ec_model_building, trait == row$trait, final_model, drop = T)[[1]]
+      ec_model_i <- ec_model_building %>% 
+        unnest(final_model) %>%
+        subset(trait == row$trait & model == "model3", object, drop = TRUE)
+        
+      
+        
       # # Convert the model to fixed
       # ec_model_form <- as.formula(paste0("value ~ 1 + ", paste0(str_remove(attr(terms(formula(ec_model_i)), "term.labels"), "1 \\| "), collapse = " + ")))
       # # Remove environment
       # ec_model_form_no_env <- formula(drop.terms(terms(ec_model_form), 2, keep.response = TRUE))
       
       # Keep same model
-      ec_model_form <- formula(ec_model_i)
+      ec_model_form <- formula(ec_model_i[[1]])
       
-      ## All covariates that will be used
-      env_covariate_list <- intersect(names(ec_tomodel), all.vars(ec_model_form)) %>%
-        str_subset(., "environment", negate = TRUE)
+      ## Fixed covariates
+      fixed_covariates <- all.vars(ec_model_form) %>% 
+        subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|", negate = T), 
+                                             pattern = .))))
+      
+      ## Random regression covariates
+      random_covariates <- all.vars(ec_model_form) %>% 
+        subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|"), 
+                                             pattern = .)))) %>%
+        setdiff(., "line_name")
+      
+      ## all covariates
+      all_covariates <- union(fixed_covariates, random_covariates)
       
       ## Add covariates to the train df
-      train1 <- ec_tomodel %>%
-        select(., environment, env_covariate_list) %>%
+      train1 <- ec_tomodel_centered %>%
+        select(., environment, all_covariates) %>%
         left_join(mutate(train, environment = as.character(environment)), ., by = "environment") %>%
         mutate(environment = as.factor(environment),
                line_name = factor(line_name, levels = c(tp_geno, vp_geno)))
       
-      test1 <- ec_tomodel %>%
-        select(., environment, env_covariate_list) %>%
+      test1 <- ec_tomodel_centered %>%
+        select(., environment, all_covariates) %>%
         left_join(mutate(test, environment = as.character(environment)), ., by = "environment") %>%
         mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno)))
       
       ## Extract value of covariates
-      test_covariates <- env_covariate_list
-      
+      test_covariates <- setdiff(all_covariates, "line_name")
       
       
       
@@ -187,15 +202,9 @@ loeo_predictions_out <- data_train_test1 %>%
       ### Model 2 - random genotype (K) + fixed environment based on covariate
       ###################
       
-      ## Copy line_name as new factor / variable
-      train2 <- bind_cols(train1, rename_all(as.data.frame(rerun(length(test_covariates), train1$line_name)), 
-                                             ~paste0("line_name", seq_along(test_covariates)))) %>%
-        mutate(environment = factor(environment, levels = c(as.character(row$environment), levels(train1$environment))),
-               ge = interaction(line_name, environment, drop = FALSE, sep = ":"))
-      
       
       ## Create the environmental covariance matrix
-      ec_df <- ec_tomodel %>% 
+      ec_df <- ec_tomodel_centered %>% 
         filter(environment %in% levels(train2$environment)) %>% 
         select(environment, test_covariates) %>%
         as.data.frame() %>%
@@ -203,8 +212,8 @@ loeo_predictions_out <- data_train_test1 %>%
       
       
       # Matrix of covariates for the test environment
-      test_covariate_x <- t(as.matrix(ec_df[as.character(row$environment),, drop = FALSE]))
-      
+      fixed_covariate_x <- t(as.matrix(ec_df[as.character(row$environment), fixed_covariates, drop = FALSE]))
+      random_covariate_x <- t(as.matrix(ec_df[as.character(row$environment), random_covariates, drop = FALSE]))
       
       # ## Calculate standardized difference between environments for each covariate
       # ec_dist_mat <- map(ec_df, ~{
@@ -219,7 +228,7 @@ loeo_predictions_out <- data_train_test1 %>%
       # E_mat <- 1 - reduce(ec_dist_mat, `+`)
       
       # Fixed formula
-      fixed_form2 <- as.formula(paste0("value ~ 1 +", paste0(test_covariates, collapse = " + ")))
+      fixed_form2 <- as.formula(paste0("value ~ 1 +", paste0(fixed_covariates, collapse = " + ")))
       # Random effect formula
       # random_form2 <- ~vs(line_name, Gu = K) + vs(environment, Gu = E_mat)
       random_form2 <- random_form1
@@ -230,7 +239,7 @@ loeo_predictions_out <- data_train_test1 %>%
       
       # Predict
       # Fixed effects
-      model2_fixed_prediction <- c(model2_fit$Beta$Estimate %*% c(1, test_covariate_x))
+      model2_fixed_prediction <- c(model2_fit$Beta$Estimate %*% c(1, fixed_covariate_x))
       
       # Random effects
       model2_prediction <- model2_fit$U %>% 
@@ -288,10 +297,12 @@ loeo_predictions_out <- data_train_test1 %>%
       #   mutate(prediction = prediction + model3_fixed_prediction) %>%
       #   left_join(test, ., by = c("line_name", "environment"))
       # 
-      # 
-      # ###################
-      # ### Model 4 - random genotype (K) + fixed environment covariate + random regression of covariate on K
-      # ###################
+      
+      
+      
+      ###################
+      ### Model 4 - random genotype (K) + fixed environment covariate + random regression of covariate on K
+      ###################
       
       # Fixed formula
       fixed_form4 <- fixed_form2
@@ -299,41 +310,49 @@ loeo_predictions_out <- data_train_test1 %>%
       # Random effect formula
       # vs(x, y) specifies an interaction
       random_form4 <- formula(paste0("~ vs(line_name, Gu = K) + ", 
-                                     paste0("vs(", test_covariates, ", line_name, Gu = K)", collapse = " + ")))
+                                     paste0("vs(", random_covariates, ", line_name, Gu = K)", collapse = " + ")))
       
       ## Fit with sommer
       model4_fit <- mmer(fixed = fixed_form4, random = random_form4, data = train2, date.warning = FALSE)
       
+      ## If the model fails, do not return predictions for this model
+      if (length(model4_fit) == 0) {
+        
+        model4_prediction <- mutate(test, prediction = as.numeric(NA))
+        
+      } else {
       
-      # Predict
-      # Fixed effects
-      model4_fixed_prediction <- c(model4_fit$Beta$Estimate %*% c(1, test_covariate_x))
-      
-      # Random effects
-      model4_random_prediction <- model4_fit$U %>% 
-        subset(., str_detect(names(.), ":")) %>% 
-        map("value") %>%
-        map(~tibble(term = names(.x), estimate = .x)) %>%
-        imap(~`names<-`(.x, rev(str_split(.y, pattern = ":")[[1]]))) %>%
-        reduce(left_join, by = "line_name") %>%
-        rename_at(vars(u), ~"genotype_mean_estimate")
-      
-      ## Convert random regression coefficients to matrix
-      ec_Beta <- model4_random_prediction %>%
-        select(-genotype_mean_estimate) %>%
-        as.data.frame(.) %>% 
-        column_to_rownames("line_name") %>% 
-        as.matrix()
-      
-      ## Predict the genotype-specific value for the target environment
-      model4_random_prediction1 <- model4_random_prediction %>%
-        mutate(response_estimate = c(ec_Beta %*% test_covariate_x))
-      
-      model4_prediction <- model4_random_prediction1 %>%
-        mutate(prediction = rowSums(select(., contains("_estimate")))) %>% 
-        select(line_name, prediction) %>% 
-        mutate(prediction = prediction + model4_fixed_prediction) %>%
-        left_join(test, ., by = c("line_name"))
+        # Predict
+        # Fixed effects
+        model4_fixed_prediction <- c(model4_fit$Beta$Estimate %*% c(1, fixed_covariate_x))
+        
+        # Random effects
+        model4_random_prediction <- model4_fit$U %>% 
+          subset(., str_detect(names(.), ":")) %>% 
+          map("value") %>%
+          map(~tibble(term = names(.x), estimate = .x)) %>%
+          imap(~`names<-`(.x, rev(str_split(.y, pattern = ":")[[1]]))) %>%
+          reduce(left_join, by = "line_name") %>%
+          rename_at(vars(u), ~"genotype_mean_estimate")
+        
+        ## Convert random regression coefficients to matrix
+        ec_Beta <- model4_random_prediction %>%
+          select(-genotype_mean_estimate) %>%
+          as.data.frame(.) %>% 
+          column_to_rownames("line_name") %>% 
+          as.matrix()
+        
+        ## Predict the genotype-specific value for the target environment
+        model4_random_prediction1 <- model4_random_prediction %>%
+          mutate(response_estimate = c(ec_Beta %*% random_covariate_x))
+        
+        model4_prediction <- model4_random_prediction1 %>%
+          mutate(prediction = rowSums(select(., contains("_estimate")))) %>% 
+          select(line_name, prediction) %>% 
+          mutate(prediction = prediction + model4_fixed_prediction) %>%
+          left_join(test, ., by = c("line_name"))
+        
+      }
       
       
       
@@ -402,9 +421,7 @@ data_train_test <- data_to_model %>%
 
 ## Assign cores and split
 data_train_test1 <- data_train_test %>% 
-  assign_cores(df = ., n_core = n_core) %>% 
-  split(.$core)
-
+  assign_cores(df = ., n_core = n_core, split = TRUE)
 
 # Iterate over rows
 # for (i in seq(nrow(loeo_predictions_out))) {
@@ -413,7 +430,7 @@ data_train_test1 <- data_train_test %>%
 
 ## Parallelize
 loyo_predictions_out <- data_train_test1 %>%
-  mclapply(X = ., mc.cores = n_core, FUN = function(core_df) {
+  coreApply(X = ., FUN = function(core_df) {
     
     ## Output list
     out <- vector("list", nrow(core_df))
@@ -430,46 +447,61 @@ loyo_predictions_out <- data_train_test1 %>%
       train <- droplevels(subset(data_to_model, id %in% row$train[[1]]$id)) %>%
         mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno)))
       
+      ## Test and training environments
+      test_environments <- unique(as.character(test$environment))
+      train_environments <- unique(as.character(train$environment))
+      
+      
       ## Get the covariate model
-      ec_model_i <- subset(ec_model_building, trait == row$trait, final_model, drop = T)[[1]]
-      # # Convert the model to fixed
-      # ec_model_form <- as.formula(paste0("value ~ 1 + ", paste0(str_remove(attr(terms(formula(ec_model_i)), "term.labels"), "1 \\| "), collapse = " + ")))
-      # # Remove environment
-      # ec_model_form_no_env <- formula(drop.terms(terms(ec_model_form), 2, keep.response = TRUE))
-      
+      ec_model_i <- ec_model_building %>% 
+        unnest(final_model) %>%
+        subset(trait == row$trait & model == "model3", object, drop = TRUE)
+
       # Keep same model
-      ec_model_form <- formula(ec_model_i)
+      ec_model_form <- formula(ec_model_i[[1]])
       
-      ## All covariates that will be used
-      env_covariate_list <- intersect(names(ec_tomodel), all.vars(ec_model_form)) %>%
-        str_subset(., "environment", negate = TRUE)
+      
+      ## Fixed covariates
+      fixed_covariates <- all.vars(ec_model_form) %>% 
+        subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|", negate = T), 
+                                             pattern = .))))
+      
+      ## Random regression covariates
+      random_covariates <- all.vars(ec_model_form) %>% 
+        subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|"), 
+                                             pattern = .)))) %>%
+        setdiff(., "line_name")
+      
+      ## all covariates
+      all_covariates <- union(fixed_covariates, random_covariates)
       
       ## Add covariates to the train df
-      train1 <- ec_tomodel %>%
-        select(., environment, env_covariate_list) %>%
-        left_join(train, ., by = "environment") %>%
-        mutate(environment = factor(environment, levels = c(unique(.$environment), unique(test$environment))),
+      train1 <- ec_tomodel_centered %>%
+        select(., environment, all_covariates) %>%
+        left_join(mutate(train, environment = as.character(environment)), ., by = "environment") %>%
+        mutate(environment = as.factor(environment),
                line_name = factor(line_name, levels = c(tp_geno, vp_geno)))
       
-      test1 <- ec_tomodel %>%
-        select(., environment, env_covariate_list) %>%
-        left_join(test, ., by = "environment") %>%
+      test1 <- ec_tomodel_centered %>%
+        select(., environment, all_covariates) %>%
+        left_join(mutate(test, environment = as.character(environment)), ., by = "environment") %>%
         mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno)))
       
       ## Extract value of covariates
-      test_covariates <- env_covariate_list
+      test_covariates <- setdiff(all_covariates, "line_name")
+
       
       
       
       
       ###################
-      ### Model 1 - random genotype (covariate) and environment
+      ### Model 1 - random genotype (covariate) and fixed environment
       ###################
       
       ## Copy line_name as new factor / variable
       train2 <- bind_cols(train1, rename_all(as.data.frame(rerun(length(test_covariates), train1$line_name)), 
                                              ~paste0("line_name", seq_along(test_covariates)))) %>%
-        mutate(environment = factor(environment, levels = c(as.character(row$environment), levels(train1$environment))),
+        mutate(environment = factor(environment, levels = c(train_environments, test_environments)),
                ge = interaction(line_name, environment, drop = FALSE, sep = ":"))
       
       
@@ -499,20 +531,21 @@ loyo_predictions_out <- data_train_test1 %>%
       
       
       ###################
-      ### Model 2 - random genotype (K) + random environment (E)
+      ### Model 2 - random genotype (K) + fixed environment based on covariate
       ###################
       
       
       ## Create the environmental covariance matrix
-      ec_df <- ec_tomodel %>% 
+      ec_df <- ec_tomodel_centered %>% 
         filter(environment %in% levels(train2$environment)) %>% 
         select(environment, test_covariates) %>%
         as.data.frame() %>%
         column_to_rownames("environment")
       
+      
       # Matrix of covariates for the test environment
-      test_covariate_x <- t(as.matrix(ec_df[unique(test$environment),, drop = FALSE]))
-    
+      fixed_covariate_x <- t(as.matrix(ec_df[test_environments, fixed_covariates, drop = FALSE]))
+      random_covariate_x <- t(as.matrix(ec_df[test_environments, random_covariates, drop = FALSE]))
       
       # ## Calculate standardized difference between environments for each covariate
       # ec_dist_mat <- map(ec_df, ~{
@@ -526,9 +559,8 @@ loyo_predictions_out <- data_train_test1 %>%
       # ## This line will sum each of the same coordinate element in the list of matrices
       # E_mat <- 1 - reduce(ec_dist_mat, `+`)
       
-      
       # Fixed formula
-      fixed_form2 <- as.formula(paste0("value ~ 1 +", paste0(test_covariates, collapse = " + ")))
+      fixed_form2 <- as.formula(paste0("value ~ 1 +", paste0(fixed_covariates, collapse = " + ")))
       # Random effect formula
       # random_form2 <- ~vs(line_name, Gu = K) + vs(environment, Gu = E_mat)
       random_form2 <- random_form1
@@ -536,13 +568,15 @@ loyo_predictions_out <- data_train_test1 %>%
       ## Fit with sommer
       model2_fit <- mmer(fixed = fixed_form2, random = random_form2, data = train2, date.warning = FALSE)
       
+      ## Get the estimates of the fixed effect coefficients
+      fixed_coef <- coef.mmer(model2_fit)
+      # Model matrix of fixed effects
+      fixed_X <- rbind(`(Intercept)` = 1, fixed_covariate_x)[as.character(fixed_coef$Effect),,drop = FALSE]
+      
       
       # Predict
       # Fixed effects
-      model2_fixed_prediction <- (cbind(mu = 1, t(test_covariate_x)) %*% model2_fit$Beta$Estimate) %>%
-        as.data.frame() %>%
-        rename(fixed_estimate = V1) %>%
-        rownames_to_column("environment")
+      model2_fixed_prediction <- tibble(environment = test_environments, fixed_estimate = c(fixed_coef$Estimate %*% fixed_X))
       
       # Random effects
       model2_prediction <- model2_fit$U %>% 
@@ -599,31 +633,37 @@ loyo_predictions_out <- data_train_test1 %>%
       #   select(line_name, environment, prediction) %>% 
       #   mutate(prediction = prediction + model3_fixed_prediction) %>%
       #   left_join(test, ., by = c("line_name", "environment"))
-      # 
-      # 
-      # ###################
-      # ### Model 4 - random genotype (K) + random environment + random regression of covariate on K
-      # ###################
-      
 
+      
+      
+      
+      ###################
+      ### Model 4 - random genotype (K) + fixed environment covariate + random regression of covariate on K
+      ###################
+      
       # Fixed formula
       fixed_form4 <- fixed_form2
       
       # Random effect formula
       # vs(x, y) specifies an interaction
       random_form4 <- formula(paste0("~ vs(line_name, Gu = K) + ", 
-                                     paste0("vs(", test_covariates, ", line_name, Gu = K)", collapse = " + ")))
+                                     paste0("vs(", random_covariates, ", line_name, Gu = K)", collapse = " + ")))
       
       ## Fit with sommer
       model4_fit <- mmer(fixed = fixed_form4, random = random_form4, data = train2, date.warning = FALSE)
       
+      ## Get the estimates of the fixed effect coefficients
+      fixed_coef <- coef.mmer(model4_fit)
+      # Model matrix of fixed effects
+      fixed_X <- rbind(`(Intercept)` = 1, fixed_covariate_x)[as.character(fixed_coef$Effect),,drop = FALSE]
+      
+      
+      
       
       # Predict
       # Fixed effects
-      model4_fixed_prediction <- (cbind(mu = 1, t(test_covariate_x)) %*% model4_fit$Beta$Estimate) %>%
-        as.data.frame() %>%
-        rename(fixed_estimate = V1) %>%
-        rownames_to_column("environment")
+      
+      model4_fixed_prediction <- tibble(environment = test_environments, fixed_estimate = c(fixed_coef$Estimate %*% fixed_X))
       
       # Random effects
       model4_random_prediction <- model4_fit$U %>% 
@@ -642,13 +682,13 @@ loyo_predictions_out <- data_train_test1 %>%
         as.matrix()
       
       ## Predict the genotype-specific value for the target environment
-      model4_random_response_prediction <- (ec_Beta %*% test_covariate_x) %>%
+      model4_random_response_prediction <- (ec_Beta %*% random_covariate_x) %>%
         as.data.frame() %>%
         rownames_to_column("line_name") %>%
         gather(environment, response_estimate, -line_name)
       
       model4_prediction <- left_join(model4_random_prediction, model4_random_response_prediction, by = "line_name") %>%
-        crossing(., model4_fixed_prediction) %>%
+        left_join(., model4_fixed_prediction, by = "environment") %>%
         mutate(prediction = rowSums(select(., contains("_estimate")))) %>% 
         select(line_name, environment, prediction) %>% 
         left_join(test, ., by = c("line_name", "environment"))

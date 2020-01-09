@@ -168,55 +168,55 @@ S2_MET_BLUEs <- filter(S2_MET_BLUEs, environment %in% tp_vp_env) %>%
 
 
 
-######################
-### Renaming and unit vectors
-######################
-
-## Load the ec model file
-ec_model_filename <- file.path(result_dir, "ec_model_building.RData")
-
-if (file.exists(ec_model_filename)) {
-  
-  load(ec_model_filename)
-  
-  ## Units for covariate variables
-  covariate_variable_rename <- c("mint" = "T[min]", "maxt" = "T[max]", "tmean" = "T[mean]",
-                                 "water_stress" = "drought", "radn" = "R")
-  
-  covariate_variable_unit <- covariate_variable_rename
-  names(covariate_variable_unit) <- c("degree*'C'", "degree*'C'", "degree*'C'", "mm", "MJ~m^-2")
-  
-  # Temporary renaming vector
-  covariate_variable_unit_temp <- str_replace_all(covariate_variable_unit, "\\[", "\\\\[") %>%
-    str_replace_all(., "\\]", "\\\\]") %>%
-    setNames(., names(covariate_variable_unit))
-  
-  ## Names for growth stages
-  growth_stage_rename <- c("flowering" = "FT", "vegetative" = "VG", "grain_fill" = "GF")
-  
-  ## Rename vector
-  covariate_rename <- str_replace_all(names(ec_tomodel)[-1], growth_stage_rename) %>% 
-    str_replace_all(., covariate_variable_rename) %>% 
-    str_replace_all(., "_", " ") %>% 
-    str_split(., " ") %>% 
-    map(rev) %>% 
-    map_chr(~paste0(.[1], "[(", .[2], ")]"))
-  
-  names(covariate_rename) <- names(ec_tomodel)[-1]
-  
-  ## Units
-  covariate_units <- names(ec_tomodel)[-1] %>%
-    setNames(nm = ., object = names(ec_tomodel)[-1] %>% 
-               str_replace_all(., covariate_rename) %>% 
-               map_chr(., ~names(covariate_variable_unit_temp)[str_which(string = .x, pattern = covariate_variable_unit_temp)]) )
-  
-  ## Trait units
-  trait_units <- setNames(object = c("kg~ha^-1", "days", "cm", "g~L^-1", "'%'"), nm = traits)
-
-
-}
+# ######################
+# ### Renaming and unit vectors
+# ######################
+# 
+# ## Load the ec model file
+# ec_model_filename <- file.path(result_dir, "ec_model_building.RData")
+# 
+# if (file.exists(ec_model_filename)) {
+#   
+#   load(ec_model_filename)
+#   
+#   ## Units for covariate variables
+#   covariate_variable_rename <- c("mint" = "T[min]", "maxt" = "T[max]", "tmean" = "T[mean]",
+#                                  "water_stress" = "drought", "radn" = "R")
+#   
+#   covariate_variable_unit <- covariate_variable_rename
+#   names(covariate_variable_unit) <- c("degree*'C'", "degree*'C'", "degree*'C'", "mm", "MJ~m^-2")
+#   
+#   # Temporary renaming vector
+#   covariate_variable_unit_temp <- str_replace_all(covariate_variable_unit, "\\[", "\\\\[") %>%
+#     str_replace_all(., "\\]", "\\\\]") %>%
+#     setNames(., names(covariate_variable_unit))
+#   
+#   ## Names for growth stages
+#   growth_stage_rename <- c("flowering" = "FT", "vegetative" = "VG", "grain_fill" = "GF")
+#   
+#   ## Rename vector
+#   covariate_rename <- str_replace_all(names(ec_tomodel)[-1], growth_stage_rename) %>% 
+#     str_replace_all(., covariate_variable_rename) %>% 
+#     str_replace_all(., "_", " ") %>% 
+#     str_split(., " ") %>% 
+#     map(rev) %>% 
+#     map_chr(~paste0(.[1], "[(", .[2], ")]"))
+#   
+#   names(covariate_rename) <- names(ec_tomodel)[-1]
+#   
+#   ## Units
+#   covariate_units <- names(ec_tomodel)[-1] %>%
+#     setNames(nm = ., object = names(ec_tomodel)[-1] %>% 
+#                str_replace_all(., covariate_rename) %>% 
+#                map_chr(., ~names(covariate_variable_unit_temp)[str_which(string = .x, pattern = covariate_variable_unit_temp)]) )
+#   
+# 
+# 
+# }
 
 
+## Trait units - renaming vector
+trait_units <- setNames(object = c("kg~ha^-1", "days", "cm", "g~L^-1", "'%'"), nm = traits)
 
 
 ## Remove

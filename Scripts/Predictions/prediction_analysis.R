@@ -31,7 +31,7 @@ alpha <- 0.05
 
 ## A vector to rename models
 model_replace <- c("model1" = "G + e", "model2" = "G + E", "model3" = "G + E + GE", "model4" = "G + E(b + 1)")
-
+f_model_replace <- function(x) str_replace_all(x, model_replace)
 
 ###################################
 ### Leave-one-environment-out
@@ -42,30 +42,173 @@ loeo_predictions_df <- loeo_predictions_out %>%
   mutate(pop = ifelse(line_name %in% tp, "tp", "vp"))
   
 
-# Plot predicted versus observed value
-loeo_predictions_df %>%
-  filter(pop == "tp") %>%
-  ggplot(aes(x = prediction, y = value, color = environment)) +
-  geom_point() +
-  facet_wrap(trait ~ model, scales = "free", ncol = 4) +
-  theme_presentation2(10)
 
-
-
-
-
-
-## Calculate accuracy per environment, model, and population
+## Calculate accuracy and bias per environment, model, and population
+## Also calculate accuracy and bias across all environments for a model/population
 loeo_predictions_ability <- loeo_predictions_df %>%
   group_by(trait, environment, model, pop) %>%
-  summarize(ability = cor(prediction, value), bias = mean(prediction - value)) %>%
-  ungroup() %>%
-  mutate(model = str_replace_all(model, model_replace))
+  summarize(ability = cor(prediction, value), bias = mean(prediction - value, na.rm = T)) %>%
+  bind_rows(., mutate(loeo_predictions_df, environment = "All") %>% group_by(trait, environment, model, pop) %>%
+              summarize(ability = cor(prediction, value, use = "complete.obs"), bias = mean(prediction - value, na.rm = T))) %>%
+  ungroup()
 
 ## Adjust ability using heritability
 loeo_predictions_accuracy <- loeo_predictions_ability %>%
   left_join(., env_trait_herit) %>%
   mutate(accuracy = ability / sqrt(heritability))
+
+
+## Create a table with trait, model, population, total accuracy and range of accuracy within environment
+loeo_predictions_accuracy_summ <- loeo_predictions_accuracy %>%
+  group_by(trait, model, pop) %>%
+  summarize_at(vars(ability, bias), list(all = ~.[environment == "All"], mean = ~mean(.[environment != "All"], na.rm = T),
+                                         min = ~min(.[environment != "All"], na.rm = T), max = ~max(.[environment != "All"], na.rm = T))) %>%
+  ungroup()
+
+
+
+## Plot predicted and observed value, with accuracy for each environment
+## and overall
+
+# First create annotation for accuracy
+loeo_predictions_df1 <- loeo_predictions_accuracy %>%
+  mutate(annotation = paste0(environment, "~(r[MP]==", formatC(x = ability, 2, format = "g"), ")")) %>%
+  left_join(loeo_predictions_df, .)
+
+
+# Plot predicted versus observed value
+g_loeo_prediction_list <- loeo_predictions_df1 %>%
+  # Max character length of units
+  mutate(max_nchar = max(nchar(last(pretty(value))))) %>%
+  group_by(trait) %>%
+  do({
+    df <- .
+    
+    ## Add accuracy summaries
+    df1 <- left_join(df, loeo_predictions_accuracy_summ, by = c("trait", "model", "pop"))
+    
+    
+    max_wid <- unique(df1$max_nchar)
+    # Scale truncation function
+    scale_trunc <- function(x) str_pad(string = x, width = max_wid, side = "left", pad = " ")
+    
+    # Create a separate legend df
+    x1 <- mutate(df1, x = ifelse(model == "model1", 0.20, 0.80), y = 0.10)
+    
+    ## Split x by model and population
+    x_split <- split(x1, list(x1$pop, x1$model))
+    
+    # Map over this split
+    g_list <- vector("list", length = length(x_split))
+    
+    for (i in seq_along(g_list)) {
+      x2 <- x_split[[i]]
+    
+      g_x <- ggplot(data = x2, aes(x = prediction, y = value, color = annotation)) +
+        geom_point(size = 0.5) +
+        scale_y_continuous(name = "Observation", breaks = pretty, labels = scale_trunc) +
+        scale_x_continuous(name = "Prediction", breaks = pretty) +
+        scale_color_discrete(name = NULL, labels = function(x) parse(text = x), guide = guide_legend(ncol = 1)) +
+        theme_presentation2(10) +
+        theme(legend.position = c(x2$x[1], x2$y[1]), legend.key.height = unit(0.5, "line"), legend.key.width = unit(0.5, "line"),
+              legend.text = element_text(size = 6),
+              # No axis titles
+              axis.title = element_blank())
+      
+      ## Add faceting depending on position
+      if (i == 1) {
+        g_list[[i]] <- g_x + 
+          facet_grid(trait ~ model + pop, switch = "y", labeller = labeller(trait = str_add_space, model = f_model_replace))
+      } else {
+        g_list[[i]] <- g_x + 
+          facet_grid(. ~ model + pop, switch = "y", labeller = labeller(trait = str_add_space, model = f_model_replace))
+        
+      }
+      
+    } # Close loop
+    
+    ## Combine the list of plots and return - this is plot version 1
+    combined_plot1 <- plot_grid(plotlist = g_list, nrow = 1)
+    
+    
+    
+    ## Plot version 2 is simply a grid without the complicated legend
+    ## Instead, add 3 summaries: total accuracy, mean accuracy, accuracy range.
+    # First create a annotation df
+    ann_df <- select(df1, trait, model, pop, contains("ability_"), bias_all) %>% 
+      distinct() %>%
+      mutate(
+        # prefix = ifelse(statistic == "ability_all", "r[MP]==", "Bias[M]=="),
+        # annotation = paste0(prefix, formatC(x = value, digits = 2, format = "fg")),
+        annotation = paste0("atop(All~r[MP]==", formatC(x = ability_all, digits = 2, format = "fg"), ", ",
+                            "Mean~r[MP]==", formatC(x = ability_mean, digits = 2, format = "fg"), ", ",
+                            "Range~r[MP]*':'~", formatC(x = ability_min, digits = 2, format = "fg"), "*','~", 
+                            formatC(x = ability_max, digits = 2, format = "fg"), ")"))
+    
+    # Next, plot
+    combined_plot2 <- df1 %>%
+      ggplot(aes(x = prediction, y = value, color = annotation, group = 1)) +
+      geom_point(size = 0.5) +
+      geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), 
+                color = "black", parse = TRUE, size = 1.5, vjust = -0.1, hjust = 1) +
+      geom_smooth(method = "lm", se = FALSE, color = "black", lwd = 0.5) +
+      scale_y_continuous(name = "Observation", breaks = pretty, labels = scale_trunc) +
+      scale_x_continuous(name = "Prediction", breaks = pretty) +
+      scale_color_discrete(guide = FALSE) +
+      facet_grid(trait ~ model + pop, switch = "y", labeller = labeller(trait = str_add_space, model = f_model_replace)) +
+      theme_presentation2(10) +
+      theme(axis.title = element_blank())
+    
+    ## Return both plots
+    tibble(plot_name = c("plot1", "plot2"), plot = list(combined_plot1, combined_plot2))
+    
+    }) %>% ungroup()
+
+
+### Combine plots (type 1) ###
+
+
+
+### Combine plots (type 2) ###
+g_loeo_predictions_list2 <- g_loeo_prediction_list %>%
+  filter(plot_name == "plot2") %>%
+  pull(plot) %>%
+  # Remove strip names from all but first element
+  modify_at(.x = ., .at = -1, .f = ~. + theme(strip.text.x = element_blank()))
+
+# Use cowplot
+g_loeo_predictions2 <- plot_grid(plotlist = g_loeo_predictions_list2, align = "v", ncol = 1, 
+                                 rel_heights = c(1, rep(0.8, length(g_loeo_predictions_list2) - 1)))
+
+# Save
+ggsave(filename = "loeo_model_predictions_observations.jpg", plot = g_loeo_predictions2,
+       path = fig_dir, width = 9, height = 9, dpi = 1000)
+
+
+
+
+
+
+
+## Visualize
+g_loeo_predictions_summ <- loeo_predictions_accuracy_summ %>%
+  ggplot(aes(x = pop, color = model)) +
+  geom_linerange(aes(ymin = ability_min, ymax = ability_max, group = model), 
+                 position = position_dodge(0.9), color = "grey85") +
+  geom_point(aes(y = ability_all, shape = "all"), position = position_dodge(0.9)) +
+  geom_point(aes(y = ability_mean, shape = "mean"), position = position_dodge(0.9)) +
+  scale_shape_discrete(name = "Statistic", labels = str_to_title) + 
+  scale_color_discrete(name = "Model", labels = f_model_replace) + 
+  scale_y_continuous(name = "Predictive ability", breaks = pretty) +
+  scale_x_discrete(name = "Population", labels = str_to_upper) +
+  facet_grid(~ trait) +
+  theme_presentation2(10)
+
+# Save
+ggsave(filename = "loeo_model_predictions_summary.jpg", plot = g_loeo_predictions_summ,
+       path = fig_dir, width = 6, height = 3, dpi = 1000)
+
+
 
 
 ### Plot accuracy
@@ -122,65 +265,175 @@ ggsave(filename = "loeo_accuracy_bias_combined.jpg", plot = g_loeo_predictions_a
 ### Leave-one-year-out
 ###################################
 
-#
+## Add pop information
+loyo_predictions_df <- loyo_predictions_out %>%
+  mutate(pop = ifelse(line_name %in% tp, "tp", "vp"))
 
-## Calculate accuracy per environment, model, and population
-loyo_predictions_ability <- loyo_predictions_out %>%
-  mutate(pop = ifelse(line_name %in% tp, "tp", "vp")) %>%
-  group_by(trait, year, environment, model, pop) %>%
-  summarize(ability = cor(prediction, value), bias = mean(prediction - value)) %>%
-  ungroup() %>%
-  mutate(model = as.factor(str_replace_all(model, model_replace)))
+
+
+## Calculate accuracy and bias per environment, model, and population
+## Also calculate accuracy and bias across all environments for a model/population
+loyo_predictions_ability <- loyo_predictions_df %>%
+  group_by(trait, environment, model, pop) %>%
+  summarize(ability = cor(prediction, value), bias = mean(prediction - value, na.rm = T)) %>%
+  bind_rows(., mutate(loyo_predictions_df, environment = "All") %>% group_by(trait, environment, model, pop) %>%
+              summarize(ability = cor(prediction, value, use = "complete.obs"), bias = mean(prediction - value, na.rm = T))) %>%
+  ungroup()
 
 ## Adjust ability using heritability
 loyo_predictions_accuracy <- loyo_predictions_ability %>%
   left_join(., env_trait_herit) %>%
   mutate(accuracy = ability / sqrt(heritability))
 
-
-### Plot accuracy
-loyo_predictions_accuracy %>%
-  ggplot(aes(x = pop, y = accuracy, color = model)) +
-  geom_boxplot() +
-  scale_color_discrete(name = "Model", drop = FALSE) +
-  scale_x_discrete(drop = FALSE) +
-  facet_grid(trait ~ ., switch = "y") +
-  theme_presentation2(16)
-
-## Calculate average and 1 sd
+## Create a table with trait, model, population, total accuracy and range of accuracy within environment
 loyo_predictions_accuracy_summ <- loyo_predictions_accuracy %>%
-  group_by(trait, pop, model) %>%
-  summarize_at(vars(accuracy, ability, bias), list(~mean, ~sd, lower = ~mean(.) - sd(.), upper = ~mean(.) + sd(.))) %>%
+  group_by(trait, model, pop) %>%
+  summarize_at(vars(ability, bias), list(all = ~.[environment == "All"], mean = ~mean(.[environment != "All"], na.rm = T),
+                                         min = ~min(.[environment != "All"], na.rm = T), max = ~max(.[environment != "All"], na.rm = T))) %>%
   ungroup()
 
 
-## Plot accuracy versus bias
-g_loyo_predictions_accuracy_list <- loyo_predictions_accuracy_summ %>%
-  # Determine the max width of axis variables
-  mutate(x_width = max(nchar(pretty(accuracy_lower))),
-         y_width = max(nchar(pretty(bias_lower)))) %>%
-  split(.$trait) %>%
-  map(~{
-    ggplot(data = .x, aes(x = accuracy_mean, y = bias_mean, xmin = accuracy_lower, xmax = accuracy_upper, 
-                          ymin = bias_lower, ymax = bias_upper)) +
-      geom_errorbar(color = "grey85") + 
-      geom_errorbarh(color = "grey85") +
-      geom_point(aes(color = model, shape = pop), size = 2) +
-      scale_x_continuous(breaks = pretty) + 
-      scale_y_continuous(breaks = pretty, labels = function(x) str_pad(string = x, width = unique(.x$y_width), 
-                                                                       side = "left", pad = " ")) +
-      facet_grid(~ trait, scales = "free") +
-      theme_presentation2(base_size = 10) +
-      theme(axis.title = element_blank(), panel.grid.minor = element_blank())
-  })
+
+## Plot predicted and observed value, with accuracy for each environment
+## and overall
+
+# First create annotation for accuracy
+loyo_predictions_df1 <- loyo_predictions_accuracy %>%
+  mutate(annotation = paste0(environment, "~(r[MP]==", formatC(x = ability, 2, format = "g"), ")")) %>%
+  left_join(loyo_predictions_df, .)
 
 
-## Combine plots
-g_loyo_predictions_accuracy_summ <- plot_grid(plotlist = map(g_loyo_predictions_accuracy_list, ~.+theme(legend.position = "none")),
-                                              nrow = 1)
+# Plot predicted versus observed value
+g_loyo_prediction_list <- loyo_predictions_df1 %>%
+  # Max character length of units
+  mutate(max_nchar = max(nchar(last(pretty(value))))) %>%
+  group_by(trait) %>%
+  do({
+    df <- .
+    max_wid <- unique(df$max_nchar)
+    # Scale truncation function
+    scale_trunc <- function(x) str_pad(string = x, width = max_wid, side = "left", pad = " ")
+    
+    # Create a separate legend df
+    x1 <- mutate(df, x = ifelse(model == "model1", 0.20, 0.80), y = 0.10)
+    
+    ## Split x by model and population
+    x_split <- split(x1, list(x1$pop, x1$model))
+    
+    # Map over this split
+    g_list <- vector("list", length = length(x_split))
+    
+    for (i in seq_along(g_list)) {
+      x2 <- x_split[[i]]
+      
+      g_x <- ggplot(data = x2, aes(x = prediction, y = value, color = annotation)) +
+        geom_point(size = 0.5) +
+        scale_y_continuous(name = "Observation", breaks = pretty, labels = scale_trunc) +
+        scale_x_continuous(name = "Prediction", breaks = pretty) +
+        scale_color_discrete(name = NULL, labels = function(x) parse(text = x), guide = guide_legend(ncol = 1)) +
+        theme_presentation2(10) +
+        theme(legend.position = c(x2$x[1], x2$y[1]), legend.key.height = unit(0.5, "line"), legend.key.width = unit(0.5, "line"),
+              legend.text = element_text(size = 6),
+              # No axis titles
+              axis.title = element_blank())
+      
+      ## Add faceting depending on position
+      if (i == 1) {
+        g_list[[i]] <- g_x + 
+          facet_grid(trait ~ model + pop, switch = "y", labeller = labeller(trait = str_add_space, model = f_model_replace))
+      } else {
+        g_list[[i]] <- g_x + 
+          facet_grid(. ~ model + pop, switch = "y", labeller = labeller(trait = str_add_space, model = f_model_replace))
+        
+      }
+      
+    } # Close loop
+    
+    ## Combine the list of plots and return - this is plot version 1
+    combined_plot1 <- plot_grid(plotlist = g_list, nrow = 1)
+    
+    ## Plot version 2 is simply a grid without the complicated legend
+    ## Instead, add 3 summaries: total accuracy, mean accuracy, accuracy range.
+    # First create a annotation df
+    ann_df <- select(df1, trait, model, pop, contains("ability_"), bias_all) %>% 
+      distinct() %>%
+      mutate(
+        # prefix = ifelse(statistic == "ability_all", "r[MP]==", "Bias[M]=="),
+        # annotation = paste0(prefix, formatC(x = value, digits = 2, format = "fg")),
+        annotation = paste0("atop(All~r[MP]==", formatC(x = ability_all, digits = 2, format = "fg"), ", ",
+                            "Mean~r[MP]==", formatC(x = ability_mean, digits = 2, format = "fg"), ", ",
+                            "Range~r[MP]*':'~", formatC(x = ability_min, digits = 2, format = "fg"), "*','~", 
+                            formatC(x = ability_max, digits = 2, format = "fg"), ")"))
+    
+    
+    combined_plot2 <- df %>%
+      ggplot(aes(x = prediction, y = value, color = annotation, group = 1)) +
+      geom_point(size = 0.5) +
+      geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), 
+                color = "black", parse = TRUE, size = 3, vjust = -0.5, hjust = 1) +
+      geom_smooth(method = "lm", se = FALSE, color = "black", lwd = 0.5) +
+      scale_y_continuous(name = "Observation", breaks = pretty, labels = scale_trunc) +
+      scale_x_continuous(name = "Prediction", breaks = pretty) +
+      scale_color_discrete(guide = FALSE) +
+      facet_grid(trait ~ model + pop, switch = "y", labeller = labeller(trait = str_add_space, model = f_model_replace)) +
+      theme_presentation2(10) +
+      theme(axis.title = element_blank())
+    
+    ## Return both plots
+    tibble(plot_name = c("plot1", "plot2"), plot = list(combined_plot1, combined_plot2))
+    
+  }) %>% ungroup()
+
+
+
+
+### Combine plots (type 1) ###
+
+
+
+### Combine plots (type 2) ###
+g_loyo_predictions_list2 <- g_loyo_prediction_list %>%
+  filter(plot_name == "plot2") %>%
+  pull(plot) %>%
+  # Remove strip names from all but first element
+  modify_at(.x = ., .at = -1, .f = ~. + theme(strip.text.x = element_blank()))
+
+# Use cowplot
+g_loyo_predictions2 <- plot_grid(plotlist = g_loyo_predictions_list2, align = "v", ncol = 1, 
+                                 rel_heights = c(1, rep(0.8, length(g_loyo_predictions_list2) - 1)))
+
 # Save
-ggsave(filename = "loyo_accuracy_bias_combined.jpg", plot = g_loyo_predictions_accuracy_summ, path = fig_dir,
-       height = 2, width = 8.5, dpi = 1000)
+ggsave(filename = "loyo_model_predictions_observations.jpg", plot = g_loyo_predictions2,
+       path = fig_dir, width = 9, height = 9, dpi = 1000)
+
+
+
+
+
+
+
+## Visualize
+g_loyo_predictions_summ <- loyo_predictions_accuracy_summ %>%
+  ggplot(aes(x = pop, color = model)) +
+  geom_linerange(aes(ymin = ability_min, ymax = ability_max, group = model), 
+                 position = position_dodge(0.9), color = "grey85") +
+  geom_point(aes(y = ability_all, shape = "all"), position = position_dodge(0.9)) +
+  geom_point(aes(y = ability_mean, shape = "mean"), position = position_dodge(0.9)) +
+  scale_shape_discrete(name = "Statistic", labels = str_to_title) + 
+  scale_color_discrete(name = "Model", labels = f_model_replace) + 
+  scale_y_continuous(name = "Predictive ability", breaks = pretty) +
+  scale_x_discrete(name = "Population", labels = str_to_upper) +
+  facet_grid(~ trait) +
+  theme_presentation2(10)
+
+# Save
+ggsave(filename = "loyo_model_predictions_summary.jpg", plot = g_loyo_predictions_summ,
+       path = fig_dir, width = 6, height = 3, dpi = 1000)
+
+
+
+
+
 
 
 
@@ -188,25 +441,33 @@ ggsave(filename = "loyo_accuracy_bias_combined.jpg", plot = g_loyo_predictions_a
 
 ##### Compare LOEO and LOYO #####
 
-loeo_predictions_accuracy %>%
-  group_by(trait, model, pop) %>%
-  summarize(accuracy = mean(accuracy)) %>%
-  spread(model, accuracy)
+loo_predictions_accuracy_summ <- bind_rows(
+  mutate(loeo_predictions_accuracy_summ, scheme = "LOEO"), 
+  mutate(loyo_predictions_accuracy_summ, scheme = "LOYO")
+)
+
+## Visualize
+g_loo_predictions_summ <- loo_predictions_accuracy_summ %>%
+  ggplot(aes(x = scheme, color = model)) +
+  geom_linerange(aes(ymin = ability_min, ymax = ability_max, group = model), 
+                 position = position_dodge(0.9), color = "grey85") +
+  geom_point(aes(y = ability_all, shape = "all"), position = position_dodge(0.9)) +
+  geom_point(aes(y = ability_mean, shape = "mean"), position = position_dodge(0.9)) +
+  scale_shape_discrete(name = "Statistic", labels = str_to_title) + 
+  scale_color_discrete(name = "Model", labels = f_model_replace) + 
+  scale_y_continuous(name = "Predictive ability", breaks = pretty) +
+  scale_x_discrete(name = "Population", labels = str_to_upper) +
+  facet_grid(trait ~ pop, switch = "y", labeller = labeller(trait = str_add_space, pop = toupper)) +
+  theme_presentation2(10)
+
+# Save
+ggsave(filename = "loo_model_predictions_summary.jpg", plot = g_loo_predictions_summ,
+       path = fig_dir, width = 4, height = 5, dpi = 1000)
 
 
 
-## Calculate average - weight by number of environments in a year
-loyo_predictions_accuracy %>%
-  group_by(trait, pop, model, year) %>%
-  mutate(weight = n()) %>%
-  summarize(accuracy = mean(accuracy), weight = mean(weight)) %>%
-  summarize(accuracy = weighted.mean(x = accuracy, w = weight)) %>%
-  spread(model, accuracy)
 
-
-
-
-
+#
 
 
 
