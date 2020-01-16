@@ -41,7 +41,23 @@ data_to_model <- S2_MET_BLUEs %>%
 ## Unnest the ec model
 ec_model_touse <- ec_model_building %>% 
   unnest(final_model) %>%
-  filter(model == "model3_fwd")
+  filter(model == "model3_ammi")
+  
+
+
+## List of models
+# model1: y = G + r
+# model2: y = G + E + r
+# model2a: y = G + e + r
+# model2b: y = G + eB + r
+# model3: y = G + E + GE + r
+# model3a: y = G + e + GE + r
+# model3b: y = G + eB + GE + r
+
+## Character vector of models
+model_list <- c("model1", "model2", "model2a", "model2b", "model3", "model3a", "model3b")
+
+
 
 
 ## Create a results df
@@ -52,10 +68,17 @@ full_model_df <- data_to_model %>%
 
 ## Loop over rows
 for (i in seq(nrow(full_model_df))) {
+# for (i in seq(i, nrow(full_model_df))) {
+    
   
   # Trait
   tr <- full_model_df$trait[i]
-  data <- full_model_df$data[[i]]
+  data <- full_model_df$data[[i]] %>%
+    # Add covariates
+    left_join(., ec_tomodel_centered) %>%
+    # Need to convert environment back to factor
+    mutate_at(vars(line_name, environment), as.factor) %>%
+    rename(env = environment)
   
   # Grab the model
   ec_model_i <- subset(ec_model_touse, trait == tr, object, drop = TRUE)[[1]]
@@ -86,35 +109,84 @@ for (i in seq(nrow(full_model_df))) {
   
   ## Assign relationship matrices
   K <- K # Genomic
-  E_main <- Env_mat(x = ec_mat[, main_environment_covariates, drop = FALSE], method = "Rincent2019")
-  E_int <- Env_mat(x = ec_mat[, interaction_environment_covariates, drop = FALSE], method = "Rincent2019")
-  GE <- kronecker(X = K, Y = E_int, make.dimnames = TRUE)
+  E <- Env_mat(x = ec_mat[, main_environment_covariates, drop = FALSE], method = "Rincent2019")
+  GE <- Env_mat(x = ec_mat[, interaction_environment_covariates, drop = FALSE], method = "Rincent2019") %>% 
+    kronecker(X = K, Y = ., make.dimnames = TRUE)
+  
+  # # List of covariance matrices
+  # relMat.list <- list(G = K, E = E_main, GE = GE)
+  # 
+  # # Covariate list
+  # covariate.list <- list(E = main_environment_covariates)
+  
+  
+  ###############
+  ## Model fitting
+  ###############
+  
+  ## Create a list of formulas
+  model_fixed_forms <- formulas(
+    .response = ~ value, 
+    model1 = ~ 1,
+    model2 = model1,
+    model2a = add_predictors(model2, ~ env),
+    model2b = reformulate(c("1", main_environment_covariates)),
+    model3 = model2,
+    model3a = model2a,
+    model3b = model2b
+  )
+  
+  model_rand_forms <- formulas(
+    .response = ~ value,
+    model1 = ~ vs(line_name, Gu = K),
+    model2 = add_predictors(model1, ~ vs(env, Gu = E)),
+    model2a = model1,
+    model2b = model1,
+    model3 = add_predictors(model2, ~ vs(line_name:env, Gu = GE)),
+    model3a = add_predictors(model1, ~ vs(line_name:env, Gu = GE)),
+    model3b = model3a
+  ) %>% map(~ formula(delete.response(terms(.)))) # Remove response
     
   
-  # Fit each of models 1, 2, 3
-  full_model_out <- tibble(model = paste0("model", 1:3), object = list(NULL)) 
+  ## Map over pairs of formula and fit the models
+  model_fits <- map2(.x = model_fixed_forms, .y = model_rand_forms, 
+                     ~mmer(fixed = .x, random = .y, rcov = ~ units, data = data, date.warning = FALSE,
+                           verbose = TRUE) )
   
-  for (m in seq(nrow(full_model_out))) {
-    full_model_out$object[[m]] <- predict_gv(train = data, model = full_model_out$model[m],
-                                             relMat.list = list(G = K, E = E_main, GE = GE), verbose = T)$object
-
-  }
+  ## Convert to tibble, extract diagonistics and varcomp
+  model_fits_diag <- model_fits %>%
+    tibble(model = names(.), object = .) %>%
+    mutate(logLik = map(object, "monitor") %>% map_dbl(~last(.[1,])), # LogLik
+           predictions = map(object, predict),
+           R2 = map_dbl(predictions, ~cor(.x$predictions$value, .x$predictions$predicted.value.value)^2),
+           sigma = map(object, "sigma")) %>%
+    select(-object, -predictions)
   
-  ## Add the model output to the results df
-  full_model_df$results[[i]] <- full_model_out
+  # Add to list
+  full_model_df$results[[i]] <- model_fits_diag
   
 }
 
 
 ## Unnest, add logLik
-full_model_df1 <- full_model_df %>%
-  unnest(results) %>%
-  mutate(logLik = map(object, "monitor") %>% map_dbl(~last(.[1,])),
-         sigma = map(object, "sigma"))
+full_models <- full_model_df %>%
+  unnest(results)
 
 
-## Select only variance components and loglik
-full_models <- select(full_model_df1, -object)
+## Plot R2 and logLik
+full_models %>%
+  ggplot(aes(x = model, y = logLik)) +
+  geom_col() +
+  facet_wrap(~ trait, scales = "free_y")
+
+full_models %>%
+  ggplot(aes(x = model, y = R2)) +
+  geom_col() +
+  scale_y_continuous(limits = c(0, 1)) + 
+  facet_wrap(~ trait, scales = "free_y")
+
+
+
 
 # Save the df
 save("full_models", file = file.path(result_dir, "full_models.RData"))

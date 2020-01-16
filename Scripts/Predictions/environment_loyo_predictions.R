@@ -69,10 +69,10 @@ data_to_model <- S2_MET_BLUEs %>%
 ## 
 
 
-# Generate skeleton train/test sets for LOEO
+# Generate skeleton train/test sets for LOYO
 loyo_train_test <- data_to_model %>%
   group_by(trait) %>%
-  do({crossv_loo2(data = group_by(.x, year))}) %>%
+  do({crossv_loo2(data = group_by(., year))}) %>%
   ungroup() %>%
   mutate(train = map(train, ~filter(as.data.frame(.), line_name %in% tp_geno)),
          test = map(test, ~filter(as.data.frame(.), line_name %in% c(tp_geno, vp_geno))))
