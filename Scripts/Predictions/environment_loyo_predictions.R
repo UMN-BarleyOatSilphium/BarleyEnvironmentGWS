@@ -9,17 +9,17 @@
 ## 
 
 
-# # Run on a local machine
-# repo_dir <- getwd()
-# source(file.path(repo_dir, "source.R"))
+# Run on a local machine
+repo_dir <- getwd()
+source(file.path(repo_dir, "source.R"))
 
 
-# Run the source script
-repo_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/S2MET_Predictions_Models/"
-source(file.path(repo_dir, "source_MSI.R"))
+# # Run the source script
+# repo_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/S2MET_Predictions_Models/"
+# source(file.path(repo_dir, "source_MSI.R"))
 
 ## Number of cores
-n_core <- detectCores()
+# n_core <- detectCores()
 n_core <- 4
 
 
@@ -44,11 +44,45 @@ load(file.path(result_dir, "full_models.RData"))
 ### Models
 
 # Cross-validation will use the following models:
-# M1 - random genotype (K)
-# M2 - M1 + random environment (E)
-# M3 - M2 + random genotype:environment (KE)
+# model1: y = G + r
+# model2: y = G + E + r
+# model3: y = G + E + GE + r
+# model4: y = G + L + r
+# model5: y = G + L + GL + r
 
-models <- paste0("model", 1:3)
+
+## Create a list of model formulas
+model_fixed_forms <- formulas(
+  .response = ~ value, 
+  model1 = ~ 1,
+  model2 = model1,
+  # model2a = add_predictors(model2, ~ env),
+  # model2b = reformulate(c("1", main_environment_covariates)),
+  model3 = model2,
+  # model3a = model2a,
+  # model3b = model2b
+  model4 = model1,
+  model5 = model4
+)
+
+
+## Models for de novo fitting 
+## Create a list of model formulas
+model_rand_forms <- formulas(
+  .response = ~ value,
+  model1 = ~ vs(line_name, Gu = K),
+  model2 = add_predictors(model1, ~ vs(env, Gu = E)),
+  # model2a = model1,
+  # model2b = model1,
+  model3 = add_predictors(model2, ~ vs(line_name:env1, Gu = GE)),
+  # model3a = add_predictors(model1, ~ vs(line_name:env1, Gu = GE)),
+  # model3b = model3a
+  model4 = add_predictors(model1, ~vs(loc, Gu = L)),
+  model5 = add_predictors(model4, ~vs(line_name:loc, Gu = GL))
+) %>% map(~ formula(delete.response(terms(.)))) # Remove response
+
+# Residual formula
+resid_form <- ~ vs(units)
 
 
 ### CV0 and POV0
@@ -61,7 +95,10 @@ data_to_model <- S2_MET_BLUEs %>%
   mutate(id = seq(nrow(.))) %>%
   droplevels() %>%
   mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno)),
-         environment = as.factor(environment))
+         # Collapse Ithacas
+         location = str_remove_all(location, "[0-9]{1}")) %>%
+  mutate_at(vars(environment, location, year), as.factor) %>%
+  mutate(env = environment, loc = location)
 
 
 ## 
@@ -72,10 +109,14 @@ data_to_model <- S2_MET_BLUEs %>%
 # Generate skeleton train/test sets for LOYO
 loyo_train_test <- data_to_model %>%
   group_by(trait) %>%
-  do({crossv_loo2(data = group_by(., year))}) %>%
+  do({crossv_loo2(data = droplevels(group_by(., year)))}) %>%
   ungroup() %>%
-  mutate(train = map(train, ~filter(as.data.frame(.), line_name %in% tp_geno)),
-         test = map(test, ~filter(as.data.frame(.), line_name %in% c(tp_geno, vp_geno))))
+  mutate(train = map(train, ~filter(as.data.frame(.), line_name %in% tp_geno) %>% 
+                       mutate_at(vars(env, loc), fct_contr_sum) %>%
+                       mutate(env1 = env, loc1 = loc)),
+         test = map(test, ~filter(as.data.frame(.), line_name %in% c(tp_geno, vp_geno)) %>% 
+                      mutate_at(vars(env, loc), fct_contr_sum) %>%
+                      mutate(env1 = env, loc1 = loc)) )
   
 
 ## Assign cores and split
@@ -96,89 +137,21 @@ loyo_predictions_out <- data_train_test1 %>%
     out <- vector("list", nrow(core_df))
     for (i in seq_along(out)) {
       
-      # Get training and test data
       row <- core_df[i,]
-      tr <- unique(row$trait)
       
-      # train <- droplevels(subset(data_to_model, id %in% row$train[[1]]$id)) %>%
-      #   mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno)))
-      # test <- subset(data_to_model, id %in% row$test[[1]]$id) %>%
-      #   select(environment, line_name, value)
-      
-      ## Different subsetting method
-      train <- row$train[[1]]
-      test <- row$test[[1]]
-      
-      ## Get the covariate model
-      ec_model_i <- ec_model_building %>% 
-        unnest(final_model) %>%
-        subset(trait == row$trait & model == "model3_fwd", object, drop = TRUE)
-      
-      # Extract the fitted model object formula
-      ec_model_form <- formula(ec_model_i[[1]])
-      
-      # main_environment_covariates
-      main_environment_covariates <- all.vars(ec_model_form) %>% 
-        subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|", negate = T), 
-                                             pattern = .))))
-      
-      # interaction_environment_covariates
-      interaction_environment_covariates <- all.vars(ec_model_form) %>% 
-        subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|"), 
-                                             pattern = .)))) %>% setdiff(., "line_name")
-      
-      # All covariates
-      all_covariates <- union(main_environment_covariates, interaction_environment_covariates)
-      
-      ## Subset covariates and convert to a matrix
-      ec_mat <- ec_tomodel_scaled %>% 
-        select(environment, all_covariates) %>% 
-        as.data.frame() %>%
-        column_to_rownames("environment") %>%
-        as.matrix()
-      
-      
-      ## Create relationship matrices
-      E <- Env_mat(x = ec_mat[,main_environment_covariates, drop = FALSE], method = "Rincent2019")
-      KE <- Env_mat(x = ec_mat[,interaction_environment_covariates, drop = FALSE], method = "Rincent2019") %>%
-        kronecker(X = K, Y = ., make.dimnames = TRUE)
-      
-      
-      
-      #################
-      ## Fit models and extract predictions
-      #################
-      
-      prediction_out <- setNames(object = vector("list", length(models)), models)
-      
-      # Iterate over models
-      for (mod in models) {
-        
-        ## Get the variance components from the full model
-        full_varcomp <- subset(full_models, trait == tr & model == mod)["sigma"] %>%
-          map(1)
-        
-        # Fit the model, extract predictions
-        model_out <- predict_gv(train = train, test = test, model = mod, relMat.list = list(G = K, E = E, GE = KE), 
-                                object = full_varcomp, add.intercept = TRUE, verbose = TRUE)
-        
-        # Add predictions to the list
-        prediction_out[[mod]] <- model_out
-        
-      }
-      
-
+      # The genomewide prediction function is in the source_functions.R script
+      prediction_out <- genomewide_prediction(x = row)
       
       ###################
       
       ###################
       
       ## Combine and return the predictions
-      out[[i]] <- imap_dfr(prediction_out, ~tibble(model = .y, predictions = .x))
+      out[[i]] <- prediction_out
       
       
       ## Notify user
-      cat("\nPredictions for trait", row$trait, "in environment", as.character(row$environment), "complete.")
+      cat("\nPredictions for trait", row$trait, "in year", as.character(row$year), "complete.")
       
     } # CLose loop
     

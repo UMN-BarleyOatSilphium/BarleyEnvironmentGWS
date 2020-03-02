@@ -22,16 +22,18 @@ load(file = file.path(result_dir, "ec_model_building.RData"))
 # Rename
 ec_model_building <- unified_ec_models %>%
   unnest(final_model) %>%
-  filter(model == "model3_fwd")
+  filter(model == "model3_ammi")
 
 
 ## For each model, list the random and fixed effect covariates in order
 ## of descending var comp or regression coefficient
 ec_model_table <- ec_model_building %>%
-  mutate(ranefs = map(object, ~as.data.frame(VarCorr(.x)) %>% filter(! grp %in% c("line_name", "Residual")) %>%
-                        arrange(desc(vcov)) %>% select(term = var1, variance = vcov) ),
-         fixefs = map(object, ~fixef(.x)[-1] %>%  tibble(term = names(.), coef = .) %>% 
+  mutate(fixefs = map(object, ~fixef(.x)[-1] %>%  tibble(term = names(.), coef = .) %>% 
                         arrange(desc(abs(coef))) ),
+         ranefs = map(object, ~as.data.frame(VarCorr(.x)) %>% filter(var1 != "(Intercept)", is.na(var2)) %>%
+                        arrange(desc(vcov)) %>% select(term = var1, variance = vcov) ),
+         # ranefs = map(object, ~as.data.frame(VarCorr(.x)) %>% filter(! grp %in% c("line_name", "Residual")) %>%
+         #                arrange(desc(vcov)) %>% select(term = var1, variance = vcov) ),
          effects = map2(ranefs, fixefs, bind_rows) ) %>%
   unnest(effects) %>%
   select(trait, term, variance, coef)

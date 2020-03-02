@@ -46,6 +46,7 @@ ec_model_touse <- ec_model_building %>%
 
 
 ## List of models
+## Lowercase = fixed, uppercase = random, eB = fixed environment using covariates
 # model1: y = G + r
 # model2: y = G + E + r
 # model2a: y = G + e + r
@@ -53,6 +54,7 @@ ec_model_touse <- ec_model_building %>%
 # model3: y = G + E + GE + r
 # model3a: y = G + e + GE + r
 # model3b: y = G + eB + GE + r
+
 
 ## Character vector of models
 model_list <- c("model1", "model2", "model2a", "model2b", "model3", "model3a", "model3b")

@@ -2,10 +2,10 @@
 ## 
 ## Environment-specific predictions
 ## 
-## Leave-one-environment-out prediction
+## Leave-one-location-out prediction
 ## 
 ## Author: Jeff Neyhart
-## Last modified: 8 January 2020
+## Last modified: 27 Feb 2020
 ## 
 
 
@@ -102,15 +102,15 @@ data_to_model <- S2_MET_BLUEs %>%
 
 
 ## 
-## Leave-one-environment-out
+## Leave-one-location-out
 ## 
 
 
 
-# Generate skeleton train/test sets for LOEO
-loeo_train_test <- data_to_model %>%
+# Generate skeleton train/test sets for LOLO
+lolo_train_test <- data_to_model %>%
   group_by(trait) %>%
-  do({crossv_loo2(data = droplevels(group_by(., env)))}) %>%
+  do({crossv_loo2(data = droplevels(group_by(., location)))}) %>%
   ungroup() %>%
   mutate(train = map(train, ~filter(as.data.frame(.), line_name %in% tp_geno) %>% 
                        mutate_at(vars(env, loc), fct_contr_sum) %>%
@@ -121,7 +121,7 @@ loeo_train_test <- data_to_model %>%
   
 
 ## Assign cores and split
-data_train_test1 <- loeo_train_test %>% 
+data_train_test1 <- lolo_train_test %>% 
   assign_cores(df = ., n_core = n_core, split = TRUE)
 
 
@@ -131,7 +131,7 @@ data_train_test1 <- loeo_train_test %>%
 
 
 ## Parallelize
-loeo_predictions_out <- data_train_test1 %>%
+lolo_predictions_out <- data_train_test1 %>%
   coreApply(X = ., FUN = function(core_df) {
     
     ## Output list
@@ -153,7 +153,7 @@ loeo_predictions_out <- data_train_test1 %>%
       
       
       ## Notify user
-      cat("\nPredictions for trait", row$trait, "in environment", as.character(row$env), "complete.")
+      cat("\nPredictions for trait", row$trait, "in location", as.character(row$location), "complete.")
       
     } # CLose loop
     
@@ -166,7 +166,8 @@ loeo_predictions_out <- data_train_test1 %>%
 
 
 ## Save the results
-save("loeo_predictions_out", file = file.path(result_dir, "loeo_predictions.RData"))
+save("lolo_predictions_out", file = file.path(result_dir, "lolo_predictions.RData"))
+
 
 
 

@@ -30,63 +30,67 @@ object_list <- unlist(lapply(file_list, load, envir = .GlobalEnv))
 alpha <- 0.05
 
 
+# model1: y = G + r
+# model2: y = G + E + r
+# model3: y = G + E + GE + r
+# model4: y = G + L + r
+# model5: y = G + L + GL + r
+
+
 ## A vector to rename models
-model_replace <- c("model1" = "G", "model2" = "G + E", "model3" = "G + E + GE")
+model_replace <- c("model1" = "G", "model2" = "G + E", "model3" = "G + E + GE",
+                   "model4" = "G + L", "model5" = "G + L + GL")
 f_model_replace <- function(x) str_replace_all(x, model_replace)
+# f_model_replace <- function(x) paste0("M", toupper(str_extract(x, "[0-9]{1}[a-z]{0,1}")))
+# Vector to rename validation schemes
+f_type_replace <- function(x) str_replace_all(x, c("tp" = "CV0", "vp" = "POV00"))
+
+# Color scheme for models
+model_colors <- c(neyhart_palette("umn1")[1], neyhart_palette("umn3")[3], neyhart_palette("umn1")[3],
+                  neyhart_palette("umn2")[3], neyhart_palette("umn3")[4], neyhart_palette("umn1")[4],
+                  neyhart_palette("umn2")[4])
 
 
-## For LOYO and LOEO, determine the number of size of the training population (nObs and nEnv)
-## for each environment
-loeo_prediction_info <- loeo_predictions_out %>% 
-  unnest(predictions) %>% 
-  distinct(trait, environment, line_name) %>%
-  filter(line_name %in% tp) %>%
-  split(.$trait) %>%
-  map_df(~group_by(., trait, environment) %>% crossv_loo2()) %>%
-  mutate(train = map(train, as.data.frame),
-         test = map(test, as.data.frame),
-         nObs = map_dbl(train, nrow),
-         nEnv = map_dbl(train, ~n_distinct(.$environment))) %>%
-  unnest(test) %>%
-  distinct(trait, environment, nObs, nEnv)
-
-loyo_prediction_info <- loyo_predictions_out %>% 
-  unnest(predictions) %>% 
-  distinct(trait, year, environment, line_name) %>%
-  filter(line_name %in% tp) %>%
-  split(.$trait) %>%
-  map_df(~group_by(., trait, year) %>% crossv_loo2()) %>%
-  mutate(train = map(train, as.data.frame),
-         test = map(test, as.data.frame),
-         nObs = map_dbl(train, nrow),
-         nEnv = map_dbl(train, ~n_distinct(.$environment))) %>%
-  unnest(test) %>%
-  distinct(trait, environment, nObs, nEnv)
-
-# Combine
-loo_prediction_info <- bind_rows(
-  mutate(loeo_prediction_info, type = "loeo"),
-  mutate(loyo_prediction_info, type = "loyo")
-)
+# Phenotye data to use
+data_to_model <- S2_MET_BLUEs %>% 
+  filter(line_name %in% c(tp_geno, vp_geno),
+         trait %in% traits,
+         environment %in% tp_vp_env) %>%
+  mutate(id = seq(nrow(.))) %>%
+  droplevels() %>%
+  mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno)),
+         # Collapse Ithacas
+         location = str_remove_all(location, "[0-9]{1}")) %>%
+  mutate_at(vars(environment, location, year), as.factor) %>%
+  mutate(env = environment)
 
 
+## Grab the prediction outputs
+loo_prediction_list <- map(set_names(object_list, object_list), get)
 
-## Combine LOEO and LOYO results
-loo_predictions_df <- bind_rows(
-  mutate(loeo_predictions_out, type = "loeo") %>% select(-environment, -core),
-  mutate(loyo_predictions_out, type = "loyo") %>% select(-year, -core)
-) %>%
-  unnest(predictions) %>%
-  mutate(pop = ifelse(line_name %in% tp, "tp", "vp"),
-         environment = as.character(environment))
-  
+loo_prediction_out <- loo_prediction_list %>%
+  imap(~unnest(.x, prediction) %>% mutate(type = .y) ) %>%
+  map_df(~select(., trait, environment = env, location, year, type, model, line_name, value, contains("pred")) %>%
+        mutate_if(is.character, parse_guess)) %>%
+  mutate(pop = ifelse(line_name %in% tp, "tp", "vp"))
+
+loo_predictions_df <- loo_prediction_out
+
+
 ## Calculate accuracy and bias per environment, model, and population
 loo_predictive_ability <- loo_predictions_df %>%
-  group_by(trait, environment, model, pop, type) %>%
-  summarize(ability = cor(prediction, value), 
-            bias = mean(prediction - value)) %>%
-  ungroup() %>%
-  left_join(., loo_prediction_info)
+  group_by(trait, model, pop, type, environment) %>%
+  # First calculate accuracy per environment
+  mutate(ability = cor(pred_complete, value), 
+         bias = mean((pred_complete - value) / value)) %>% # Bias as percent deviation from observed
+  group_by(trait, model, pop, type) %>%
+  # Next calculate accuracy across all environments
+  mutate(ability_all = cor(pred_complete, value), 
+         bias_all = mean((pred_complete - value) / value)) %>% # Bias as percent deviation from observed
+  # Now summarize
+  group_by(trait, model, pop, type, environment) %>%
+  summarize_at(vars(ability, bias, ability_all, bias), mean) %>%
+  ungroup()
 
 
 ## Adjust ability using heritability
@@ -96,35 +100,38 @@ loo_prediction_accuracy <- loo_predictive_ability %>%
 
 
 
+## Plot predicted and observed value, with mean and range of accuracy per
+## environment and accuracy overall
 
-## Plot predicted and observed value, with accuracy for each environment
-## and overall
-
-# First create annotation for accuracy
-loo_predictions_df1 <- loo_prediction_accuracy %>%
-  mutate(annotation = paste0(environment, "~(r[MP]==", formatC(x = ability, 2, format = "g"), ")")) %>%
-  left_join(loo_predictions_df, .)
-
+# First create annotation df
+loo_prediction_accuracy_annotation <- loo_prediction_accuracy %>%
+  group_by(trait, model, pop, type) %>%
+  ## Calculate min, max, mean environment-specific ability
+  summarize(ability_min = min(ability), ability_max = max(ability),
+            ability_mean = mean(ability), ability_all = mean(ability_all)) %>%
+  ungroup() %>%
+  mutate_at(vars(contains("ability")), ~formatC(., width = 3, digits = 2, format = "f")) %>%
+  mutate(ability_annotation = paste0("bar(r)[MP]==", ability_mean, "~(", ability_min, "*','~", ability_max, ")"),
+         ability_all_annotation = paste0("r[MP]==", ability_all))
 
 # Plot predicted versus observed value
-g_loo_prediction_list <- loo_predictions_df1 %>%
+g_loo_prediction_list <- loo_predictions_df %>%
   # Max character length of units
   mutate(max_nchar = max(nchar(last(pretty(value))))) %>%
   group_by(trait, type) %>%
-  do({
+  do(plot = {
     df <- .
     
-    ## Add accuracy summaries
-    df1 <- left_join(df, loeo_predictions_accuracy_summ, by = c("trait", "model", "pop"))
-    
-    
+    df1 <- df
+
     max_wid <- unique(df1$max_nchar)
     # Scale truncation function
     scale_trunc <- function(x) str_pad(string = x, width = max_wid, side = "left", pad = " ")
+    # Calculate breaks for this trait
+    breaks <- map(select(df1, pred_complete, value), pretty) 
     
     # Create a separate legend df
     x1 <- mutate(df1, x = ifelse(model == "model1", 0.20, 0.80), y = 0.10)
-    
     ## Split x by model and population
     x_split <- split(x1, list(x1$pop, x1$model))
     
@@ -133,17 +140,24 @@ g_loo_prediction_list <- loo_predictions_df1 %>%
     
     for (i in seq_along(g_list)) {
       x2 <- x_split[[i]]
+      
+      ## Extract the appropriate accuracy annotation
+      r_mp_annotation <- left_join(distinct(x2, trait, type, model, pop), loo_prediction_accuracy_annotation,
+                                   by = c("trait", "type", "model", "pop")) %>%
+        select(trait:pop, contains("annotation")) %>% 
+        mutate(annotation = paste0("atop(", ability_annotation, ", ", ability_all_annotation, ")")) %>%
+        mutate(x = breaks$pred_complete[1], y = c(last(breaks$value)))
     
-      g_x <- ggplot(data = x2, aes(x = prediction, y = value, color = annotation)) +
+      g_x <- ggplot(data = x2, aes(x = pred_complete, y = value, color = environment)) +
+        geom_abline(slope = 1, intercept = 0) +
         geom_point(size = 0.5) +
-        scale_y_continuous(name = "Observation", breaks = pretty, labels = scale_trunc) +
-        scale_x_continuous(name = "Prediction", breaks = pretty) +
-        scale_color_discrete(name = NULL, labels = function(x) parse(text = x), guide = guide_legend(ncol = 1)) +
+        geom_text(data = r_mp_annotation, aes(x = x, y = y, label = annotation), parse = TRUE, inherit.aes = FALSE,
+                  hjust = 0, size = 2) +
+        scale_y_continuous(name = "Observation", breaks = breaks$value, labels = scale_trunc, limits = range(breaks$value)) +
+        scale_x_continuous(name = "Prediction", breaks = breaks$pred_complete, limits = range(breaks$pred_complete)) +
+        scale_color_discrete(name = NULL, labels = function(x) parse(text = x), guide = FALSE) +
         theme_presentation2(10) +
-        theme(legend.position = c(x2$x[1], x2$y[1]), legend.key.height = unit(0.5, "line"), legend.key.width = unit(0.5, "line"),
-              legend.text = element_text(size = 6),
-              # No axis titles
-              axis.title = element_blank())
+        theme(axis.title = element_blank())
       
       ## Add faceting depending on position
       if (i == 1) {
@@ -151,56 +165,59 @@ g_loo_prediction_list <- loo_predictions_df1 %>%
           facet_grid(trait ~ model + pop, switch = "y", labeller = labeller(trait = str_add_space, model = f_model_replace))
       } else {
         g_list[[i]] <- g_x + 
-          facet_grid(. ~ model + pop, switch = "y", labeller = labeller(trait = str_add_space, model = f_model_replace))
+          facet_grid(. ~ model + pop, switch = "y", labeller = labeller(trait = str_add_space, model = f_model_replace)) +
+          theme(axis.text.y = element_blank())
         
       }
       
     } # Close loop
     
     ## Combine the list of plots and return - this is plot version 1
-    combined_plot1 <- plot_grid(plotlist = g_list, nrow = 1)
+    combined_plot1 <- plot_grid(plotlist = g_list, nrow = 1, 
+                                rel_widths = c(1, rep(0.75, length(g_list) - 1)))
     
-    
-    
+    ## Extract the appropriate accuracy annotation
+    r_mp_annotation <- left_join(distinct(df1, trait, type), loo_prediction_accuracy_annotation,
+                                 by = c("trait", "type")) %>%
+      select(trait:pop, contains("annotation")) %>% 
+      # Code below create two lines that are left justified using atop
+      mutate(annotation = paste0("atop(", ability_annotation, ", ", 
+                                 paste0(str_pad(ability_all_annotation, width = nchar(ability_annotation)-2, 
+                                                side = "right", pad = "~")), "' ')")) %>%
+      mutate(x = breaks$pred_complete[1], y = c(last(breaks$value)))
+
+
     ## Plot version 2 is simply a grid without the complicated legend
-    ## Instead, add 3 summaries: total accuracy, mean accuracy, accuracy range.
-    # First create a annotation df
-    ann_df <- select(df1, trait, model, pop, contains("ability_"), bias_all) %>% 
-      distinct() %>%
-      mutate(
-        # prefix = ifelse(statistic == "ability_all", "r[MP]==", "Bias[M]=="),
-        # annotation = paste0(prefix, formatC(x = value, digits = 2, format = "fg")),
-        annotation = paste0("atop(All~r[MP]==", formatC(x = ability_all, digits = 2, format = "fg"), ", ",
-                            "Mean~r[MP]==", formatC(x = ability_mean, digits = 2, format = "fg"), ", ",
-                            "Range~r[MP]*':'~", formatC(x = ability_min, digits = 2, format = "fg"), "*','~", 
-                            formatC(x = ability_max, digits = 2, format = "fg"), ")"))
-    
     # Next, plot
     combined_plot2 <- df1 %>%
-      ggplot(aes(x = prediction, y = value, color = annotation, group = 1)) +
+      ggplot(aes(x = pred_complete, y = value, color = environment, group = 1)) +
+      geom_abline(slope = 1, intercept = 0) +
       geom_point(size = 0.5) +
-      geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), 
-                color = "black", parse = TRUE, size = 1.5, vjust = -0.1, hjust = 1) +
-      geom_smooth(method = "lm", se = FALSE, color = "black", lwd = 0.5) +
+      geom_text(data = r_mp_annotation, aes(x = x, y = y, label = annotation), parse = TRUE, inherit.aes = FALSE,
+                hjust = 0, size = 2) +
       scale_y_continuous(name = "Observation", breaks = pretty, labels = scale_trunc) +
       scale_x_continuous(name = "Prediction", breaks = pretty) +
       scale_color_discrete(guide = FALSE) +
       facet_grid(trait ~ model + pop, switch = "y", labeller = labeller(trait = str_add_space, model = f_model_replace)) +
       theme_presentation2(10) +
       theme(axis.title = element_blank())
-    
+
     ## Return both plots
     tibble(plot_name = c("plot1", "plot2"), plot = list(combined_plot1, combined_plot2))
     
     }) %>% ungroup()
 
 
-### Combine plots (type 1) ###
-
+# ### Combine plots (type 1) ###
+# g_loo_predictions2 <- g_loo_prediction_list %>%
+#   split(.$type) %>%
+#   map(~mutate(.x, plot = modify_at(.x = plot, .at = -1, ~. + theme(strip.text.x = element_blank())))) %>%
+#   map(~plot_grid(plotlist = .x$plot, align = "v", ncol = 1, rel_heights = c(1, rep(0.8, length(.) - 1))))
 
 
 ### Combine plots (type 2) ###
 g_loo_prediction_list1 <- g_loo_prediction_list %>%
+  unnest(plot) %>%
   filter(plot_name == "plot2") %>%
   split(.$type) %>%
   # Remove strip names from all but first element
@@ -211,11 +228,12 @@ g_loo_predictions2 <- g_loo_prediction_list1 %>%
   map(., ~pull(., plot) %>%
         plot_grid(plotlist = ., align = "v", ncol = 1, rel_heights = c(1, rep(0.8, length(.) - 1))) )
 
+
 for (type in names(g_loo_predictions2)) {
   
   # Save
   ggsave(filename = paste0(type, "_model_predictions_observations.jpg"), plot = g_loo_predictions2[[type]],
-         path = fig_dir, width = 9, height = 9, dpi = 1000)
+         path = fig_dir, width = 15, height = 10, dpi = 1000)
   
 }
 
@@ -226,11 +244,11 @@ for (type in names(g_loo_predictions2)) {
 
 
 ## Summarize mean and range
-
-
 loo_prediction_accuracy_summ <- loo_prediction_accuracy %>%
+  mutate(type = str_extract(type, "l[a-z]{3}")) %>%
   group_by(type, trait, model, pop) %>%
-  summarize_at(vars(ability, bias, accuracy), list(~mean, ~min, ~max)) %>%
+  summarize_at(vars(ability, bias, accuracy), 
+               list(~mean, ~min, q25 = ~quantile(., 0.25), q75 = ~quantile(., 0.75), ~max)) %>%
   ungroup()
 
 
@@ -241,69 +259,64 @@ g_loo_predictions_summ <- loo_prediction_accuracy_summ %>%
   ggplot(aes(x = pop, color = model)) +
   geom_linerange(aes(ymin = ability_min, ymax = ability_max, group = model), 
                  position = position_dodge(0.9), color = "grey85") +
+  geom_linerange(aes(ymin = ability_q25, ymax = ability_q75, group = model), 
+                 position = position_dodge(0.9), color = "grey85", lwd = 1) +
   geom_point(aes(y = ability_mean), position = position_dodge(0.9)) +
-  scale_color_discrete(name = "Model", labels = f_model_replace) + 
+  scale_color_manual(name = "Model", labels = f_model_replace, values = model_colors) + 
   scale_y_continuous(name = "Predictive ability", breaks = pretty) +
-  scale_x_discrete(name = "Population", labels = str_to_upper) +
+  scale_x_discrete(name = "Validation scheme", labels = f_type_replace) +
   facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
              switch = "y") +
   theme_presentation2(10)
 
 # Save
 ggsave(filename = "loo_model_predictions_summary.jpg", plot = g_loo_predictions_summ,
-       path = fig_dir, width = 6, height = 4, dpi = 1000)
+       path = fig_dir, width = 8, height = 6, dpi = 1000)
 
-
-# alternate
-g_loo_predictions_summ1 <- loo_prediction_accuracy %>%
-  left_join(., loo_prediction_accuracy_summ) %>%
-  ggplot(aes(x = pop, fill = model)) +
-  geom_boxplot(aes(y = ability), position = position_dodge(0.9), color = "grey85", lwd = 0.5) +
-  geom_point(aes(y = ability_mean), position = position_dodge(0.9), size = 1.5) +
-  scale_shape_discrete(name = "Statistic", labels = str_to_title) + 
-  scale_fill_discrete(name = "Model", labels = f_model_replace) + 
-  scale_y_continuous(name = "Predictive ability", breaks = pretty) +
-  scale_x_discrete(name = "Population", labels = str_to_upper) +
-  facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
-             switch = "y") +
-  theme_presentation2(10)
-
-# Save
-ggsave(filename = "loo_model_predictions_summary1.jpg", plot = g_loo_predictions_summ1,
-       path = fig_dir, width = 6, height = 4, dpi = 1000)
-
-
-# Use accuracy instead of ability
-g_loo_predictions_summ2 <- loo_prediction_accuracy %>%
-  left_join(., loo_prediction_accuracy_summ) %>%
-  ggplot(aes(x = pop, fill = model)) +
-  geom_boxplot(aes(y = accuracy), position = position_dodge(0.9), color = "grey85", lwd = 0.5) +
-  geom_point(aes(y = accuracy_mean), position = position_dodge(0.9), size = 1.5) +
-  scale_shape_discrete(name = "Statistic", labels = str_to_title) + 
-  scale_fill_discrete(name = "Model", labels = f_model_replace) + 
-  scale_y_continuous(name = "Prediction accuracy", breaks = pretty) +
-  scale_x_discrete(name = "Population", labels = str_to_upper) +
-  facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
-             switch = "y") +
-  theme_presentation2(10)
-
-# Save
-ggsave(filename = "loo_model_predictions_summary2.jpg", plot = g_loo_predictions_summ2,
-       path = fig_dir, width = 6, height = 4, dpi = 1000)
 
 
 
 ## Create a table
-loo_prediction_accuracy_table <- loo_prediction_accuracy %>%
-  group_by(type, trait, model, pop) %>%
-  summarize(accuracy1 = weighted.mean(x = accuracy, w = nObs),
-            accuracy2 = weighted.mean(x = accuracy, w = nEnv),
-            accuracy = mean(accuracy)) %>%
-  ungroup()
-  
-loo_prediction_accuracy_table1 <- loo_prediction_accuracy_table %>%
-  select(type, trait, model, pop, accuracy2) %>%
-  spread(pop, accuracy2)
 
-write_csv(x = loo_prediction_accuracy_table1, path = file.path("loo_prediction_accuracy_table.csv"))
+# Report the mean (and range) in predictive ability across environments for each
+# validation scheme, population, and type
+loo_prediction_accuracy_table <- loo_prediction_accuracy_summ %>% 
+  mutate_at(vars(contains("ability")), ~formatC(., digits = 2, width = 2, format = "g")) %>%
+  mutate(annotation = paste0(ability_mean, " (", ability_min, ", ", ability_max, ")")) %>%
+  # Rename
+  mutate(model = f_model_replace(model),
+         pop = f_type_replace(pop),
+         type = toupper(type)) %>%
+  select(trait, type, model, pop, annotation) %>%
+  spread(model, annotation) %>%
+  arrange(trait, pop, type)
+
+
+
+# ## Calculate weighted average of accuracy using the number of environments or observations
+# loo_prediction_accuracy_table <- loo_prediction_accuracy %>%
+#   group_by(type, trait, model, pop) %>%
+#   ## Calculate weighted average of prediction accuracy and bias using number of environments
+#   summarize_at(vars(accuracy, bias), ~ weighted.mean(., w = nEnv)) %>%
+#   ungroup()
+
+write_csv(x = loo_prediction_accuracy_table, path = file.path(fig_dir, "loo_prediction_accuracy_table.csv"))
+
+
+
+# Remove range - just report mean
+loo_prediction_accuracy_table1 <- loo_prediction_accuracy_summ %>% 
+  mutate_at(vars(contains("ability")), ~formatC(., digits = 2, width = 2, format = "g")) %>%
+  mutate(annotation = ability_mean) %>%
+  # Rename
+  mutate(model = f_model_replace(model),
+         pop = f_type_replace(pop),
+         type = toupper(type)) %>%
+  select(trait, type, model, pop, annotation) %>%
+  spread(model, annotation) %>%
+  arrange(trait, pop, type)
+
+write_csv(x = loo_prediction_accuracy_table1, path = file.path(fig_dir, "loo_prediction_accuracy_table1.csv"))
+
+
 
