@@ -9,14 +9,14 @@
 ## 
 
 
-# Run on a local machine
-repo_dir <- getwd()
-source(file.path(repo_dir, "source.R"))
+# # Run on a local machine
+# repo_dir <- getwd()
+# source(file.path(repo_dir, "source.R"))
 
 
-# # Run the source script
-# repo_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/S2MET_Predictions_Models/"
-# source(file.path(repo_dir, "source_MSI.R"))
+# Run the source script
+repo_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/S2MET_Predictions_Models/"
+source(file.path(repo_dir, "source_MSI.R"))
 
 ## Number of cores
 # n_core <- detectCores()
@@ -147,7 +147,7 @@ loyo_predictions_out <- data_train_test1 %>%
       ###################
       
       ## Combine and return the predictions
-      out[[i]] <- prediction_out
+      out[[i]] <- mutate(prediction_out$prediction_out, train_n = list(prediction_out$train_n)) %>% unnest(train_n)
       
       
       ## Notify user
@@ -156,8 +156,8 @@ loyo_predictions_out <- data_train_test1 %>%
     } # CLose loop
     
     ## Add results to the core_df
-    core_df %>%
-      mutate(out = out) %>%
+    mutate(core_df, out = out) %>%
+      select(trait, out) %>%
       unnest(out)
     
   }) %>% bind_rows()

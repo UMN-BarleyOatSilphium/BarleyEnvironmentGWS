@@ -12,7 +12,6 @@ repo_dir <- getwd()
 source(file.path(repo_dir, "source.R"))
 
 # # Load other packages
-library(effects) # For ls means / marginal means
 library(broom)
 library(car)
 library(lmerTest)
@@ -65,14 +64,45 @@ data_to_model <- S2_MET_BLUEs %>%
   mutate(env = environment)
 
 
+
 ## Grab the prediction outputs
 loo_prediction_list <- map(set_names(object_list, object_list), get)
 
+
+
+loyo_predictions_out1 <- loyo_predictions_out %>%
+  group_by(trait, year) %>% 
+  nest(out) %>% 
+  mutate(out = map(data, ~mutate(.[[1]][[1]], train_n = list(.[[1]][[2]])))) %>% 
+  unnest(out) %>% 
+  unnest(train_n)
+
+loeo_predictions_out1 <- loeo_predictions_out %>%
+  group_by(trait, env) %>% 
+  nest(out) %>%
+  mutate(out = map(data, ~mutate(.[[1]][[1]], train_n = list(.[[1]][[2]])))) %>% 
+  unnest(out) %>% 
+  unnest(train_n)
+
+
+## Create a list manually
+loo_prediction_list <- list(
+  lolo = lolo_predictions_out,
+  loeo = loeo_predictions_out1,
+  loyo = loyo_predictions_out1
+)
+
+
 loo_prediction_out <- loo_prediction_list %>%
   imap(~unnest(.x, prediction) %>% mutate(type = .y) ) %>%
-  map_df(~select(., trait, environment = env, location, year, type, model, line_name, value, contains("pred")) %>%
-        mutate_if(is.character, parse_guess)) %>%
-  mutate(pop = ifelse(line_name %in% tp, "tp", "vp"))
+  map(~rename_at(.x, vars(which(names(.x) %in% c("env", "loc"))),
+                 ~str_replace_all(., c("loc" = "location", "env" = "environment")))) %>%
+  map_df(~select(., trait, environment, location, year, type, model, line_name, value, contains("pred")) %>%
+        mutate_if(is.character, parse_guess) %>%
+        mutate_if(is.factor, ~parse_guess(as.character(.)))) %>%
+  mutate(pop = ifelse(line_name %in% tp, "tp", "vp")) %>%
+  # Filter for models listed above
+  filter(model %in% names(model_replace))
 
 loo_predictions_df <- loo_prediction_out
 
@@ -245,6 +275,7 @@ for (type in names(g_loo_predictions2)) {
 
 ## Summarize mean and range
 loo_prediction_accuracy_summ <- loo_prediction_accuracy %>%
+  filter(!is.na(ability)) %>%
   mutate(type = str_extract(type, "l[a-z]{3}")) %>%
   group_by(type, trait, model, pop) %>%
   summarize_at(vars(ability, bias, accuracy), 
