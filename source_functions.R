@@ -604,33 +604,49 @@ genomewide_prediction <- function(x) {
     # varGE <- full_varcomp$`u:;line_name:env`
     # varR <- full_varcomp$units
     
+    # Use rrBLUP to fit model1
+    if (mod == "model1") {
+      
+      model_fit <- kin.blup(data = as.data.frame(train), geno = "line_name", pheno = "value", K = K)
+      
+      # Fixed effects
+      fixed_eff <- matrix(data = (model_fit$pred - model_fit$g)[1], nrow = 1, ncol = 1,
+                          dimnames = list("(Intercept)", "estimate"))
+      
+      ## Random effects
+      rand_eff <- list(`u:line_name` = c(model_fit$g))
+      
+      
     
-    ## Fit the model
-    model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
-                      data = train, date.warning = FALSE)
+    } else {
+      
+      ## Fit the model
+      model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
+                        data = train, date.warning = FALSE)
+
     
-    ## Fixed effects
-    fixed_eff <- coef(model_fit) %>%
-      select(term = Effect, estimate = Estimate) %>%
-      column_to_rownames("term") %>%
-      as.matrix()
-    
-    ## Create an X matrix for test
-    Xtest <- model.matrix(fixed_form, test)[,row.names(fixed_eff), drop = FALSE] # This seems to work
-    # Calculate fixed effects by the formula Xb
-    fixed_pred <- Xtest %*% fixed_eff
-    
-    
-    
-    ## Random effects
-    rand_eff <- randef(model_fit) %>%
-      map("value")
-    
+      ## Fixed effects
+      fixed_eff <- coef(model_fit) %>%
+        select(term = Effect, estimate = Estimate) %>%
+        column_to_rownames("term") %>%
+        as.matrix()
+      
+      ## Random effects
+      rand_eff <- map(randef(model_fit), "value")
+      
+    }
+      
+      
     ## Vector of new column names for separation, if necessary
     separation_col_names <- str_extract(string = attr(terms(rand_form), "term.labels"), pattern = "[a-z_]{1,}:[a-z]{1,}") %>% 
       str_subset(., ":") %>% 
       str_split(., ":") %>% 
       unlist()
+      
+    ## Create an X matrix for test
+    Xtest <- model.matrix(fixed_form, test)[,row.names(fixed_eff), drop = FALSE] # This seems to work
+    # Calculate fixed effects by the formula Xb
+    fixed_pred <- Xtest %*% fixed_eff
     
     
     ## Convert to a complete data.frame

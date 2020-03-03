@@ -42,7 +42,7 @@ model_replace <- c("model1" = "G", "model2" = "G + E", "model3" = "G + E + GE",
 f_model_replace <- function(x) str_replace_all(x, model_replace)
 # f_model_replace <- function(x) paste0("M", toupper(str_extract(x, "[0-9]{1}[a-z]{0,1}")))
 # Vector to rename validation schemes
-f_type_replace <- function(x) str_replace_all(x, c("tp" = "CV0", "vp" = "POV00"))
+f_pop_replace <- function(x) str_replace_all(x, c("tp" = "CV0", "vp" = "POV00"))
 
 # Color scheme for models
 model_colors <- c(neyhart_palette("umn1")[1], neyhart_palette("umn3")[3], neyhart_palette("umn1")[3],
@@ -69,14 +69,6 @@ data_to_model <- S2_MET_BLUEs %>%
 loo_prediction_list <- map(set_names(object_list, object_list), get)
 
 
-
-loyo_predictions_out1 <- loyo_predictions_out %>%
-  group_by(trait, year) %>% 
-  nest(out) %>% 
-  mutate(out = map(data, ~mutate(.[[1]][[1]], train_n = list(.[[1]][[2]])))) %>% 
-  unnest(out) %>% 
-  unnest(train_n)
-
 loeo_predictions_out1 <- loeo_predictions_out %>%
   group_by(trait, env) %>% 
   nest(out) %>%
@@ -89,7 +81,7 @@ loeo_predictions_out1 <- loeo_predictions_out %>%
 loo_prediction_list <- list(
   lolo = lolo_predictions_out,
   loeo = loeo_predictions_out1,
-  loyo = loyo_predictions_out1
+  loyo = loyo_predictions_out
 )
 
 
@@ -97,7 +89,8 @@ loo_prediction_out <- loo_prediction_list %>%
   imap(~unnest(.x, prediction) %>% mutate(type = .y) ) %>%
   map(~rename_at(.x, vars(which(names(.x) %in% c("env", "loc"))),
                  ~str_replace_all(., c("loc" = "location", "env" = "environment")))) %>%
-  map_df(~select(., trait, environment, location, year, type, model, line_name, value, contains("pred")) %>%
+  map_df(~select(., trait, environment, location, year, type, model, line_name, value, 
+                 contains("nEnv"), contains("nObs"), contains("pred")) %>%
         mutate_if(is.character, parse_guess) %>%
         mutate_if(is.factor, ~parse_guess(as.character(.)))) %>%
   mutate(pop = ifelse(line_name %in% tp, "tp", "vp")) %>%
@@ -119,7 +112,7 @@ loo_predictive_ability <- loo_predictions_df %>%
          bias_all = mean((pred_complete - value) / value)) %>% # Bias as percent deviation from observed
   # Now summarize
   group_by(trait, model, pop, type, environment) %>%
-  summarize_at(vars(ability, bias, ability_all, bias), mean) %>%
+  summarize_at(vars(ability, bias, ability_all, bias_all), mean) %>%
   ungroup()
 
 
@@ -306,7 +299,6 @@ ggsave(filename = "loo_model_predictions_summary.jpg", plot = g_loo_predictions_
 
 
 
-
 ## Create a table
 
 # Report the mean (and range) in predictive ability across environments for each
@@ -348,6 +340,83 @@ loo_prediction_accuracy_table1 <- loo_prediction_accuracy_summ %>%
   arrange(trait, pop, type)
 
 write_csv(x = loo_prediction_accuracy_table1, path = file.path(fig_dir, "loo_prediction_accuracy_table1.csv"))
+
+
+
+
+
+## Analyze bias
+
+## Plot bias
+g_loo_bias_summ <- loo_prediction_accuracy_summ %>%
+  ggplot(aes(x = pop, color = model)) +
+  geom_linerange(aes(ymin = bias_min, ymax = bias_max, group = model), 
+                 position = position_dodge(0.9), color = "grey85") +
+  geom_linerange(aes(ymin = bias_q25, ymax = bias_q75, group = model), 
+                 position = position_dodge(0.9), color = "grey85", lwd = 1) +
+  geom_point(aes(y = bias_mean), position = position_dodge(0.9)) +
+  scale_color_manual(name = "Model", labels = f_model_replace, values = model_colors) + 
+  scale_y_continuous(name = "Predictive ability", breaks = pretty) +
+  scale_x_discrete(name = "Validation scheme", labels = f_type_replace) +
+  facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
+             switch = "y") +
+  theme_presentation2(10)
+
+# Save
+ggsave(filename = "loo_model_bias_summary.jpg", plot = g_loo_bias_summ,
+       path = fig_dir, width = 8, height = 6, dpi = 1000)
+
+
+## Plot accuracy versus bias
+g_loo_ability_bias_each <- loo_prediction_accuracy_summ %>%
+  ggplot(aes(x = bias_mean, y = ability_mean, shape = pop, color = model)) +
+  geom_vline(xintercept = 0) +
+  geom_segment(aes(x = bias_q25, xend = bias_q75, y = ability_mean, yend = ability_mean), color = "grey85", lwd = 0.5) +
+  geom_segment(aes(x = bias_mean, xend = bias_mean, y = ability_q25, yend = ability_q75), color = "grey85", lwd = 0.5) +
+  geom_point(size = 2) +
+  scale_color_manual(name = "Model", labels = f_model_replace, values = model_colors) + 
+  scale_x_continuous(name = "Bias", breaks = pretty) +
+  scale_y_continuous(name = "Predictive ability", breaks = pretty) +
+  facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
+             switch = "y", scales = "free_x") +
+  theme_light(base_size = 8)
+
+# Save
+ggsave(filename = "loo_model_accuracy_bias_each.jpg", plot = g_loo_ability_bias_each,
+       path = fig_dir, width = 8, height = 4.5, dpi = 1000)
+
+
+
+# Plot summaries of accuracy and bias
+g_loo_ability_bias_all <- loo_prediction_accuracy %>% 
+  select(., trait, model, pop, type, contains("all")) %>% 
+  distinct() %>%
+  ggplot(aes(x = bias_all, y = ability_all, shape = pop, color = model)) +
+  geom_vline(xintercept = 0) +
+  geom_point(size = 2) +
+  scale_color_manual(name = "Model", labels = f_model_replace, values = model_colors) + 
+  scale_shape_discrete(name = "Validation\nscheme", labels = f_pop_replace) +
+  scale_x_continuous(name = "Bias", breaks = pretty) +
+  scale_y_continuous(name = "Predictive ability", breaks = pretty) +
+  facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
+             switch = "y", scales = "free_x") +
+  theme_light(base_size = 8)
+
+# Save
+ggsave(filename = "loo_model_accuracy_bias_all.jpg", plot = g_loo_ability_bias_all,
+       path = fig_dir, width = 8, height = 4.5, dpi = 1000)
+
+
+
+# Convert to plotly
+g_loo_ability_bias_all_plotly <- plotly::ggplotly(p = g_loo_ability_bias_all)
+# Save as HTML widget
+htmlwidgets::saveWidget(widget = plotly::as_widget(g_loo_ability_bias_all_plotly),
+                        file = file.path(fig_dir, "loo_model_accuracy_bias_all.html"))
+
+
+
+
 
 
 

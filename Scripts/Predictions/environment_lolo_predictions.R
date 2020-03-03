@@ -155,11 +155,11 @@ lolo_predictions_out <- data_train_test1 %>%
       ## Notify user
       cat("\nPredictions for trait", row$trait, "in location", as.character(row$location), "complete.")
       
-    } # CLose loop
+    } # Close loop
     
     ## Add results to the core_df
     mutate(core_df, out = out) %>%
-      select(trait, out) %>%
+      select(out) %>%
       unnest(out)
     
   }) %>% bind_rows()
