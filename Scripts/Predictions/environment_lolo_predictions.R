@@ -158,9 +158,7 @@ lolo_predictions_out <- data_train_test1 %>%
     } # Close loop
     
     ## Add results to the core_df
-    mutate(core_df, out = out) %>%
-      select(out) %>%
-      unnest(out)
+    mutate(core_df, out = out)
     
   }) %>% bind_rows()
 
