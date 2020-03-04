@@ -35,8 +35,8 @@ load(file = file.path(result_dir, "ec_model_building.RData"))
 # Rename
 ec_model_building <- unified_ec_models
 
-## Load the environmental covariates
-load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates.RData"))
+load(file = file.path(result_dir, "historical_ec_model_building.RData"))
+
 # Load the full model variance components
 load(file.path(result_dir, "full_models.RData"))
 
@@ -99,6 +99,11 @@ data_to_model <- S2_MET_BLUEs %>%
          location = str_remove_all(location, "[0-9]{1}")) %>%
   mutate_at(vars(environment, location, year), as.factor) %>%
   mutate(env = environment, loc = location)
+
+## Rename ithaca in the location relmats
+location_relmat_df <- location_relmat_df %>% 
+  mutate_at(vars(contains("E_mat")), 
+            ~map(., ~`dimnames<-`(x = ., value = map(dimnames(.), ~str_replace(., "Ithaca1", "Ithaca")))))
 
 
 ## 

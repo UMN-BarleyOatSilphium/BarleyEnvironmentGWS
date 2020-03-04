@@ -21,12 +21,9 @@ library(broom)
 
 ## Load environmental covariables
 load(file = file.path(result_dir, "ec_model_building.RData"))
+load(file = file.path(result_dir, "historical_ec_model_building.RData"))
 # Rename
 ec_model_building <- unified_ec_models
-
-## Load the environmental covariates
-load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates.RData"))
-
 
 
 
@@ -45,42 +42,73 @@ ec_model_touse <- ec_model_building %>%
   
 
 
-## List of models
-## Lowercase = fixed, uppercase = random, eB = fixed environment using covariates
+### Models
+
+# Cross-validation will use the following models:
 # model1: y = G + r
 # model2: y = G + E + r
-# model2a: y = G + e + r
-# model2b: y = G + eB + r
 # model3: y = G + E + GE + r
-# model3a: y = G + e + GE + r
-# model3b: y = G + eB + GE + r
+# model4: y = G + L + r
+# model5: y = G + L + GL + r
+
+
+## Create a list of model formulas
+model_fixed_forms <- formulas(
+  .response = ~ value, 
+  model1 = ~ 1,
+  model2 = model1,
+  # model2a = add_predictors(model2, ~ env),
+  # model2b = reformulate(c("1", main_environment_covariates)),
+  model3 = model2,
+  # model3a = model2a,
+  # model3b = model2b
+  model4 = model1,
+  model5 = model4
+)
+
+
+## Models for de novo fitting 
+## Create a list of model formulas
+model_rand_forms <- formulas(
+  .response = ~ value,
+  model1 = ~ vs(line_name, Gu = K),
+  model2 = add_predictors(model1, ~ vs(env, Gu = E)),
+  # model2a = model1,
+  # model2b = model1,
+  model3 = add_predictors(model2, ~ vs(line_name:env, Gu = GE)),
+  # model3a = add_predictors(model1, ~ vs(line_name:env1, Gu = GE)),
+  # model3b = model3a
+  model4 = add_predictors(model1, ~vs(loc, Gu = L)),
+  model5 = add_predictors(model4, ~vs(line_name:loc, Gu = GL))
+) %>% map(~ formula(delete.response(terms(.)))) # Remove response
+
+# Residual formula
+resid_form <- ~ vs(units)
+
 
 
 ## Character vector of models
-model_list <- c("model1", "model2", "model2a", "model2b", "model3", "model3a", "model3b")
+model_list <- names(model_rand_forms)
 
 
 
 
 ## Create a results df
 full_model_df <- data_to_model %>% 
+  mutate_at(vars(environment, location), list(fct = ~fct_contr_sum(as.factor(.)))) %>%
+  rename(env = environment_fct, loc = location_fct) %>%
   group_by(trait) %>% 
   nest() %>%
   mutate(results = list(NULL))
 
 ## Loop over rows
-for (i in seq(nrow(full_model_df))) {
+for (i in seq_len(nrow(full_model_df))) {
 # for (i in seq(i, nrow(full_model_df))) {
     
   
   # Trait
   tr <- full_model_df$trait[i]
-  data <- full_model_df$data[[i]] %>%
-    # Add covariates
-    left_join(., ec_tomodel_centered) %>%
-    # Need to convert environment back to factor
-    mutate_at(vars(line_name, environment), as.factor) %>%
-    rename(env = environment)
+  data <- full_model_df$data[[i]]
   
   # Grab the model
   ec_model_i <- subset(ec_model_touse, trait == tr, object, drop = TRUE)[[1]]
@@ -115,54 +143,86 @@ for (i in seq(nrow(full_model_df))) {
   GE <- Env_mat(x = ec_mat[, interaction_environment_covariates, drop = FALSE], method = "Rincent2019") %>% 
     kronecker(X = K, Y = ., make.dimnames = TRUE)
   
-  # # List of covariance matrices
-  # relMat.list <- list(G = K, E = E_main, GE = GE)
-  # 
-  # # Covariate list
-  # covariate.list <- list(E = main_environment_covariates)
   
-  
-  ###############
-  ## Model fitting
-  ###############
-  
-  ## Create a list of formulas
-  model_fixed_forms <- formulas(
-    .response = ~ value, 
-    model1 = ~ 1,
-    model2 = model1,
-    model2a = add_predictors(model2, ~ env),
-    model2b = reformulate(c("1", main_environment_covariates)),
-    model3 = model2,
-    model3a = model2a,
-    model3b = model2b
+  ## Create a new tibble with model formulas
+  model_formula_df <- tibble(model = model_list, fixed = model_fixed_forms,
+                             rand = model_rand_forms)
+  model_formula_df <- bind_rows(
+    filter(model_formula_df, ! model %in% c("model4", "model5")),
+    crossing(filter(model_formula_df, model %in% c("model4", "model5")), time_frame = location_relmat_df$time_frame)
   )
   
-  model_rand_forms <- formulas(
-    .response = ~ value,
-    model1 = ~ vs(line_name, Gu = K),
-    model2 = add_predictors(model1, ~ vs(env, Gu = E)),
-    model2a = model1,
-    model2b = model1,
-    model3 = add_predictors(model2, ~ vs(line_name:env, Gu = GE)),
-    model3a = add_predictors(model1, ~ vs(line_name:env, Gu = GE)),
-    model3b = model3a
-  ) %>% map(~ formula(delete.response(terms(.)))) # Remove response
+  # Iterate over this df
+  model_fits <- pmap(.l = model_formula_df, ~{
+    fixed <- ..2
+    rand <- ..3
+    tf <- ..4
+    
+    if (!is.na(tf)) {
+      L <- subset(location_relmat_df, trait == tr & time_frame == tf, E_mat_main, drop = TRUE)[[1]]
+      GL <- subset(location_relmat_df, trait == tr & time_frame == tf, E_mat_int, drop = TRUE)[[1]] %>%
+        kronecker(X = K, Y = ., make.dimnames = TRUE)
+      
+    }
+    
+    # Fit the model
+    mmer(fixed = fixed, random = rand, rcov = resid_form, 
+         data = data, date.warning = FALSE, verbose = TRUE)
+    
+  })
     
   
-  ## Map over pairs of formula and fit the models
-  model_fits <- map2(.x = model_fixed_forms, .y = model_rand_forms, 
-                     ~mmer(fixed = .x, random = .y, rcov = ~ units, data = data, date.warning = FALSE,
-                           verbose = TRUE) )
-  
+  ## Generate predictions
+  model_predictions <- model_formula_df %>%
+    mutate(object = model_fits) %>%
+    mutate(R2 = map2_dbl(object, model, ~{
+      
+      mf <- model.frame(value ~ 1 + env + loc + line_name, data = .x$data)
+      y <- model.response(mf)
+      
+      # Zg
+      Zg <- model.matrix(~ -1 + line_name, mf)
+      # Ze or Zl
+      Ze <- if (.y %in% c("model2", "model3")) {
+        model.matrix(~ -1 + env, mf) 
+      } else if (.y %in% c("model4", "model5")) {
+        model.matrix(~ -1 + loc, mf)
+      } else {
+        NULL
+      }
+      
+      Zge <- if (.y %in% c("model3")) {
+        model.matrix(~ -1 + line_name:env, mf)
+      } else if (.y %in% c("model5")) {
+        model.matrix(~ -1 + line_name:loc, mf)
+      } else {
+        NULL
+      }
+      
+      
+      # List of Zs
+      Zs <- list(Zg, Ze, Zge) %>%
+        subset(., map_lgl(., ~!is.null(.)))
+      # List of ranefs
+      ranefs <- map(.x$U, "value")
+      
+      ## Random predictions
+      us <- map2(.x = Zs, .y = ranefs, ~.x %*% .y) %>%
+        reduce(`+`)
+      # Predict phenotypes
+      y_hat <- .x$Beta$Estimate + us
+      
+      # Return R2
+      cor(y, y_hat)^2
+      
+    }))
+      
+
   ## Convert to tibble, extract diagonistics and varcomp
-  model_fits_diag <- model_fits %>%
-    tibble(model = names(.), object = .) %>%
+  model_fits_diag <- model_predictions %>%
     mutate(logLik = map(object, "monitor") %>% map_dbl(~last(.[1,])), # LogLik
-           predictions = map(object, predict),
-           R2 = map_dbl(predictions, ~cor(.x$predictions$value, .x$predictions$predicted.value.value)^2),
            sigma = map(object, "sigma")) %>%
-    select(-object, -predictions)
+    select(-object)
   
   # Add to list
   full_model_df$results[[i]] <- model_fits_diag
@@ -173,20 +233,6 @@ for (i in seq(nrow(full_model_df))) {
 ## Unnest, add logLik
 full_models <- full_model_df %>%
   unnest(results)
-
-
-## Plot R2 and logLik
-full_models %>%
-  ggplot(aes(x = model, y = logLik)) +
-  geom_col() +
-  facet_wrap(~ trait, scales = "free_y")
-
-full_models %>%
-  ggplot(aes(x = model, y = R2)) +
-  geom_col() +
-  scale_y_continuous(limits = c(0, 1)) + 
-  facet_wrap(~ trait, scales = "free_y")
-
 
 
 

@@ -68,20 +68,31 @@ data_to_model <- S2_MET_BLUEs %>%
 ## Grab the prediction outputs
 loo_prediction_list <- map(set_names(object_list, object_list), get)
 
+# Columns to select before binding
+cols_select <- c("trait", "model", "prediction", "nEnv", "nObs")
+
 
 loeo_predictions_out1 <- loeo_predictions_out %>%
   group_by(trait, env) %>% 
   nest(out) %>%
   mutate(out = map(data, ~mutate(.[[1]][[1]], train_n = list(.[[1]][[2]])))) %>% 
   unnest(out) %>% 
-  unnest(train_n)
+  unnest(train_n) %>%
+  select(cols_select)
+
+lolo_predictions_out1 <- lolo_predictions_out %>% 
+  unnest(out) %>%
+  select(cols_select)
+
+loyo_predictions_out1 <- select(loyo_predictions_out, cols_select)
+
 
 
 ## Create a list manually
 loo_prediction_list <- list(
-  lolo = lolo_predictions_out,
+  lolo = lolo_predictions_out1,
   loeo = loeo_predictions_out1,
-  loyo = loyo_predictions_out
+  loyo = loyo_predictions_out1
 )
 
 
@@ -288,7 +299,7 @@ g_loo_predictions_summ <- loo_prediction_accuracy_summ %>%
   geom_point(aes(y = ability_mean), position = position_dodge(0.9)) +
   scale_color_manual(name = "Model", labels = f_model_replace, values = model_colors) + 
   scale_y_continuous(name = "Predictive ability", breaks = pretty) +
-  scale_x_discrete(name = "Validation scheme", labels = f_type_replace) +
+  scale_x_discrete(name = "Validation scheme", labels = f_pop_replace) +
   facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
              switch = "y") +
   theme_presentation2(10)
@@ -308,7 +319,7 @@ loo_prediction_accuracy_table <- loo_prediction_accuracy_summ %>%
   mutate(annotation = paste0(ability_mean, " (", ability_min, ", ", ability_max, ")")) %>%
   # Rename
   mutate(model = f_model_replace(model),
-         pop = f_type_replace(pop),
+         pop = f_pop_replace(pop),
          type = toupper(type)) %>%
   select(trait, type, model, pop, annotation) %>%
   spread(model, annotation) %>%
@@ -333,7 +344,7 @@ loo_prediction_accuracy_table1 <- loo_prediction_accuracy_summ %>%
   mutate(annotation = ability_mean) %>%
   # Rename
   mutate(model = f_model_replace(model),
-         pop = f_type_replace(pop),
+         pop = f_pop_replace(pop),
          type = toupper(type)) %>%
   select(trait, type, model, pop, annotation) %>%
   spread(model, annotation) %>%
@@ -357,7 +368,7 @@ g_loo_bias_summ <- loo_prediction_accuracy_summ %>%
   geom_point(aes(y = bias_mean), position = position_dodge(0.9)) +
   scale_color_manual(name = "Model", labels = f_model_replace, values = model_colors) + 
   scale_y_continuous(name = "Predictive ability", breaks = pretty) +
-  scale_x_discrete(name = "Validation scheme", labels = f_type_replace) +
+  scale_x_discrete(name = "Validation scheme", labels = f_pop_replace) +
   facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
              switch = "y") +
   theme_presentation2(10)

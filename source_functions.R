@@ -563,18 +563,15 @@ genomewide_prediction <- function(x) {
     column_to_rownames("env")
   
   
-  ## Add covariates to train and test
-  train <- as_tibble(merge(train, ec_df, by.x = "env", by.y = "row.names"))
-  test <- as_tibble(merge(test, ec_df, by.x = "env", by.y = "row.names"))
-  
-  
   ## Create relationship matrices
   K <- K # Genomic
   E <- Env_mat(x = ec_df[,main_environment_covariates, drop = FALSE], method = "Rincent2019")
-  L <- diag(nlevels(train$loc)); dimnames(L) <- replicate(2, levels(train$loc), simplify = FALSE)
+  L <- subset(location_relmat_df, trait == tr & time_frame == "time_frame15", E_mat_main, drop = TRUE)[[1]]
+  
   GE <- Env_mat(x = ec_df[,interaction_environment_covariates, drop = FALSE], method = "Rincent2019") %>%
     kronecker(X = K, Y = ., make.dimnames = TRUE)
-  GL <- kronecker(X = K, Y = L, make.dimnames = TRUE)
+  GL <- subset(location_relmat_df, trait == tr & time_frame == "time_frame15", E_mat_int, drop = TRUE)[[1]] %>%
+    kronecker(X = K, Y = ., make.dimnames = TRUE)
   
   
   

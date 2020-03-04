@@ -32,6 +32,8 @@ library(parallel)
 
 ## Load environmental covariables
 load(file = file.path(result_dir, "ec_model_building.RData"))
+load(file = file.path(result_dir, "historical_ec_model_building.RData"))
+
 # Rename
 ec_model_building <- unified_ec_models
 
@@ -156,9 +158,7 @@ loyo_predictions_out <- data_train_test1 %>%
     } # CLose loop
     
     ## Add results to the core_df
-    mutate(core_df, out = out) %>%
-      select(trait, out) %>%
-      unnest(out)
+    mutate(core_df, out = out)
     
   }) %>% bind_rows()
 
