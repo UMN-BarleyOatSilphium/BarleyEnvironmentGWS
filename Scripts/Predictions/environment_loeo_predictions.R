@@ -103,6 +103,12 @@ data_to_model <- S2_MET_BLUEs %>%
   mutate(env = environment, loc = location)
 
 
+## Rename ithaca in the location relmats
+location_relmat_df <- location_relmat_df %>% 
+  mutate_at(vars(contains("E_mat")), 
+            ~map(., ~`dimnames<-`(x = ., value = map(dimnames(.), ~str_replace(., "Ithaca1", "Ithaca")))))
+
+
 ## 
 ## Leave-one-environment-out
 ## 
