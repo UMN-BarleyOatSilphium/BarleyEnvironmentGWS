@@ -7,21 +7,16 @@
 ## entries in trials that belong to the `S2MET` experiment.
 ## 
 
-# Load libraries and directories
-
-library(lme4)
-library(lmerTest)
-library(nlme)
-library(modelr)
-library(broom)
-library(effects)
-library(Bilinear)
-
 # Repository directory
 repo_dir <- getwd()
 
 # Source the main project script
 source(file.path(repo_dir, "source.R"))
+
+## Load additional packages
+library(Bilinear)
+library(modelr)
+
 
 
 ## significance level
@@ -98,57 +93,6 @@ write_csv(x = intra_env_herit, path = file.path(fig_dir, "intra_environment_heri
 
 
 
-
-
-
-
-
-
-
-
-
-
-# ## Visualization of distributions
-# env_order <- S2_MET_BLUEs %>% 
-#   distinct(environment, location, year) %>%
-#   left_join(., data_frame(location = names(colors_use), color = colors_use)) %>%
-#   mutate(location = factor(location, levels = loc_order)) %>% 
-#   arrange(location, year) %>% 
-#   {set_names(x = .$color, .$environment)}
-# 
-# ## Sort on Lat/Long and year
-# S2_MET_BLUEs_toplot <- S2_MET_BLUEs_use %>%
-#   mutate(environment = parse_factor(environment, levels = env_order))
-# 
-# 
-# ## Plot
-# g_met_dist <- S2_MET_BLUEs_toplot %>%
-#   ggplot(aes(x = value, y = environment, fill = environment)) +
-#   geom_density_ridges() +
-#   facet_grid(. ~ trait, scales = "free_x") +
-#   scale_fill_manual(values = env_order, guide = FALSE) +
-#   ylab("Environment") +
-#   xlab("Phenotypic value") +
-#   theme_presentation2(base_size = 10)
-# 
-# # Save it
-# ggsave(filename = "met_trait_dist.jpg", plot = g_met_dist, path = fig_dir, width = 4.5, height = 5, dpi = 1000)
-# 
-# 
-# ## Combine map with distributions
-# g_map_dist_combine <- plot_grid(g_map1, g_met_dist, ncol = 1, rel_heights = c(0.65, 1))
-# ggsave(filename = "map_and_trait_dist.jpg", plot = g_map_dist_combine, path = fig_dir, width = 5, height = 6, dpi = 1000)
-# 
-
-
-
-
-
-
-
-
-
-
 ## Stage-Two analysis
 
 
@@ -221,7 +165,8 @@ stage_two_fits <- S2_MET_BLUEs_tomodel %>%
     fit_gly <- lmer(formula = value ~ 1 + location + year + location:year + (1|line_name) + (1|line_name:location) +
                   (1|line_name:year) + (1|line_name:location:year), data = df, control = lmer_control, weights = wts)
     
-    fit_ge <- lmer(formula = value ~ 1 + environment + (1|line_name) + (1|line_name:environment), data = df, control = lmer_control, weights = wts)
+    fit_ge <- lmer(formula = value ~ 1 + environment + (1|line_name) + (1|line_name:environment), 
+                   data = df, control = lmer_control, weights = wts)
 
     
     # ## Likelihood ratio tests
@@ -398,38 +343,6 @@ stage_two_fits_HD_varcomp <- stage_two_fits_HD %>%
 
 
 
-#######
-#######
-#######
-
-
-# ## Calculate genotype-location means
-# S2_MET_Loc_BLUEs_model <- S2_MET_BLUEs_tomodel %>%
-#   filter(population == "all") %>%
-#   group_by(trait) %>%
-#   nest() %>%
-#   mutate(out = list(NULL))
-# 
-# for (i in seq(nrow(S2_MET_Loc_BLUEs_model))) {
-#   
-#   df <- S2_MET_Loc_BLUEs_model$data[[i]]
-#   wts <- df$std_error^2
-# 
-#   # print(unique(df$trait))
-#     
-#   ## Fit a model to estimate genotype-location means
-#   fit <- lmer(value ~ line_name + location + (1|year) + (1|line_name:year), data = df, weights = wts)
-#   
-#   # Get the effects
-#   effs <- Effect(focal.predictors = c("line_name", "location"), mod = fit)
-#   S2_MET_Loc_BLUEs_model$out[[i]] <- as.data.frame(effs)
-#   
-# }
-# 
-# S2_MET_Loc_BLUEs <- unnest(S2_MET_Loc_BLUEs_model, out)
-# 
-# ## Save
-# save("S2_MET_Loc_BLUEs", file = file.path(data_dir, "S2MET_Location_BLUEs.RData"))
 
 
 
@@ -437,34 +350,6 @@ stage_two_fits_HD_varcomp <- stage_two_fits_HD %>%
 #######
 #######
 #######
-
-
-
-## Look at genetic components
-stage_two_fits_GYL_varprop2 <- stage_two_fits_GYL_varprop %>%
-  filter(str_detect(source, "Genotype")) %>%
-  group_by(trait, population) %>% 
-  mutate(var_prop = variance / sum(variance)) %>%
-  ungroup()
-
-
-
-## Plot both populations and all traits
-g_varprop_gen <- stage_two_fits_GYL_varprop2 %>% 
-  mutate(population = str_to_upper(population)) %>% 
-  ggplot(aes(x = trait, y = var_prop, fill = source)) + 
-  geom_col() +
-  ylab("Proportion of genetic-related variance") +
-  scale_fill_manual(values = var_comp_colors, name = NULL) +
-  facet_grid(~ population) + 
-  theme_acs() +
-  theme(axis.title.x = element_blank(),
-        legend.position = "bottom")
-
-# Save
-ggsave(filename = "variance_components_genetic_expanded.jpg", plot = g_varprop_gen, path = fig_dir, width = 8, height = 4, dpi = 1000)
-
-
 
 
 
@@ -757,6 +642,7 @@ varGLY_components <- rG %>%
 
 
 varGLY_components %>%
+  filter(term == "location") %>%
   mutate(heterogeneity = str_c(round(V, 3), " (", round(V_prop, 2) * 100, "%)"), 
          lackCorrelation = str_c(round(L, 3), " (", round(L_prop, 2) * 100, "%)")) %>% 
   select(population, trait, heterogeneity, lackCorrelation) %>% 
@@ -764,22 +650,22 @@ varGLY_components %>%
   spread(grp, value) %>%
   arrange(trait, population)
 
-# population trait           heterogeneity  lackCorrelation 
-# 1 all        GrainProtein 0.131 (25%)     0.403 (75%)     
-# 2 tp         GrainProtein 0.13 (24%)      0.419 (76%)     
-# 3 vp         GrainProtein 0.035 (8%)      0.412 (92%)     
-# 4 all        GrainYield   84672.705 (33%) 170628.915 (67%)
-# 5 tp         GrainYield   88238.353 (33%) 177820.796 (67%)
-# 6 vp         GrainYield   51709.965 (25%) 154130.275 (75%)
-# 7 all        HeadingDate  3.805 (58%)     2.803 (42%)     
-# 8 tp         HeadingDate  3.867 (64%)     2.147 (36%)     
-# 9 vp         HeadingDate  2.787 (52%)     2.559 (48%)     
-# 10 all        PlantHeight  5.667 (29%)     13.941 (71%)    
-# 11 tp         PlantHeight  4.87 (25%)      14.252 (75%)    
-# 12 vp         PlantHeight  6.36 (32%)      13.456 (68%)    
-# 13 all        TestWeight   129.551 (32%)   273.045 (68%)   
-# 14 tp         TestWeight   133.357 (32%)   289.227 (68%)   
-# 15 vp         TestWeight   115.139 (34%)   221.69 (66%)
+# population trait        heterogeneity   lackCorrelation
+# 1 all        GrainProtein 0.113 (96%)     0.004 (4%)     
+# 2 tp         GrainProtein 0.084 (77%)     0.025 (23%)    
+# 3 vp         GrainProtein 0.048 (38%)     0.078 (62%)    
+# 4 all        GrainYield   29415.707 (70%) 12497.899 (30%)
+# 5 tp         GrainYield   29964.194 (71%) 12154.738 (29%)
+# 6 vp         GrainYield   30732.615 (68%) 14350.573 (32%)
+# 7 all        HeadingDate  0.473 (76%)     0.151 (24%)    
+# 8 tp         HeadingDate  0.422 (58%)     0.307 (42%)    
+# 9 vp         HeadingDate  1.086 (149%)    -0.359 (-49%)  
+# 10 all        PlantHeight  1.628 (112%)    -0.174 (-12%)  
+# 11 tp         PlantHeight  1.612 (98%)     0.025 (2%)     
+# 12 vp         PlantHeight  1.658 (193%)    -0.8 (-93%)    
+# 13 all        TestWeight   145.445 (120%)  -23.867 (-20%) 
+# 14 tp         TestWeight   145.39 (116%)   -19.957 (-16%) 
+# 15 vp         TestWeight   72.335 (88%)    9.514 (12%)
 
 
 
@@ -793,7 +679,8 @@ prop_varcomp1 <- prop_varcomp %>%
          source = str_to_title(source))
 
 
-varGE_components1 <- varGE_components %>% 
+varGLY_components1 <- varGLY_components %>% 
+  filter(term == "location") %>%
   select(trait, population, V, L) %>% 
   gather(source, variance, V, L) %>%
   group_by(trait, population) %>% 
@@ -807,7 +694,7 @@ comp_order <- unique(stage_two_fits_GYL_varprop1$source) %>%
 
 ## Combine and output
 var_comp_table <- select(stage_two_fits_GYL_varprop1, trait, population, source, variance, proportion = var_prop) %>%
-  bind_rows(., varGE_components1) %>%
+  bind_rows(., varGLY_components1) %>%
   ungroup() %>%
   mutate(significance = "",
          # significance = case_when(p.value < 0.001 ~ "***",
@@ -827,7 +714,7 @@ var_comp_table <- select(stage_two_fits_GYL_varprop1, trait, population, source,
   rename_all(str_to_title) %>%
   spread(Population, Annotation)
 
-write_csv(x = var_comp_table, path = file.path(fig_dir, "population_variance_components_decomposed.csv"))
+write_csv(x = var_comp_table, path = file.path(fig_dir, "population_variance_components_gly.csv"))
 
 
 
@@ -864,7 +751,7 @@ ammi_fit <- S2_MET_BLUEs_tomodel %>%
       mutate(environment = as.factor(environment),
              ge = interaction(line_name, environment, sep = ":", drop = FALSE)) %>%
       # Create contrasts
-      mutate_at(vars(line_name, environment), ~`contrasts<-`(., value = `colnames<-`(x = contr.sum(levels(.)), value = head(levels(.), -1))))
+      mutate_at(vars(line_name, environment), fct_contr_sum)
     
     # Create two-way table of genos and enviros
     ge_mat <- df1 %>% 
@@ -916,9 +803,12 @@ ammi_fit <- S2_MET_BLUEs_tomodel %>%
     acc <- with(left_join(df1, y_hat_df, by = c("environment", "line_name")), cor(value, y_hat))
     
     
+    ### Fit a GxE AMMI model ###
+    
     # Fit the ammi model using the bilinear package
     # Use Ftest for speed - we don't care about significance
-    fit_ammi <- bilinear(x = y_hat_df, G = "line_name", E = "environment", y = "y_hat", model = "AMMI", alpha = alpha, B = 10000)
+    fit_ammi <- bilinear(x = y_hat_df, G = "line_name", E = "environment", y = "y_hat", 
+                         model = "AMMI", alpha = alpha, B = 10000)
     
     ## Output a tibble
     tibble(y_hat = list(y_hat_df), model_acc = acc, fit_ammi = list(fit_ammi))
@@ -979,71 +869,112 @@ ammiN_fit <- ammi_fit %>%
     
     row <- .
     nPC <- row$nPC
-  
-    # Get data
-    df <- row$y_hat[[1]] %>%
-      rename(value = y_hat) %>%
-      # Create contrasts
-      mutate_at(vars(line_name, environment), as.factor) %>%
-      mutate_at(vars(line_name, environment), ~`contrasts<-`(., value = `colnames<-`(x = contr.sum(levels(.)), value = head(levels(.), -1))))
+    # Get the fitted ammi model
+    fitted_ammi <- row$fit_ammi[[1]]
     
-    ## AOV of main effects
-    fit1 <- aov(value ~ 1 + line_name + environment, data = df)
+    # Get the environmental and genotypic effects
+    g_effects <- fitted_ammi$Geffect %>%
+      tibble(line_name = names(.), effect = .)
+    e_effects <- fitted_ammi$Eeffect %>%
+      tibble(environment = names(.), effect = .)
     
-    ## Get effects
-    mu <- coef(fit1)[1]
-    fit1_effect <- model.tables(x = fit1, type = "effect")
+    # Get the environmental and genotypic scores
+    g_scores <- fitted_ammi$scores$Gscores
+    e_scores <- fitted_ammi$scores$Escores
     
-    # Get residuals and create two-way table
-    df1 <- add_residuals(data = df, model = fit1)
-    resid_mat <- df1 %>%
-      select(-value) %>% 
-      spread(environment, resid) %>%
-      as.data.frame() %>%
-      column_to_rownames("line_name") %>%
-      as.matrix()
+    ## Sum the first nPC scores
+    g_scores_sum <- rowSums(g_scores[,seq_len(nPC), drop = FALSE])
+    e_scores_sum <- rowSums(e_scores[,seq_len(nPC), drop = FALSE])
     
-    ## SVD
-    resid_svd <- svd(x = resid_mat, nu = nPC, nv = nPC)
+    ## Combine into DF
+    g_effects_scores <- cbind(g_effects, score = g_scores_sum, g_scores)
+    e_effects_scores <- cbind(e_effects, score = e_scores_sum, e_scores)
     
-    ## Calculate scores and grab the means
-    gscores <- (resid_svd$u %*% sqrt(resid_svd$d[seq(1, nPC)])) %>%
-      `rownames<-`(., rownames(resid_mat)) %>%
-      as.data.frame() %>%
+    ## Predict y
+    # First sum effects
+    ge_effect_summ <- outer(
+      X = g_effects_scores[,"effect"], 
+      Y = e_effects_scores[,"effect"], 
+      FUN = "*")
+    
+    ## Calculate phi, the fitted GxE effect vector using the principal components
+    phi <- outer(X = g_scores_sum, Y = e_scores_sum)
+    
+    # Add the effects to phi, add intercept
+    y_hat_mat <- c(fitted_ammi$mu) + ge_effect_summ + phi
+    # Convert to df
+    y_hat_df <- as.data.frame(y_hat_mat) %>%
       rownames_to_column("line_name") %>%
-      rename(score = V1) %>%
-      left_join(., fit1_effect$tables$line_name %>% tibble(line_name = names(.), effect = .), by = "line_name")
-      
-    escores <- (resid_svd$v %*% sqrt(resid_svd$d[seq(1, nPC)])) %>%
-      `rownames<-`(., colnames(resid_mat)) %>%
-      as.data.frame() %>%
-      rownames_to_column("environment") %>%
-      rename(score = V1) %>%
-      left_join(., fit1_effect$tables$environment %>% tibble(environment = names(.), effect = .), by = "environment")
-    
-    # Extract matrices
-    A <- resid_svd$u
-    d <- resid_svd$d[seq(1:nPC)]
-    D <- diag(seq_along(d))
-    diag(D) <- d
-    B <- resid_svd$v
-    
-    ## Calculate phi
-    phi <- A %*% D %*% t(B)
-    # Add names
-    dimnames(phi) <- dimnames(resid_mat)
+      gather(environment, y_hat, -line_name)
     
     
     ## Return tibble
-    tibble(mu = mu, scores = list(list(gscores = gscores, escores = escores)), phi = list(phi))
+    tibble(mu = fitted_ammi$mu, y_hat = list(y_hat_df), g_scores = list(g_effects_scores),
+           e_scores = list(e_effects_scores), phi = list(phi))
     
   }) %>% ungroup()
+
+
+## Calculate average scores by location
+ammiN_fit_location <- ammiN_fit %>%
+  mutate(loc_scores = map(e_scores, ~{
+    # Add location information
+    left_join(.x, distinct(trial_info, location, environment), by = "environment") %>%
+      # Summarize by location
+      group_by(location) %>% 
+      summarize_at(vars(-environment), mean)
+  }))
+    
+
+## Plot environment and location scores
+ammi_gplot_list <- ammiN_fit_location %>%
+  mutate(plot = map2(e_scores, loc_scores, ~{
+    
+    # Merge x and y for line segments
+    df <- distinct(trial_info, location, environment) %>%
+      right_join(., select(.x, environment, effect, score, PC1, PC2) %>% rename_at(vars(-environment), ~paste0("environment_", .)) ) %>%
+      left_join(., select(.y, location, effect, score, PC1, PC2) %>% rename_at(vars(-location), ~paste0("location_", .)) ) %>%
+      # Rename
+      rename(x = location_PC1, xend = environment_PC1, y = location_PC2, yend = environment_PC2,
+             x1 = location_effect, xend1 = environment_effect) %>%
+      mutate(y1 = x, yend1 = xend)
+
+    # Plot environment scores; then plot location scores
+    g_pc1_pc1 <- ggplot(data = .x, aes(x = PC1, y = PC2)) +
+      # geom_hline(yintercept = 0) + 
+      # geom_vline(xintercept = 0) +
+      geom_segment(data = df, aes(x = x, y = y, xend = 0, yend = 0), lwd = 1, color = "red") +
+      geom_segment(data = df, aes(x = x, y = y, xend = xend, yend = yend), lwd = 0.5, color = "blue") +
+      # geom_point(color = "blue") +
+      # geom_point(data = .y, shape = 15, size = 2, color = "red") +
+      geom_text(aes(label = environment), color = "blue", size = 2) +
+      geom_text(data = .y, aes(label = location), size = 4, color = "red") +
+      theme_acs()
+    
+    # Plot environment scores; then plot location scores
+    g_effect_pc1 <- ggplot(data = .x, aes(x = effect, y = PC1)) +
+      # geom_hline(yintercept = 0) + 
+      # geom_vline(xintercept = 0) +
+      geom_segment(data = df, aes(x = x1, y = y1, xend = 0, yend = 0), lwd = 1, color = "red") +
+      geom_segment(data = df, aes(x = x1, y = y1, xend = xend1, yend = yend1), lwd = 0.5, color = "blue") +
+      # geom_point(color = "blue") +
+      # geom_point(data = .y, shape = 15, size = 2, color = "red") +
+      geom_text(aes(label = environment), color = "blue", size = 2) +
+      geom_text(data = .y, aes(label = location), size = 4, color = "red") +
+      theme_acs()
+    
+    # Return plots
+    tibble(plot1 = list(g_pc1_pc1), plot2 = list(g_effect_pc1))
+    
+  }) ) %>% select(trait, plot)
+    
+
 
 
 
 
 ## Save
-save("ammi_fit", "ammiN_fit", file = file.path(result_dir, "ammi_model_fit.RData"))
+save("ammi_fit", "ammiN_fit", "ammiN_fit_location", file = file.path(result_dir, "ammi_model_fit.RData"))
 
 
 
@@ -1055,6 +986,106 @@ save("ammi_fit", "ammiN_fit", file = file.path(result_dir, "ammi_model_fit.RData
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##################################################
+### Appendix
+##################################################
+
+
+
+
+# ## Visualization of distributions
+# env_order <- S2_MET_BLUEs %>% 
+#   distinct(environment, location, year) %>%
+#   left_join(., data_frame(location = names(colors_use), color = colors_use)) %>%
+#   mutate(location = factor(location, levels = loc_order)) %>% 
+#   arrange(location, year) %>% 
+#   {set_names(x = .$color, .$environment)}
+# 
+# ## Sort on Lat/Long and year
+# S2_MET_BLUEs_toplot <- S2_MET_BLUEs_use %>%
+#   mutate(environment = parse_factor(environment, levels = env_order))
+# 
+# 
+# ## Plot
+# g_met_dist <- S2_MET_BLUEs_toplot %>%
+#   ggplot(aes(x = value, y = environment, fill = environment)) +
+#   geom_density_ridges() +
+#   facet_grid(. ~ trait, scales = "free_x") +
+#   scale_fill_manual(values = env_order, guide = FALSE) +
+#   ylab("Environment") +
+#   xlab("Phenotypic value") +
+#   theme_presentation2(base_size = 10)
+# 
+# # Save it
+# ggsave(filename = "met_trait_dist.jpg", plot = g_met_dist, path = fig_dir, width = 4.5, height = 5, dpi = 1000)
+# 
+# 
+# ## Combine map with distributions
+# g_map_dist_combine <- plot_grid(g_map1, g_met_dist, ncol = 1, rel_heights = c(0.65, 1))
+# ggsave(filename = "map_and_trait_dist.jpg", plot = g_map_dist_combine, path = fig_dir, width = 5, height = 6, dpi = 1000)
+# 
+
+
+#######
+#######
+#######
+
+
+# ## Calculate genotype-location means
+# S2_MET_Loc_BLUEs_model <- S2_MET_BLUEs_tomodel %>%
+#   filter(population == "all") %>%
+#   group_by(trait) %>%
+#   nest() %>%
+#   mutate(out = list(NULL))
+# 
+# for (i in seq(nrow(S2_MET_Loc_BLUEs_model))) {
+#   
+#   df <- S2_MET_Loc_BLUEs_model$data[[i]]
+#   wts <- df$std_error^2
+# 
+#   # print(unique(df$trait))
+#     
+#   ## Fit a model to estimate genotype-location means
+#   fit <- lmer(value ~ line_name + location + (1|year) + (1|line_name:year), data = df, weights = wts)
+#   
+#   # Get the effects
+#   effs <- Effect(focal.predictors = c("line_name", "location"), mod = fit)
+#   S2_MET_Loc_BLUEs_model$out[[i]] <- as.data.frame(effs)
+#   
+# }
+# 
+# S2_MET_Loc_BLUEs <- unnest(S2_MET_Loc_BLUEs_model, out)
+# 
+# ## Save
+# save("S2_MET_Loc_BLUEs", file = file.path(data_dir, "S2MET_Location_BLUEs.RData"))
 
 
 

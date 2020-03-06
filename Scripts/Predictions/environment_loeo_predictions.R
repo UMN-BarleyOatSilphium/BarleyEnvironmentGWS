@@ -18,16 +18,19 @@
 repo_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/S2MET_Predictions_Models/"
 source(file.path(repo_dir, "source_MSI.R"))
 
-## Number of cores
-# n_core <- detectCores()
-n_core <- 4
-
 
 # Other packages
 library(modelr)
 library(broom)
 library(parallel)
 
+
+## Number of cores
+# n_core <- detectCores()
+n_core <- 4
+
+# time_frame to use for the location relationship matrix
+time_frame_use <- "time_frame5"
 
 
 ## Load environmental covariables
@@ -96,17 +99,9 @@ data_to_model <- S2_MET_BLUEs %>%
          environment %in% tp_vp_env) %>%
   mutate(id = seq(nrow(.))) %>%
   droplevels() %>%
-  mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno)),
-         # Collapse Ithacas
-         location = str_remove_all(location, "[0-9]{1}")) %>%
+  mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno))) %>%
   mutate_at(vars(environment, location, year), as.factor) %>%
   mutate(env = environment, loc = location)
-
-
-## Rename ithaca in the location relmats
-location_relmat_df <- location_relmat_df %>% 
-  mutate_at(vars(contains("E_mat")), 
-            ~map(., ~`dimnames<-`(x = ., value = map(dimnames(.), ~str_replace(., "Ithaca1", "Ithaca")))))
 
 
 ## 

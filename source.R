@@ -7,7 +7,6 @@ library(tidyverse)
 library(readxl)
 library(rrBLUP)
 library(neyhart)
-library(boot)
 library(pbr)
 library(lmerTest)
 
@@ -43,7 +42,8 @@ source(file.path(proj_dir, "source_functions.R"))
 # Load the phenotypic data
 load(file.path(pheno_dir, "S2_tidy_BLUE.RData"))
 # Load the trial metadata
-trial_info <- read_csv(file = file.path(meta_dir, "trial_metadata.csv"))
+trial_info <- read_csv(file = file.path(meta_dir, "trial_metadata.csv")) %>%
+  filter(population %in% c("s2tp", "s2c1", "s2met"), type == "spy")
 
 
 # Load the genotypic data

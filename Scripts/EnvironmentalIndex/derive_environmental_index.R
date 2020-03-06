@@ -14,14 +14,12 @@ source(file.path(repo_dir, "source.R"))
 
 # Load other libraries
 library(lubridate)
-library(lme4)
 library(modelr)
 library(broom)
 library(pbr)
 library(cowplot)
 library(pls)
 library(car)
-library(cAIC4)
 
 # Significance level
 alpha <- 0.05
@@ -108,10 +106,6 @@ ec_pairwise_cor1 %>%
 
 
 
-## Scatterplot matrix
-scatterplotMatrix(ec_tomodel_centered[,-1], smooth = FALSE)
-
-
 ## Which covariates are enriched beyond some threshold?
 cor_threshold <- 0.6
 ec_pairwise_cor %>% 
@@ -165,7 +159,7 @@ ec_tomodel_normality <- ec_select %>%
   ungroup() %>%
   mutate(p_value = map_dbl(ks_test, "p.value"))
 
-subset(ec_tomodel_normality, p_value < alpha)
+subset(ec_tomodel_normality, p_value < 0.1)
 
 
 
@@ -240,31 +234,10 @@ environmental_covariates_all <- reduce(ec_by_trait_all$covariates, union)
 ### Model covariates that are predictive of the environmental mean
 ############################
 
-## Fit a base, random effect model for all traits
-base_model_fit <- s2_met_tomodel %>%
-  group_by(trait) %>%
-  do(fit = {
-    df <- .
-    # Modify contrasts
-    df1 <- df %>%
-      droplevels() %>%
-      mutate(environment = as.factor(environment),
-             environment = `contrasts<-`(environment, value = `colnames<-`(contr.sum(levels(environment)), head(levels(environment), -1))))
-    
-    lmer(value ~ 1 + (1|line_name) + environment, data = df1)
-    
-    }) %>%
-  ungroup()
-
-
-## Get estimates of environmental effect
-base_model_env_effect <- base_model_fit %>%
-  # mutate(effect = map(fit, ~ranef(.)$environment %>% rownames_to_column("environment") %>% rename(effect = 2))) %>%
-  mutate(effect = map(fit, ~fixef(.x)[-1] %>% tibble(environment = names(.), effect = .) %>% 
-                        mutate(environment = str_remove(environment, "environment")) %>% 
-                        add_row(environment = last(levels(model.frame(.x)$environment)), effect = -sum(.$effect)) )) %>%
-  unnest(effect)
-
+## Get the environmental effects from the AMMI model
+base_model_env_effect <- ammiN_fit_location %>%
+  unnest(e_scores) %>% 
+  select(trait, environment, effect)
 
 
 
@@ -371,71 +344,49 @@ env_effect_models %>%
   facet_wrap(~ trait, scales = "free") +
   theme_acs()
   
-
-
-
-## Add the covariates to the base model
-base_models1 <- left_join(base_model_fit, env_effect_models) %>%
-  select(trait, data, base_fit = fit, effect_fit = model) %>%
-  mutate(fit2 = map2(base_fit, effect_fit, ~{
-    drop_form <- reformulate(paste0("(", attr(drop.terms(terms(formula(.x)), 2), "term.labels"), ")"), response = "value")
-    new_form <- add_predictors(drop_form, formula(delete.response(termobj = terms(formula(.y)))))
-    update(.x, formula = new_form)
-  }))
-
-
-
-## Cross-validation - leave-one-environment-out
-env_effect_models_cv <- base_models1 %>%
+## Perform leave-one-out cross-validation
+env_effect_models_looCV <- env_effect_models %>%
+  mutate(model_data = map(model, ~add_predictions(data = model.frame(.x), model = .x))) %>% 
   group_by(trait) %>%
   do({
-    
     row <- .
-    
-    ## Get the mixed model
-    fit2 <- row$fit2[[1]]
-    
-    cv_df <- unnest(row, data) %>% 
-      group_by(environment) %>% 
-      nest() %>% 
+    cv_df <- unnest(row, model_data) %>%
       crossv_loo() %>%
-      mutate_at(vars(train, test), ~map(., ~unnest(as.data.frame(.))))
-    
-    cv_models <- map(cv_df$train, ~ lmer(formula = formula(fit2), data = .))
+      mutate_at(vars(test, train), ~map(., as.data.frame))
+    model_fits <- map(cv_df$train, ~update(object = row$model[[1]], data = .))
     
     # Predictions
-    predictions <- map2_df(cv_df$test, cv_models, add_predictions)
+    predictions <- map2_df(cv_df$test, model_fits, add_predictions)
     
     # RMSE
-    rmse_df <- mean(map2_dbl(cv_models, cv_df$test, rmse))
+    rmse_df <- mean(map2_dbl(model_fits, cv_df$test, rmse))
     
     # Accuracy
-    accuracy <- cor(predictions$value, predictions$pred)
+    accuracy <- cor(predictions$effect, predictions$pred)
     
     ## Return summaries
     tibble(predictions = list(predictions), accuracy = accuracy, rmse = rmse_df)
     
-  })
+  }) %>% ungroup()
+  
 
-
-## Plot
-env_effect_models_cv %>% 
+# Plot
+env_effect_models_looCV %>%
   unnest(predictions) %>%
-  ggplot(data = ., aes(x = pred, y = value, color = environment)) + 
-  geom_point() + 
-  scale_color_discrete(guide = FALSE) +
-  facet_wrap(~trait, scales = "free")
+  ggplot(aes(x = pred, y = effect)) +
+  geom_abline(slope = 1, intercept = 0) +
+  geom_point() +
+  facet_wrap(~ trait, scales = "free") +
+  theme_acs()
 
 
 
-
-
-# trait        accuracy     rmse
-# 1 GrainProtein    0.968    0.273
-# 2 GrainYield      0.717 1080.   
-# 3 HeadingDate     0.796    3.18 
-# 4 PlantHeight     0.542    8.09 
-# 5 TestWeight      0.964    5.64
+# trait        predictions       accuracy     rmse
+# 1 GrainProtein <tibble [10 x 7]>    0.727    0.970
+# 2 GrainYield   <tibble [22 x 8]>    0.715 1083.   
+# 3 HeadingDate  <tibble [25 x 6]>    0.751    3.37 
+# 4 PlantHeight  <tibble [27 x 7]>    0.491    8.78 
+# 5 TestWeight   <tibble [12 x 9]>    0.621   36.8 
 
 
 
@@ -448,7 +399,7 @@ env_effect_models_cv %>%
 
 ## Using the AMMI output and phi, calculate the distance matrix between environments
 ## This will be denoted as W_ammi, consistent with Rincent 2019
-ammi_dist <- ammiN_fit %>%
+ammi_dist <- ammiN_fit_location %>%
   mutate(W = map(phi, ~as.matrix(dist(t(.)))),
          W_ammi = map(W, ~1 - (. / max(.)))) %>%
   select(trait, W_ammi)
@@ -466,12 +417,6 @@ ec_tomodel_scaled_mat <- ec_tomodel_scaled %>%
 # Tolerance of difference of correlations
 cor_tol <- 0.01
 
-## Function for calculating a distance matrix based on two-way matrix
-make_dist_mat <- function(x) {
-  d1 <- as.matrix(dist(x))
-  1 - (d1 / max(d1))
-}
-  
 
 ## For each trait, use an algorithm to determine the covariates to use
 ## This is based on the approach of Rincent 2019
@@ -625,109 +570,32 @@ for (i in seq(nrow(unified_ec_models))) {
 
 
 
-
-## Cross-validation - leave-one-environment-out
-unified_ec_models_cv <- unified_ec_models %>% 
-  unnest(final_model) %>%
-  group_by(trait, model) %>%
-  do({
-    
-    row <- .
-    tr <- unique(row$trait)
-    
-    # Generate CV randomization
-    cv_df <- filter(s2_met_tomodel, trait == tr) %>% 
-      group_by(environment) %>% 
-      nest() %>% 
-      crossv_loo() %>%
-      mutate_at(vars(train, test), ~map(., ~unnest(as.data.frame(.))))
-    
-    # Fit the models for each training set
-    cv_models <- map(cv_df$train, ~lmer(formula = formula(row$object[[1]]), data = .))
-
-    # Predictions
-    if (row$model == "model1") {
-      predictions <- map2_df(cv_models, cv_df$test, ~mutate(.y, pred = predict(object = .x, newdata = .y, random.only = T) + fixef(.x)[1]))
-      
-    } else {
-      predictions <- map2_df(cv_df$test, cv_models, add_predictions)
-      
-    }
-    
-    # RMSE
-    rmse_df <- sqrt(mean((predictions$pred - predictions$value)^2))
-    
-    # Accuracy
-    accuracy <- cor(predictions$value, predictions$pred)
-    
-    ## Return summaries
-    tibble(object = row$object, predictions = list(predictions), accuracy = accuracy, rmse = rmse_df)
-    
-  }) %>% ungroup()
-
-
-
-
-
-unified_ec_models_cv %>% 
-  unnest(predictions) %>%
-  split(.$trait) %>%
-  map(~{
-    ggplot(data = ., aes(x = pred, y = value, color = environment)) + 
-      geom_point() + 
-      facet_grid(~ model) +
-      scale_color_discrete(guide = FALSE)
-  }) %>%
-  plot_grid(plotlist = ., ncol = 1)
-
-
-# 
-# 
-# ############################
-# ### Heritability
-# ############################
-# 
-# 
-# ## Fit genomic heritability models for slopes
-# # Extract the coefficients for each model
-# # Keep final and apriori models
-# ec_interaction_coef <- covariate_reg_coefs %>%
-#   rename_all(~str_remove(., "_model")) %>%
-#   gather(model, out, -trait) %>% 
-#   unnest(out)
-# 
-# 
-# # Subset the K matrix
-# K_use <- K[tp_geno, tp_geno]
-# 
-# ## Fit models
-# ec_interaction_coef_herit <- ec_interaction_coef %>%
-#   group_by(trait, model, covariate) %>%
-#   do({
-#     df <- .
-#     
-#     df1 <- subset(df, line_name %in% tp_geno)
-#     
-#     ## Calculate heritability
-#     invisible(capture.output(herit_fit <- marker_h2(data.vector = df1$estimate, geno.vector = df1$line_name, K = K_use, alpha = alpha)))
-#     
-#     ## Return df
-#     tibble(heritability = herit_fit$h2, lower = herit_fit$conf.int1[1], upper = herit_fit$conf.int1[2])
-#     
-#   })
-# 
-# ## Write table
-# write_csv(x = ec_interaction_coef_herit, path = file.path(fig_dir, "covariate_slope_heritability.csv"))
-# 
-
-
-
-
-
 ## Save these results
-save("unified_ec_models", "unified_ec_models_cv", "env_effect_models", "ec_ammi_dist", "s2_met_tomodel", 
+save("unified_ec_models", "env_effect_models", "ec_ammi_dist", 
      "ec_tomodel_centered", "ec_tomodel_scaled", "ec_tomodel_centers", 
      file = file.path(result_dir, "ec_model_building.RData"))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1265,5 +1133,45 @@ plot(best_fit[[1]])
 #          AIC = map_dbl(object, AIC), BIC = map_dbl(object, BIC), logLik = map_dbl(object, logLik))
 
 
+
+
+# 
+# 
+# ############################
+# ### Heritability
+# ############################
+# 
+# 
+# ## Fit genomic heritability models for slopes
+# # Extract the coefficients for each model
+# # Keep final and apriori models
+# ec_interaction_coef <- covariate_reg_coefs %>%
+#   rename_all(~str_remove(., "_model")) %>%
+#   gather(model, out, -trait) %>% 
+#   unnest(out)
+# 
+# 
+# # Subset the K matrix
+# K_use <- K[tp_geno, tp_geno]
+# 
+# ## Fit models
+# ec_interaction_coef_herit <- ec_interaction_coef %>%
+#   group_by(trait, model, covariate) %>%
+#   do({
+#     df <- .
+#     
+#     df1 <- subset(df, line_name %in% tp_geno)
+#     
+#     ## Calculate heritability
+#     invisible(capture.output(herit_fit <- marker_h2(data.vector = df1$estimate, geno.vector = df1$line_name, K = K_use, alpha = alpha)))
+#     
+#     ## Return df
+#     tibble(heritability = herit_fit$h2, lower = herit_fit$conf.int1[1], upper = herit_fit$conf.int1[2])
+#     
+#   })
+# 
+# ## Write table
+# write_csv(x = ec_interaction_coef_herit, path = file.path(fig_dir, "covariate_slope_heritability.csv"))
+# 
 
 

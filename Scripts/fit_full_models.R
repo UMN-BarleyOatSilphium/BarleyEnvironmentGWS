@@ -95,8 +95,6 @@ model_list <- names(model_rand_forms)
 
 ## Create a results df
 full_model_df <- data_to_model %>% 
-  mutate_at(vars(environment, location), list(fct = ~fct_contr_sum(as.factor(.)))) %>%
-  rename(env = environment_fct, loc = location_fct) %>%
   group_by(trait) %>% 
   nest() %>%
   mutate(results = list(NULL))
@@ -108,7 +106,9 @@ for (i in seq_len(nrow(full_model_df))) {
   
   # Trait
   tr <- full_model_df$trait[i]
-  data <- full_model_df$data[[i]]
+  data <- droplevels(full_model_df$data[[i]]) %>%
+    mutate_at(vars(environment, location), list(fct = ~fct_contr_sum(as.factor(.)))) %>%
+    rename(env = environment_fct, loc = location_fct)
   
   # Grab the model
   ec_model_i <- subset(ec_model_touse, trait == tr, object, drop = TRUE)[[1]]
@@ -221,7 +221,9 @@ for (i in seq_len(nrow(full_model_df))) {
   ## Convert to tibble, extract diagonistics and varcomp
   model_fits_diag <- model_predictions %>%
     mutate(logLik = map(object, "monitor") %>% map_dbl(~last(.[1,])), # LogLik
-           sigma = map(object, "sigma")) %>%
+           sigma = map(object, "sigma"),
+           AIC = map_dbl(object, "AIC"),
+           BIC = map_dbl(object, "BIC")) %>%
     select(-object)
   
   # Add to list
@@ -240,5 +242,12 @@ full_models <- full_model_df %>%
 save("full_models", file = file.path(result_dir, "full_models.RData"))
 
 
-
+## Compare models
+full_models %>%
+  unite("model1", model, time_frame, sep = "_") %>%
+  gather(diagnostic, value, R2, logLik, AIC, BIC) %>%
+  ggplot(aes(x = model1, y = value)) +
+  geom_col() +
+  facet_grid(diagnostic ~ trait, scales = "free_y") +
+  theme_acs()
   

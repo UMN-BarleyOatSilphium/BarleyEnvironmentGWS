@@ -482,26 +482,17 @@ Env_mat <- function(x, method = c("Jarquin2014", "Malosetti2016", "Rincent2019")
 #   
 # }
   
-    
 
-## A function to re-define contrasts as sum-to-zero
-fct_contr_sum <- function(x, drop.levels = FALSE) {
-  stopifnot(is.factor(x))
-  
-  # Drop levels, if called for 
-  x1 <- if (drop.levels) droplevels(x = x) else x
-  
-  # Redefine contrasts as sum-to-zero
-  x1_contrasts <- contr.sum(levels(x1))
-  colnames(x1_contrasts) <- head(levels(x1), -1)
-  contrasts(x1) <- x1_contrasts
-  return(x1)
+
+## Function for calculating a distance matrix based on two-way matrix
+make_dist_mat <- function(x) {
+  d1 <- as.matrix(dist(x))
+  1 - (d1 / max(d1))
 }
 
 
 
-
-
+    
 
 ## The main prediction function for CV ##
 # 
@@ -566,11 +557,11 @@ genomewide_prediction <- function(x) {
   ## Create relationship matrices
   K <- K # Genomic
   E <- Env_mat(x = ec_df[,main_environment_covariates, drop = FALSE], method = "Rincent2019")
-  L <- subset(location_relmat_df, trait == tr & time_frame == "time_frame15", E_mat_main, drop = TRUE)[[1]]
+  L <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use, E_mat_main, drop = TRUE)[[1]]
   
   GE <- Env_mat(x = ec_df[,interaction_environment_covariates, drop = FALSE], method = "Rincent2019") %>%
     kronecker(X = K, Y = ., make.dimnames = TRUE)
-  GL <- subset(location_relmat_df, trait == tr & time_frame == "time_frame15", E_mat_int, drop = TRUE)[[1]] %>%
+  GL <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use, E_mat_int, drop = TRUE)[[1]] %>%
     kronecker(X = K, Y = ., make.dimnames = TRUE)
   
   
