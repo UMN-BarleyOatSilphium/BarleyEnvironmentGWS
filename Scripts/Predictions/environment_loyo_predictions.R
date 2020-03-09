@@ -160,7 +160,7 @@ loyo_predictions_out <- data_train_test1 %>%
     ## Add results to the core_df
     mutate(core_df, out = out)
     
-  }) %>% bind_rows()
+  })
 
 
 ## Save the results
