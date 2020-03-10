@@ -484,6 +484,7 @@ historical_ec_ammi_dist <- historical_ec_tomodel_ammi %>%
 
 
 ### Create relationship matrices for locations ####
+
 location_relmat_df <- historical_ec_ammi_dist %>%
   # Add location main effect models
   left_join(., select(location_effect_models, -data)) %>%
@@ -564,5 +565,6 @@ location_relmat_previous_ecs_df <- ec_model_touse %>%
 ## Save these results
 save("location_relmat_df", "location_relmat_previous_ecs_df", "historical_ec_tomodel_centered", 
      "historical_ec_tomodel_centers", "historical_ec_tomodel_scaled", "ec_select_timeframe",
+     "historical_ec_ammi_dist",
      file = file.path(result_dir, "historical_ec_model_building.RData"))
 

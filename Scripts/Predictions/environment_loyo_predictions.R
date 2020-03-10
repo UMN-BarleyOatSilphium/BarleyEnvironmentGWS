@@ -36,13 +36,18 @@ time_frame_use <- "time_frame5"
 load(file = file.path(result_dir, "ec_model_building.RData"))
 load(file = file.path(result_dir, "historical_ec_model_building.RData"))
 
-# Rename
-ec_model_building <- unified_ec_models
-
-## Load the environmental covariates
-load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates.RData"))
 # Load the full model variance components
 load(file.path(result_dir, "full_models.RData"))
+
+
+
+## In the location relationship matrices, convert Ithaca1 and Ithaca2 to Ithaca
+location_relmat_df <- location_relmat_df %>%
+  mutate_at(vars(contains("E_mat")), 
+            # First convert all Ithaca[0-9] to Ithaca; then select the first one
+            ~map(., ~`dimnames<-`(.x, lapply(dimnames(.x), str_replace, pattern = "Ithaca1|Ithaca2", replacement = "Ithaca")) %>%
+                   subset(., !duplicated(row.names(.)), !duplicated(colnames(.))) ))
+
 
 
 ### Models
@@ -98,6 +103,8 @@ data_to_model <- S2_MET_BLUEs %>%
          environment %in% tp_vp_env) %>%
   mutate(id = seq(nrow(.))) %>%
   droplevels() %>%
+  ## Replace Ithaca1 and Ithaca2 with Ithaca
+  mutate(location = str_replace_all(location, "Ithaca1|Ithaca2", "Ithaca")) %>%
   mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno))) %>%
   mutate_at(vars(environment, location, year), as.factor) %>%
   mutate(env = environment, loc = location)

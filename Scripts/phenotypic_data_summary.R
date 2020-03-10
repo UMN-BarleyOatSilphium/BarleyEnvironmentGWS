@@ -808,7 +808,7 @@ ammi_fit <- S2_MET_BLUEs_tomodel %>%
     # Fit the ammi model using the bilinear package
     # Use Ftest for speed - we don't care about significance
     fit_ammi <- bilinear(x = y_hat_df, G = "line_name", E = "environment", y = "y_hat", 
-                         model = "AMMI", alpha = alpha, B = 10000)
+                         model = "AMMI", alpha = alpha, B = 1)
     
     ## Output a tibble
     tibble(y_hat = list(y_hat_df), model_acc = acc, fit_ammi = list(fit_ammi))
@@ -895,7 +895,7 @@ ammiN_fit <- ammi_fit %>%
     ge_effect_summ <- outer(
       X = g_effects_scores[,"effect"], 
       Y = e_effects_scores[,"effect"], 
-      FUN = "*")
+      FUN = "+")
     
     ## Calculate phi, the fitted GxE effect vector using the principal components
     phi <- outer(X = g_scores_sum, Y = e_scores_sum)

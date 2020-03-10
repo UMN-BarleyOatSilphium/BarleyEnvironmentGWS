@@ -527,39 +527,42 @@ genomewide_prediction <- function(x) {
   train_n <- summarize(train, nEnv = n_distinct(environment), nObs = n())
   
   
-  ## Get the covariate model and extract the formula
-  ec_model_form <- ec_model_building %>% 
-    unnest(final_model) %>%
-    subset(trait == row$trait & model == "model3_ammi", object, drop = TRUE) %>%
-    # It's a list, so take the first element
-    first() %>%
-    formula()
+  # ## Get the covariate model and extract the formula
+  # ec_model_form <- ec_model_building %>% 
+  #   unnest(final_model) %>%
+  #   subset(trait == row$trait & model == "model3_ammi", object, drop = TRUE) %>%
+  #   # It's a list, so take the first element
+  #   first() %>%
+  #   formula()
+  # 
+  # # main_environment_covariates
+  # main_environment_covariates <- all.vars(ec_model_form) %>% 
+  #   subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|", negate = T), 
+  #                                        pattern = .))))
+  # 
+  # # interaction_environment_covariates
+  # interaction_environment_covariates <- all.vars(ec_model_form) %>% 
+  #   subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|"), 
+  #                                        pattern = .)))) %>% setdiff(., "line_name")
+  # 
+  # ## Subset covariates into a df
+  # ec_df <- ec_tomodel_scaled %>%
+  #   # Select environment and the relevant covariates
+  #   select(env = environment, union(main_environment_covariates, interaction_environment_covariates)) %>%
+  #   filter(env %in% levels(train$env)) %>%
+  #   as.data.frame() %>%
+  #   column_to_rownames("env")
+  # 
   
-  # main_environment_covariates
-  main_environment_covariates <- all.vars(ec_model_form) %>% 
-    subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|", negate = T), 
-                                         pattern = .))))
-  
-  # interaction_environment_covariates
-  interaction_environment_covariates <- all.vars(ec_model_form) %>% 
-    subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|"), 
-                                         pattern = .)))) %>% setdiff(., "line_name")
-  
-  ## Subset covariates into a df
-  ec_df <- ec_tomodel_scaled %>%
-    # Select environment and the relevant covariates
-    select(env = environment, union(main_environment_covariates, interaction_environment_covariates)) %>%
-    filter(env %in% levels(train$env)) %>%
-    as.data.frame() %>%
-    column_to_rownames("env")
   
   
   ## Create relationship matrices
   K <- K # Genomic
-  E <- Env_mat(x = ec_df[,main_environment_covariates, drop = FALSE], method = "Rincent2019")
+  # E <- Env_mat(x = ec_df[,main_environment_covariates, drop = FALSE], method = "Rincent2019")
+  E <- subset(environmental_relmat_df, trait == tr, E_mat_main, drop = TRUE)[[1]]
   L <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use, E_mat_main, drop = TRUE)[[1]]
   
-  GE <- Env_mat(x = ec_df[,interaction_environment_covariates, drop = FALSE], method = "Rincent2019") %>%
+  GE <- subset(environmental_relmat_df, trait == tr, E_mat_int, drop = TRUE)[[1]] %>%
     kronecker(X = K, Y = ., make.dimnames = TRUE)
   GL <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use, E_mat_int, drop = TRUE)[[1]] %>%
     kronecker(X = K, Y = ., make.dimnames = TRUE)
@@ -608,20 +611,50 @@ genomewide_prediction <- function(x) {
     
     } else {
       
-      ## Fit the model
-      model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
-                        data = train, date.warning = FALSE)
+      ## Try to fit the model; capture the output
+      model_stdout <- capture.output({
+        model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
+                          data = train, date.warning = FALSE) })
+      
+      # If model fit is empty, try using a smaller number of iterations; for instance find
+      # the maximum logLik and use those iterations
+      itry <- 1
+      while (is_empty(model_fit) & itry == 1) {
+        
+        # Find the number of iterations that maximized the logLik
+        best_iter <- model_stdout %>% 
+          subset(., str_detect(., "singular", negate = T)) %>% 
+          read_table(.) %>%
+          subset(., LogLik == max(LogLik), iteration, drop = TRUE)
+        
+        # Refit
+        model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
+                          data = train, date.warning = FALSE, iters = best_iter)
+        
+        # Increase the counter
+        itry = itry + 1
+        
+      }
+      
+      # If the model is still empty, create empty fixed and random effects
+      if (is_empty(model_fit)) {
+        fixed_eff <- matrix(as.numeric(NA), nrow = 1, ncol = 1, dimnames = list("(Intercept)", "estimate"))
+        
+        rand_eff <- list("u:line_name" = set_names(x = rep(NA, nlevels(test$line_name)), nm = levels(test$line_name)))
+        
+      } else {
+        
+        ## Fixed effects
+        fixed_eff <- coef(model_fit) %>%
+          select(term = Effect, estimate = Estimate) %>%
+          column_to_rownames("term") %>%
+          as.matrix()
+        
+        ## Random effects
+        rand_eff <- map(randef(model_fit), "value")
+        
+      }
 
-    
-      ## Fixed effects
-      fixed_eff <- coef(model_fit) %>%
-        select(term = Effect, estimate = Estimate) %>%
-        column_to_rownames("term") %>%
-        as.matrix()
-      
-      ## Random effects
-      rand_eff <- map(randef(model_fit), "value")
-      
     }
       
       

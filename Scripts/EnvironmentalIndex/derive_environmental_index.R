@@ -504,75 +504,29 @@ ec_ammi_dist <- ec_tomodel_ammi %>%
 
 
 
+### Create relationship matrices for environments ####
 
-############################
-### Use this information to fit a unified model
-############################
-
-## Combine environment effect results with ammi results
-unified_ec_models <- full_join(env_effect_models, ec_ammi_dist) %>%
-  # Extract covariates from the main env model
-  mutate(main_env_covariates = map(model, ~attr(terms(formula(.)), "term.labels")),
-         forward_step_covariates = map(test_results, "added_covariate")) %>%
-  select(trait, main_env_covariates, ammi_covariates = final_covariates, forward_step_covariates) %>%
-  mutate(final_model = list(NULL))
-
-
-## Iterate over rows
-for (i in seq(nrow(unified_ec_models))) {
-  
-  # Get the trait
-  tr <- unified_ec_models$trait[i]
-  # Subset the data
-  tr_data <- filter(s2_met_tomodel, trait == tr)
-  
-  ## Get the base model
-  model1 <- update(object = subset(base_model_fit, trait == tr, fit, drop = T)[[1]], data =tr_data)
-  
-  
-  
-  ## Fit a model that replaced the main environment effect with covariates ##
-  # Get covariates
-  main_env_covariates <- unified_ec_models$main_env_covariates[[i]]
-  # Create formula
-  main_env_covariate_form <- as.formula(paste0("~ ", paste0(main_env_covariates, collapse = " + ")))
-  model2_form <- add_predictors(value ~ (1|line_name), main_env_covariate_form)
-  
-  ## Update the model formula
-  model2 <- update(object = model1, formula = model2_form)
-  
-  
-  
-  ## Fit a model that includes line name interaction with covariates ##
-  
-  # Get covariates
-  ammi_covariates <- unified_ec_models$ammi_covariates[[i]]
-  # Create formula
-  
-  # ammi_covariate_form <- as.formula(paste0("~ ", paste0("(1 +", ammi_covariates, "|line_name)", collapse = " + ")))
-  # model3_form <- add_predictors(formula(model2), ammi_covariate_form)
-  
-  ammi_covariate_form <- as.formula(paste0("~ (", paste0(c(1, ammi_covariates), collapse = " + "), "|line_name)"))
-  model3_form <- add_predictors(formula(drop.terms(terms(formula(model2)), 1, keep.response = TRUE)), ammi_covariate_form)
-  
-  ## Update the model formula
-  model3 <- update(object = model2, formula = model3_form)
-  
-  
-  ## Return tibble of models
-  unified_ec_models$final_model[[i]] <- tibble(model = c("model1", "model2", "model3_ammi"), 
-                                               object = list(model1, model2, model3)) %>%
-    mutate(R2 = map_dbl(object, ~rsquare(model = ., data = model.frame(.))),
-           AIC = map_dbl(object, AIC),
-           BIC = map_dbl(object, BIC))
-  
-}
+environmental_relmat_df <- ec_ammi_dist %>%
+  # Add location main effect models
+  left_join(., select(env_effect_models, -data)) %>%
+  # Get a list of main effect models
+  mutate(main_environment_covariates = map(model, ~attr(terms(formula(.)), "term.labels"))) %>%
+  mutate_at(vars(main_environment_covariates, final_covariates), ~map(., ~ec_tomodel_scaled_mat[, .x, drop = FALSE] )) %>%
+  # Calculate E mat for the main environmental covariates
+  mutate(E_mat_main = map(main_environment_covariates, ~{
+    if (ncol(.x) == 0) {
+      d1 <- diag(x = nrow(.x))
+      `dimnames<-`(x = d1, value = replicate(2, row.names(.x), simplify = FALSE))
+    } else {
+      Env_mat(x = .x, method = "Rincent2")
+    } }) ) %>%
+  select(trait, interaction_covariate_mat = final_covariates, main_covariate_mat = main_environment_covariates, 
+         E_mat_main, E_mat_int = ec_dist_mat_final)
 
 
 
 ## Save these results
-save("unified_ec_models", "env_effect_models", "ec_ammi_dist", 
-     "ec_tomodel_centered", "ec_tomodel_scaled", "ec_tomodel_centers", 
+save("environmental_relmat_df", "ec_ammi_dist", "ec_tomodel_centered", "ec_tomodel_scaled", "ec_tomodel_centers", 
      file = file.path(result_dir, "ec_model_building.RData"))
 
 
@@ -629,26 +583,26 @@ save("unified_ec_models", "env_effect_models", "ec_ammi_dist",
 ############################
 
 
-## Look at daily stats
-daily_ec_select <- growth_stage_weather %>%
-  inner_join(., env_trials) %>%
-  select(environment, dap, stage, mint:water_balance)
-
-
-## Summarize max temperatures during grain fill
-grain_fill_maxt_summary <- daily_ec_select %>% 
-  filter(growth_stage == "grain_fill") %>%
-  ## Count number of days with 15-18 max temp,
-  ## < 15, 18-25 (moderate high), 25 - 30 (high), > 30 (very high)
-  mutate(grain_fill_condition = case_when(
-    maxt < 15 ~ "suboptimal",
-    between(maxt, 15, 18) ~ "optimal",
-    between(maxt, 18, 30) ~ "moderate_high",
-    between(maxt, 30, 35) ~ "high",
-    maxt > 35 ~ "very_high"
-  )) %>%
-  group_by(environment, grain_fill_condition) %>%
-  summarize(nDays = n())
+# ## Look at daily stats
+# daily_ec_select <- growth_stage_weather %>%
+#   inner_join(., env_trials) %>%
+#   select(environment, dap, stage, mint:water_balance)
+# 
+# 
+# ## Summarize max temperatures during grain fill
+# grain_fill_maxt_summary <- daily_ec_select %>% 
+#   filter(growth_stage == "grain_fill") %>%
+#   ## Count number of days with 15-18 max temp,
+#   ## < 15, 18-25 (moderate high), 25 - 30 (high), > 30 (very high)
+#   mutate(grain_fill_condition = case_when(
+#     maxt < 15 ~ "suboptimal",
+#     between(maxt, 15, 18) ~ "optimal",
+#     between(maxt, 18, 30) ~ "moderate_high",
+#     between(maxt, 30, 35) ~ "high",
+#     maxt > 35 ~ "very_high"
+#   )) %>%
+#   group_by(environment, grain_fill_condition) %>%
+#   summarize(nDays = n())
 
 
 
@@ -805,52 +759,52 @@ grain_fill_maxt_summary <- daily_ec_select %>%
 ## Investiate time-dependent stressors
 ##########################
 
-## Look at "number of days above some threshold temperature x during grainfill" with x = 15, 16, ..., max(T)
-# Determine the threshold that explains the most GxE variance
-temp_thresh <- seq(20, 40)
-
-grain_fill_temperature_stress <- map(temp_thresh, ~{
-  growth_stage_weather %>%
-    filter(growth_stage == "grain_fill") %>%
-    group_by(environment) %>%
-    summarize(stress_days = sum(maxt > .x), threshold = .x) 
-})
-
-## format s2met data for modeling
-s2_met_tomodel <- S2_MET_BLUEs %>%
-  filter(line_name %in% tp) %>%
-  filter(trait == "GrainYield") %>%
-  group_by(trait) %>%
-  nest() %>%
-  mutate(data = map(data, ~mutate(., line_name = as.factor(line_name),
-                                  line_name = `contrasts<-`(line_name, value = `colnames<-`(contr.sum(levels(line_name)), head(levels(line_name), -1))))
-  ))
-
-
-## fit models
-s2_met_tomodel_stress_days <- s2_met_tomodel %>%
-  crossing(., stress = grain_fill_temperature_stress) %>%
-  mutate(data = map2(data, stress, ~left_join(.x, .y, by = "environment")),
-         threshold = map_dbl(stress, ~unique(.$threshold)))
-
-
-## Extract p-values from anova
-stress_days_fit1 <- s2_met_tomodel_stress_days %>%
-  group_by(trait, threshold) %>%
-  do(fit = lm(value ~ line_name + line_name:stress_days, data = .$data[[1]])) %>%
-  ungroup() %>%
-  mutate(pvalue = map_dbl(fit, ~as.data.frame(anova(.))[2,5]))
-
-
-plot(-log10(pvalue) ~ threshold, stress_days_fit1)
-
-## Look at regression from lowest pvalue
-best_fit <- stress_days_fit1 %>%
-  filter(pvalue == min(pvalue, na.rm = TRUE)) %>%
-  pull(fit)
-
-plot(best_fit[[1]])
-
+# ## Look at "number of days above some threshold temperature x during grainfill" with x = 15, 16, ..., max(T)
+# # Determine the threshold that explains the most GxE variance
+# temp_thresh <- seq(20, 40)
+# 
+# grain_fill_temperature_stress <- map(temp_thresh, ~{
+#   growth_stage_weather %>%
+#     filter(growth_stage == "grain_fill") %>%
+#     group_by(environment) %>%
+#     summarize(stress_days = sum(maxt > .x), threshold = .x) 
+# })
+# 
+# ## format s2met data for modeling
+# s2_met_tomodel <- S2_MET_BLUEs %>%
+#   filter(line_name %in% tp) %>%
+#   filter(trait == "GrainYield") %>%
+#   group_by(trait) %>%
+#   nest() %>%
+#   mutate(data = map(data, ~mutate(., line_name = as.factor(line_name),
+#                                   line_name = `contrasts<-`(line_name, value = `colnames<-`(contr.sum(levels(line_name)), head(levels(line_name), -1))))
+#   ))
+# 
+# 
+# ## fit models
+# s2_met_tomodel_stress_days <- s2_met_tomodel %>%
+#   crossing(., stress = grain_fill_temperature_stress) %>%
+#   mutate(data = map2(data, stress, ~left_join(.x, .y, by = "environment")),
+#          threshold = map_dbl(stress, ~unique(.$threshold)))
+# 
+# 
+# ## Extract p-values from anova
+# stress_days_fit1 <- s2_met_tomodel_stress_days %>%
+#   group_by(trait, threshold) %>%
+#   do(fit = lm(value ~ line_name + line_name:stress_days, data = .$data[[1]])) %>%
+#   ungroup() %>%
+#   mutate(pvalue = map_dbl(fit, ~as.data.frame(anova(.))[2,5]))
+# 
+# 
+# plot(-log10(pvalue) ~ threshold, stress_days_fit1)
+# 
+# ## Look at regression from lowest pvalue
+# best_fit <- stress_days_fit1 %>%
+#   filter(pvalue == min(pvalue, na.rm = TRUE)) %>%
+#   pull(fit)
+# 
+# plot(best_fit[[1]])
+# 
 
 
 # ## Plot environment and maxt during grain fill
