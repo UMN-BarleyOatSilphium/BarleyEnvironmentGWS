@@ -496,10 +496,16 @@ ec_ammi_dist <- ec_tomodel_ammi %>%
     
     ## Return these results
     tibble(final_cor = final_cor, final_covariates = list(final_covariates), ec_dist_mat_final = list(ec_dist_mat_final),
-           test_results = list(ec_ammi_cor_df))
+           test_results = list(ec_ammi_cor_df), K_IPC = list(W_ammi))
     
   }) %>% ungroup()
 
+
+## Plot the results
+ec_ammi_dist %>% 
+  unnest(test_results) %>% 
+  qplot(x = number, y = cor_with_ammi, color = trait, data = ., geom = c("line", "point")) %>%
+  ggsave(filename = "ec_correlation_with_AMMI.jpg", plot = ., path = fig_dir, width = 5, height = 4, dpi = 1000)
 
 
 
@@ -521,7 +527,23 @@ environmental_relmat_df <- ec_ammi_dist %>%
       Env_mat(x = .x, method = "Rincent2")
     } }) ) %>%
   select(trait, interaction_covariate_mat = final_covariates, main_covariate_mat = main_environment_covariates, 
-         E_mat_main, E_mat_int = ec_dist_mat_final)
+         E_mat_main, E_mat_int = ec_dist_mat_final, K_IPC)
+
+
+
+## Overlap in main-effect versus interaction ECs
+environmental_relmat_df %>%
+  mutate(covariate_overlap = map2(interaction_covariate_mat, main_covariate_mat, ~intersect(colnames(.x), colnames(.y)))) %>%
+  mutate_at(vars(contains("covariate_mat")), ~map2(., covariate_overlap, ~setdiff(colnames(.x), .y))) %>%
+  select(-E_mat_main, -E_mat_int, -K_IPC)
+
+
+# trait        interaction_covariate_mat main_covariate_mat covariate_overlap
+#   1 GrainProtein <chr [1]>                 <chr [3]>          <chr [1]>        
+#   2 GrainYield   <chr [2]>                 <chr [5]>          <chr [0]>        
+#   3 HeadingDate  <chr [2]>                 <chr [3]>          <chr [0]>        
+#   4 PlantHeight  <chr [3]>                 <chr [4]>          <chr [0]>        
+#   5 TestWeight   <chr [1]>                 <chr [4]>          <chr [2]>
 
 
 
@@ -533,7 +555,7 @@ save("environmental_relmat_df", "ec_ammi_dist", "ec_tomodel_centered", "ec_tomod
 
 
 
-
+#
 
 
 

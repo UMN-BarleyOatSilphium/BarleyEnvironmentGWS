@@ -45,12 +45,7 @@ load(file.path(enviro_dir, "EnvironmentalCovariates/historical_environmental_cov
 
 ## Load EC model building
 load(file.path(result_dir, "ec_model_building.RData"))
-ec_model_building <- unified_ec_models
 
-## Unnest the ec model
-ec_model_touse <- ec_model_building %>% 
-  unnest(final_model) %>%
-  filter(model == "model3_ammi")
 
 
 ############################
@@ -475,11 +470,22 @@ historical_ec_ammi_dist <- historical_ec_tomodel_ammi %>%
     
     ## Return these results
     tibble(final_cor = final_cor, final_covariates = list(final_covariates), ec_dist_mat_final = list(ec_dist_mat_final),
-           test_results = list(ec_ammi_cor_df))
+           test_results = list(ec_ammi_cor_df), K_IPC = list(W_ammi))
     
   }) %>% ungroup()
 
 
+
+## Plot the results
+g_hist_ec_ammi <- historical_ec_ammi_dist %>% 
+  unnest(test_results) %>% 
+  ggplot(aes(x = number, y = cor_with_ammi, color = trait, lty = time_frame)) +
+  # geom_point() +
+  geom_line() +
+  facet_grid(~ trait, scales = "free_x") +
+  theme_acs()
+ggsave(filename = "ec_locations_correlation_with_AMMI.jpg", plot = g_hist_ec_ammi, 
+       path = fig_dir, width = 8, height = 4, dpi = 1000)
 
 
 
@@ -502,68 +508,76 @@ location_relmat_df <- historical_ec_ammi_dist %>%
       Env_mat(x = .x, method = "Rincent2")
     } }) ) %>%
   select(trait, time_frame, interaction_covariate_mat = final_covariates,
-         main_covariate_mat = main_environment_covariates, E_mat_main, E_mat_int = ec_dist_mat_final)
+         main_covariate_mat = main_environment_covariates, E_mat_main, E_mat_int = ec_dist_mat_final,
+         K_IPC)
+
+
+## Overlap in main-effect versus interaction ECs
+location_relmat_df %>%
+  mutate(covariate_overlap = map2(interaction_covariate_mat, main_covariate_mat, ~intersect(colnames(.x), colnames(.y)))) %>%
+  mutate_at(vars(contains("covariate_mat")), ~map2(., covariate_overlap, ~setdiff(colnames(.x), .y))) %>%
+  select(-E_mat_main, -E_mat_int, -K_IPC)
 
 
 
 
 
 
-############################
-### Use covariables determined to be significant in the environment-specific model
-############################
-
-## Calculate environmental similarity matrices
-
-## Iterate over traits
-location_relmat_previous_ecs_df <- ec_model_touse %>%
-  group_by(trait) %>%
-  do({
-    row <- .
-
-    # Get the model formula
-    ec_model_form <- formula(row$object[[1]])
-    
-    # main_environment_covariates
-    main_environment_covariates <- all.vars(ec_model_form) %>% 
-      subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|", negate = T), 
-                                           pattern = .))))
-    
-    # interaction_environment_covariates
-    interaction_environment_covariates <- all.vars(ec_model_form) %>% 
-      subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|"), 
-                                           pattern = .)))) %>% setdiff(., "line_name")
-    
-    ## Subset the ec_tomodel_centered list for these covariates - convert each to a matrix
-    main_historical_covariates <- historical_ec_tomodel_scaled %>%
-      map(~select(., which(names(.) %in% c("location", main_environment_covariates))) %>%
-            as.data.frame() %>%
-            column_to_rownames("location") %>%
-            as.matrix() )
-    
-    interaction_historical_covariates <- historical_ec_tomodel_scaled %>%
-      map(~select(., which(names(.) %in% c("location", interaction_environment_covariates))) %>%
-            as.data.frame() %>%
-            column_to_rownames("location") %>%
-            as.matrix() )
-    
-    ## Create relationship matrices
-    E_mat_main <- map(main_historical_covariates, ~Env_mat(x = ., method = "Rincent2019"))
-    E_mat_int <- map(interaction_historical_covariates, ~Env_mat(x = ., method = "Rincent2019"))
-    
-    
-    ## Output a tibble with the matrices and relationship matrices
-    tibble(time_frame = names(main_historical_covariates), main_covariate_mat = main_historical_covariates, 
-           interaction_covariate_mat = interaction_historical_covariates, E_mat_main, E_mat_int)
-    
-    
-  }) %>% ungroup()
+# ############################
+# ### Use covariables determined to be significant in the environment-specific model
+# ############################
+# 
+# ## Calculate environmental similarity matrices
+# 
+# ## Iterate over traits
+# location_relmat_previous_ecs_df <- ec_model_touse %>%
+#   group_by(trait) %>%
+#   do({
+#     row <- .
+# 
+#     # Get the model formula
+#     ec_model_form <- formula(row$object[[1]])
+#     
+#     # main_environment_covariates
+#     main_environment_covariates <- all.vars(ec_model_form) %>% 
+#       subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|", negate = T), 
+#                                            pattern = .))))
+#     
+#     # interaction_environment_covariates
+#     interaction_environment_covariates <- all.vars(ec_model_form) %>% 
+#       subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|"), 
+#                                            pattern = .)))) %>% setdiff(., "line_name")
+#     
+#     ## Subset the ec_tomodel_centered list for these covariates - convert each to a matrix
+#     main_historical_covariates <- historical_ec_tomodel_scaled %>%
+#       map(~select(., which(names(.) %in% c("location", main_environment_covariates))) %>%
+#             as.data.frame() %>%
+#             column_to_rownames("location") %>%
+#             as.matrix() )
+#     
+#     interaction_historical_covariates <- historical_ec_tomodel_scaled %>%
+#       map(~select(., which(names(.) %in% c("location", interaction_environment_covariates))) %>%
+#             as.data.frame() %>%
+#             column_to_rownames("location") %>%
+#             as.matrix() )
+#     
+#     ## Create relationship matrices
+#     E_mat_main <- map(main_historical_covariates, ~Env_mat(x = ., method = "Rincent2019"))
+#     E_mat_int <- map(interaction_historical_covariates, ~Env_mat(x = ., method = "Rincent2019"))
+#     
+#     
+#     ## Output a tibble with the matrices and relationship matrices
+#     tibble(time_frame = names(main_historical_covariates), main_covariate_mat = main_historical_covariates, 
+#            interaction_covariate_mat = interaction_historical_covariates, E_mat_main, E_mat_int)
+#     
+#     
+#   }) %>% ungroup()
 
 
 
 
 ## Save these results
-save("location_relmat_df", "location_relmat_previous_ecs_df", "historical_ec_tomodel_centered", 
+save("location_relmat_df", "historical_ec_tomodel_centered", 
      "historical_ec_tomodel_centers", "historical_ec_tomodel_scaled", "ec_select_timeframe",
      "historical_ec_ammi_dist",
      file = file.path(result_dir, "historical_ec_model_building.RData"))

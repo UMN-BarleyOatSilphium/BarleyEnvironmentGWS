@@ -740,7 +740,7 @@ K1 <- K1[order(colnames(K1)), order(colnames(K1))]
 
 
 # Fit per trait
-ammi_fit <- S2_MET_BLUEs_tomodel %>%
+mixed_model_fit <- S2_MET_BLUEs_tomodel %>%
   filter(population == "tp") %>%
   group_by(trait) %>%
   do({
@@ -775,20 +775,39 @@ ammi_fit <- S2_MET_BLUEs_tomodel %>%
     
     fit1 <- mixed.solve(y = y, Z = Z, K = K_ge, X = X, method = "REML")
     
+    ## Fit the model using sommer
+    fit1 <- mmer(fixed = value ~ line_name + environment, random = ~ vs(line_name:environment, Gu = K_ge), data = df1,
+                 date.warning = FALSE, weights = std_error)
+    
+    ## Calculate degrees of freedom
+    df_fit1 <- nrow(df1) - n_distinct(df1$line_name) - 1 - n_distinct(df1$environment) - 1 + 1
+    # Extract the residual variance
+    varR <- c(fit1$sigma$units)
+    
+    
     ## Pull out effects
-    grand_mean <- fit1$beta[1]
-    g_effects <- fit1$beta %>% subset(., str_detect(names(.), "line_name"))
-    e_effects <- fit1$beta %>% subset(., str_detect(names(.), "environment"))
-    # Add last level
-    g_effects <- c(g_effects, -sum(g_effects))
-    e_effects <- c(e_effects, -sum(e_effects))
+    # grand_mean <- fit1$beta[1]
+    grand_mean <- subset(fit1$Beta, Effect == "(Intercept)", Estimate, drop = TRUE)
     
-    # Create df
-    g_effects_df <- tibble(line_name = levels(mf$line_name), effect = g_effects)
-    e_effects_df <- tibble(environment = levels(mf$environment), effect = e_effects)
+    # g_effects <- fit1$beta %>% subset(., str_detect(names(.), "line_name"))
+    # e_effects <- fit1$beta %>% subset(., str_detect(names(.), "environment"))
+    # # Add last level
+    # g_effects <- c(g_effects, -sum(g_effects))
+    # e_effects <- c(e_effects, -sum(e_effects))
     
+    g_effects_df <- subset(fit1$Beta, str_detect(Effect, "line_name")) %>%
+      select(line_name = Effect, effect = Estimate) %>%
+      mutate(line_name = str_remove_all(line_name, "line_name")) %>%
+      add_row(line_name = last(levels(df1$line_name)), effect = -sum(.$effect))
+    e_effects_df <- subset(fit1$Beta, str_detect(Effect, "environment")) %>%
+      select(environment = Effect, effect = Estimate) %>%
+      mutate(environment = str_remove_all(environment, "environment")) %>%
+      add_row(environment = last(levels(df1$environment)), effect = -sum(.$effect))
+    
+ 
     ## Random effects
-    rand_eff_df <- fit1$u %>% 
+    # rand_eff_df <- fit1$u %>% 
+    rand_eff_df <- fit1$U$`u:line_name:environment`$value %>% 
       tibble(term = names(.), effect = .) %>%
       separate(term, c("line_name", "environment"), sep = ":")
     
@@ -802,18 +821,42 @@ ammi_fit <- S2_MET_BLUEs_tomodel %>%
     ## Calculate prediction accuracy
     acc <- with(left_join(df1, y_hat_df, by = c("environment", "line_name")), cor(value, y_hat))
     
-    
-    ### Fit a GxE AMMI model ###
-    
-    # Fit the ammi model using the bilinear package
-    # Use Ftest for speed - we don't care about significance
-    fit_ammi <- bilinear(x = y_hat_df, G = "line_name", E = "environment", y = "y_hat", 
-                         model = "AMMI", alpha = alpha, B = 1)
-    
     ## Output a tibble
-    tibble(y_hat = list(y_hat_df), model_acc = acc, fit_ammi = list(fit_ammi))
+    tibble(y_hat = list(y_hat_df), model_acc = acc, df = df_fit1, varR = varR)
     
   }) %>% ungroup()
+
+
+## Fit ammi models using the predictions from the first model:
+ammi_fit <- mixed_model_fit %>%
+  group_by(trait) %>%
+  do(fit_ammi = {
+    row <- .
+    y_hat_df <- unnest(row, y_hat)
+
+    # Fit the AMMI model
+    fit_ammi <- bilinear(x = y_hat_df, G = "line_name", E = "environment", y = "y_hat", 
+                         model = "AMMI", alpha = alpha, errorMeanSqDfReps = c(row$varR, row$df, 3), test = "Ftest")
+    
+    ## Calculate scores
+    svd <- fit_ammi$svdE
+    # Get the singular values
+    sing_val <- svd$d
+    
+    # Calculate scores
+    g_scores <- svd$u %*% diag(sqrt(sing_val))
+    dimnames(g_scores) <- list(names(fit_ammi$Geffect), paste0("PC", seq_len(ncol(g_scores))))
+    e_scores <- svd$v %*% diag(sqrt(sing_val))
+    dimnames(e_scores) <- list(names(fit_ammi$Eeffect), paste0("PC", seq_len(ncol(e_scores))))
+    
+    ## Add these scores to the fit_ammi object
+    fit_ammi$scores <- list(Gscores = g_scores, Escores = e_scores)
+    
+    # Output this object
+    fit_ammi
+    
+  }) %>% ungroup()
+  
 
 
 
@@ -830,12 +873,17 @@ ammi_scores <- ammi_fit %>%
 
 
 ## Display proportion of variance explained using normalized eigenvalues
-ammi_scores %>%
-  unnest(varprop) %>% 
+(g_pc_ss <- ammi_scores %>%
+  unnest(varprop) %>%
   # Plot
   ggplot(aes(x = PC_num, y = propvar_SS)) +
   geom_point() + 
-  facet_wrap(~ trait, scales = "free")
+  scale_x_continuous(name = "PC", breaks = pretty) +
+  facet_grid(~ trait, scales = "free_x") +
+  theme_light() )
+# Save
+ggsave(filename = "ammi_propvar_SS.jpg", plot = g_pc_ss, path = fig_dir, height = 4, width = 6, 
+       dpi = 1000)
 
 ## Determine significant PCs using "elbow" method
 # Tolerance for difference in variance explained
@@ -851,14 +899,16 @@ ammi_sig_PCs <- ammi_scores %>%
   ## Calculate the difference between steps of adding PCs. Find the first step when the difference is
   ## below the tolerance threshold
   map_df(~mutate(., propvar_diff = c(abs(diff(propvar)), 0), 
-                 stop = which.min(propvar_diff >= tol), 
-                 nPC = stop - 1))
+                 nPC = which.min(propvar_diff >= tol)))
 
 ## Summary df of number of sig PCs
 ammi_sig_PCs_summ <- ammi_sig_PCs %>%
   group_by(trait) %>%
   filter(PC_num %in% seq(1, unique(nPC))) %>%
   summarize(total_propvar = sum(propvar), nPC = unique(nPC))
+
+## Output a table
+write_csv(x = ammi_sig_PCs_summ, path = file.path(fig_dir, "sig_ammi_PC_propvar"))
 
 
 ## Fit a model for that number of PCS
@@ -871,6 +921,8 @@ ammiN_fit <- ammi_fit %>%
     nPC <- row$nPC
     # Get the fitted ammi model
     fitted_ammi <- row$fit_ammi[[1]]
+    
+    # print(row$trait)
     
     # Get the environmental and genotypic effects
     g_effects <- fitted_ammi$Geffect %>%
@@ -974,9 +1026,10 @@ ammi_gplot_list <- ammiN_fit_location %>%
 
 
 ## Save
-save("ammi_fit", "ammiN_fit", "ammiN_fit_location", file = file.path(result_dir, "ammi_model_fit.RData"))
+save("mixed_model_fit", "ammi_fit", "ammiN_fit", "ammiN_fit_location", "ammi_gplot_list", 
+     file = file.path(result_dir, "ammi_model_fit.RData"))
 
-
+#
 
 
 
