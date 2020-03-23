@@ -567,6 +567,19 @@ genomewide_prediction <- function(x) {
   GL <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use, E_mat_int, drop = TRUE)[[1]] %>%
     kronecker(X = K, Y = ., make.dimnames = TRUE)
   
+  ## AMMI covariance matrices
+  E_IPC <- subset(environmental_relmat_df, trait == tr, K_IPC, drop = TRUE)[[1]]
+  L_IPC <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use, K_IPC, drop = TRUE)[[1]]
+  
+  GE_IPC <- kronecker(X = K, Y = E_IPC, make.dimnames = TRUE)
+  GL_IPC <- kronecker(X = K, Y = L_IPC, make.dimnames = TRUE)
+  
+  ## Define an expression that fits the model
+  fit_mmer_exp <- expression({
+    model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
+                      data = train, date.warning = FALSE, verbose = TRUE)
+  })
+  
   
   
   #################
@@ -577,7 +590,8 @@ genomewide_prediction <- function(x) {
     mutate(prediction = list(NULL))
   
   # Test df to merge
-  test_merge <- select(test, line_name, env, loc = location, year, value)
+  test_merge <- select(test, line_name, env, loc = location, year, value) %>%
+    mutate_if(is.factor, as.character)
   
   # Iterate over models
   for (m in seq(nrow(prediction_out))) {
@@ -612,9 +626,7 @@ genomewide_prediction <- function(x) {
     } else {
       
       ## Try to fit the model; capture the output
-      model_stdout <- capture.output({
-        model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
-                          data = train, date.warning = FALSE) })
+      model_stdout <- capture.output( eval(fit_mmer_exp) )
       
       # If model fit is empty, try using a smaller number of iterations; for instance find
       # the maximum logLik and use those iterations
@@ -628,8 +640,7 @@ genomewide_prediction <- function(x) {
           subset(., LogLik == max(LogLik), iteration, drop = TRUE)
         
         # Refit
-        model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
-                          data = train, date.warning = FALSE, iters = best_iter)
+        eval(fit_mmer_exp)
         
         # Increase the counter
         itry = itry + 1

@@ -27,7 +27,7 @@ library(parallel)
 
 ## Number of cores
 # n_core <- detectCores()
-n_core <- 4
+n_core <- 8
 
 # time_frame to use for the location relationship matrix
 time_frame_use <- "time_frame5"
@@ -58,6 +58,10 @@ location_relmat_df <- location_relmat_df %>%
 # model3: y = G + E + GE + r
 # model4: y = G + L + r
 # model5: y = G + L + GL + r
+# 
+# Models with the suffix 'a' use the AMMI covariance matrix, instead of the one
+# derived from ECs
+# 
 
 
 ## Create a list of model formulas
@@ -71,7 +75,11 @@ model_fixed_forms <- formulas(
   # model3a = model2a,
   # model3b = model2b
   model4 = model1,
-  model5 = model4
+  model5 = model4,
+  model2a = model2,
+  model3a = model3,
+  model4a = model4,
+  model5a = model5
 )
 
 
@@ -87,7 +95,12 @@ model_rand_forms <- formulas(
   # model3a = add_predictors(model1, ~ vs(line_name:env1, Gu = GE)),
   # model3b = model3a
   model4 = add_predictors(model1, ~vs(loc, Gu = L)),
-  model5 = add_predictors(model4, ~vs(line_name:loc, Gu = GL))
+  model5 = add_predictors(model4, ~vs(line_name:loc, Gu = GL)),
+  # Modified models
+  model2a = add_predictors(model1, ~ vs(env, Gu = E_IPC)),
+  model3a = add_predictors(model2, ~ vs(line_name:env1, Gu = GE_IPC)),
+  model4a = add_predictors(model1, ~vs(loc, Gu = L_IPC)),
+  model5a = add_predictors(model4, ~vs(line_name:loc, Gu = GL_IPC)),
 ) %>% map(~ formula(delete.response(terms(.)))) # Remove response
 
 # Residual formula
@@ -132,11 +145,6 @@ loeo_train_test <- data_to_model %>%
 ## Assign cores and split
 data_train_test1 <- loeo_train_test %>% 
   assign_cores(df = ., n_core = n_core, split = TRUE)
-
-
-# Iterate over rows
-# for (i in seq(nrow(loeo_predictions_out))) {
-# for (i in seq(i, nrow(loeo_predictions_out))) {
 
 
 ## Parallelize
