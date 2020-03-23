@@ -19,7 +19,6 @@ library(modelr)
 library(broom)
 library(pbr)
 library(cowplot)
-library(pls)
 library(car)
 
 # Significance level
@@ -60,6 +59,8 @@ ec_select <- growth_stage_covariates %>%
   ## Separate trial into location and year
   mutate(year = as.numeric(str_extract(trial, "[0-9]{4}")),
          location = str_remove(trial, "_[0-9]{4}")) %>%
+  ## Replace Ithaca1 and Ithaca2 with Ithaca
+  mutate(location = str_replace_all(location, "Ithaca1|Ithaca2", "Ithaca")) %>%
   select(-trial) %>%
   ## Only use TP environments
   inner_join(., loc_trials, by = "location") %>% 

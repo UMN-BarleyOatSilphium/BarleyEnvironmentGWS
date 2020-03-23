@@ -115,5 +115,28 @@ for (i in seq(nrow(ec_model_plots))) {
 
 
 
+#####################
+## Covariate identification
+#####################
+
+## Plot the results
+g_hist_ec_ammi <- historical_ec_ammi_dist %>% 
+  unnest(test_results) %>% 
+  ggplot(aes(x = number, y = cor_with_ammi, color = trait, lty = time_frame)) +
+  # geom_point() +
+  geom_line() +
+  facet_grid(~ trait, scales = "free_x") +
+  theme_acs()
+ggsave(filename = "ec_locations_correlation_with_AMMI.jpg", plot = g_hist_ec_ammi, 
+       path = fig_dir, width = 8, height = 4, dpi = 1000)
+
+
+
+
+
+
+
+
+
 
 

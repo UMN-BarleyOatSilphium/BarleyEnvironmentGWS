@@ -43,7 +43,9 @@ source(file.path(proj_dir, "source_functions.R"))
 load(file.path(pheno_dir, "S2_tidy_BLUE.RData"))
 # Load the trial metadata
 trial_info <- read_csv(file = file.path(meta_dir, "trial_metadata.csv")) %>%
-  filter(population %in% c("s2tp", "s2c1", "s2met"), type == "spy")
+  filter(population %in% c("s2tp", "s2c1", "s2met"), type == "spy") %>%
+  ## Replace Ithaca1 and Ithaca2 with Ithaca
+  mutate(location = str_replace_all(location, "Ithaca1|Ithaca2", "Ithaca"))
 
 
 # Load the genotypic data
@@ -164,6 +166,8 @@ vp_only_env_trait <- S2_MET_BLUEs %>%
 
 ## Final filter of BLUEs
 S2_MET_BLUEs <- filter(S2_MET_BLUEs, environment %in% tp_vp_env) %>%
+  ## Replace Ithaca1 and Ithaca2 with Ithaca
+  mutate(location = str_replace_all(location, "Ithaca1|Ithaca2", "Ithaca")) %>%
   arrange(trait, environment)
 
 
