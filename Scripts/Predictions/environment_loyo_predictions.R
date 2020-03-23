@@ -26,7 +26,7 @@ library(parallel)
 
 ## Number of cores
 # n_core <- detectCores()
-n_core <- 4
+n_core <- 8
 
 # time_frame to use for the location relationship matrix
 time_frame_use <- "time_frame5"
