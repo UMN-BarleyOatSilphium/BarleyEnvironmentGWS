@@ -555,14 +555,6 @@ save("environmental_relmat_df", "ec_ammi_dist", "ec_tomodel_centered", "ec_tomod
 
 
 
-#
-
-
-
-
-
-
-
 
 
 
