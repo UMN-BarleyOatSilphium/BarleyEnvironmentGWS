@@ -353,6 +353,134 @@
 # }
   
 
+## Functions to calculate heritability from lmer models
+## Function for heritability using genotype difference basis
+## 
+## This code is from https://github.com/PaulSchmidtGit/Heritability
+## 
+herit2 <- function(object, ...) {
+  UseMethod("herit2")
+}
+
+
+herit2.lmerModLmerTest <- function(object, gen.var = "line_name", type = c("cullis", "piepho")) {
+  herit2.merMod(object = object, gen.var = gen.var, type = type)
+}
+
+herit2.merMod <- function(object, gen.var = "line_name", type = c("cullis", "piepho")) {
+  
+  ## Match type argument
+  type <- match.arg(type)
+  # Make sure gen.var is in the terms
+  if (!any(grepl(pattern = gen.var, x = attr(terms(formula(object)), "term.labels")))) {
+    stop(paste0(gen.var, " is not among the terms in the model object."))
+  }
+  
+  ## Split based on type
+  if (type == "cullis") {
+    
+    # extract estimated variance components (vc)
+    vc   <- as.data.frame(VarCorr(object)) 
+    
+    # R = varcov-matrix for error term
+    n  <- length(summary(object)$residuals) # numer of observations
+    vcR <- subset(vc, grp == "Residual", vcov, drop = TRUE)     # error vc
+    R <- diag(n) * vcR                   # R matrix = I * vcR
+    
+    # G = varcov-matrx for all random effects
+    # varcov-matrix for genotypic effect
+    n_g  <- summary(object)$ngrps[gen.var]    # number of genotypes
+    vcG <- subset(vc, grp == gen.var, vcov, drop = TRUE)         # genotypic vc
+    G  <- diag(n_g) * vcG               # gen part of G matrix = I * vc.g
+    
+    # Design Matrices
+    X <- as.matrix(getME(object, "X")) # Design matrix fixed effects
+    Ztlist <- (getME(object, "Ztlist")) # Design matrix random effects
+    Zind <- which(! grepl(pattern = ":", x = names(Ztlist)))
+    Z <- t(as.matrix(Ztlist[Zind][[which(grepl( pattern = gen.var, x = names(Ztlist)[Zind] ))]]))
+    
+    # Inverse of R
+    Rinv <- solve(R)
+    tryGinv <- try(Ginv <- solve(G), silent = TRUE)
+    Ginv <- if (class(tryGinv) == "try-error") `dimnames<-`(MASS::ginv(G), dimnames(G)) else Ginv
+    
+    # Mixed Model Equation (HENDERSON 1986; SEARLE et al. 2006)
+    C11 <- t(X) %*% Rinv %*% X
+    C12 <- t(X) %*% Rinv %*% Z
+    C21 <- t(Z) %*% Rinv %*% X
+    C22 <- t(Z) %*% Rinv %*% Z + Ginv
+    
+    C <- as.matrix(rbind(cbind(C11, C12),  # Combine components into one matrix C
+                         cbind(C21, C22)))
+    
+    ## Get the levels of gen.var ##
+    gen.var.levels <- levels(model.frame(object)[[gen.var]])
+    
+    # Mixed Model Equation Solutions 
+    tryInverse <- try(C.inv <- solve(C), silent = TRUE) # Inverse of C
+    # If error, use generalized inverse
+    C.inv <- if (class(tryInverse) == "try-error") `dimnames<-`(MASS::ginv(C), dimnames(C)) else C.inv
+    
+    C22.g <- C.inv[gen.var.levels, gen.var.levels] # subset of C.inv that refers to genotypic BLUPs
+    
+    # Mean variance of BLUP-difference from C22 matrix of genotypic BLUPs
+    one <- matrix(1, nrow = n_g) # vector of 1s
+    P.mu <- diag(n_g, n_g) - one %*% t(one)  # P.mu = matrix that centers for overall-mean
+    vdBLUP.sum <- sum(diag((P.mu %*% C22.g)))        # sum of all variance of differences = trace of P.mu*C22.g
+    vdBLUP.avg <- vdBLUP.sum * (2/(n_g*(n_g-1)))   # mean variance of BLUP-difference = divide sum by number of genotype pairs
+    
+    ## Return heritability
+    H2 <- 1 - (vdBLUP.avg / 2 / vcG)
+    # Set to NA if infinite
+    H2 <- ifelse(is.infinite(H2), NA, H2)
+    
+  } else if (type == "piepho") {
+    
+    
+    ## Refit the model with gen.var as fixed
+    rhs <- as.character(formula(object))[3]
+    new_formula <- reformulate(gsub(pattern = paste0("\\(1 \\| ", gen.var, "\\)"), replacement = gen.var, x = rhs), 
+                               response = "value")
+    
+    ## Fit depending if mixed or fixed
+    if (is.null(findbars(new_formula))) {
+      object_f <- lm(formula = new_formula, data = model.frame(object))
+      
+    } else {
+      object_f <- lmer(formula = new_formula, data = model.frame(object))
+      
+    }
+    
+    
+    ## Get the variance components
+    vc   <- as.data.frame(VarCorr(object)) 
+    
+    # Genotypic variance component
+    vcG <- subset(vc, grp == gen.var, vcov, drop = TRUE)
+    
+    # Obtaining adjusted means based on genotypic BLUEs
+    diffs_BLUE <- as.data.frame(emmeans(object = object_f, reformulate(gen.var, "pairwise"))$contrasts) 
+    vdBLUE_avg <- mean(diffs_BLUE$SE^2) # mean variance of a difference = mean squared standard error of a difference
+    
+    # Return the heritabiliy
+    H2 <- vcG/(vcG + vdBLUE_avg/2)
+    
+    
+  }
+  
+  # Return heritability
+  return(H2)
+  
+}
+
+
+
+
+
+
+
+
+
 
 
 

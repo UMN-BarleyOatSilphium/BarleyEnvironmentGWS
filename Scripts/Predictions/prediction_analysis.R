@@ -18,6 +18,7 @@ library(lmerTest)
 library(patchwork)
 library(cowplot)
 library(modelr)
+library(paletteer)
 
 
 ## Load the validation results
@@ -37,9 +38,13 @@ alpha <- 0.05
 
 
 ## A vector to rename models
-model_replace <- c("model1" = "G", "model2" = "G + E", "model3" = "G + E + GE",
-                   "model4" = "G + L", "model5" = "G + L + GL")
-f_model_replace <- function(x) str_replace_all(x, model_replace)
+model_replace <- c("model1" = "G", "model2" = "G + E", "model2a" = "G + E (AMMI)", 
+                   "model3" = "G + E + GE", "model3a" = "G + E + GE (AMMI)",
+                   "model4" = "G + L", "model4a" = "G + L (AMMI)",
+                   "model5" = "G + L + GL", "model5a" = "G + L + GL (AMMI)")
+
+
+f_model_replace <- function(x) model_replace[x]
 # f_model_replace <- function(x) paste0("M", toupper(str_extract(x, "[0-9]{1}[a-z]{0,1}")))
 # Vector to rename validation schemes
 f_pop_replace <- function(x) str_replace_all(x, c("tp" = "CV0", "vp" = "POV00"))
@@ -67,6 +72,7 @@ data_to_model <- S2_MET_BLUEs %>%
 
 ## Grab the prediction outputs
 loo_prediction_list <- map(set_names(object_list, object_list), get) %>%
+  subset(., map_lgl(., ~nrow(.) > 1)) %>%
   map(~unnest(., out)) %>%
   # Select relevant columns
   map(~select(., c("trait", "model", "prediction", "nEnv", "nObs"))) %>%
@@ -81,9 +87,7 @@ loo_predictions_df <- loo_prediction_list %>%
                  contains("nEnv"), contains("nObs"), contains("pred")) %>%
         mutate_if(is.character, parse_guess) %>%
         mutate_if(is.factor, ~parse_guess(as.character(.)))) %>%
-  mutate(pop = ifelse(line_name %in% tp, "tp", "vp")) %>%
-  # Filter for models listed above
-  filter(model %in% names(model_replace))
+  mutate(pop = ifelse(line_name %in% tp, "tp", "vp"))
 
 
 ## Calculate accuracy and bias per environment, model, and population
@@ -126,125 +130,53 @@ loo_prediction_accuracy_annotation <- loo_predictive_ability_all %>%
   mutate_at(vars(contains("ability")), ~formatC(., width = 3, digits = 2, format = "f")) %>%
   mutate(ability_all_annotation = paste0("r[MP]==", ability_all, "~(", ability_lower, "*','~", ability_upper, ")"))
 
+
 # Plot predicted versus observed value
 g_loo_prediction_list <- loo_predictions_df %>%
   # Max character length of units
   mutate(max_nchar = max(nchar(last(pretty(value))))) %>%
-  group_by(trait, type) %>%
+  group_by(trait) %>%
   do(plot = {
     df <- .
     
     df1 <- df
-
-    max_wid <- unique(df1$max_nchar)
-    # Scale truncation function
-    scale_trunc <- function(x) str_pad(string = x, width = max_wid, side = "left", pad = " ")
-    # Calculate breaks for this trait
+    
     breaks <- map(select(df1, pred_complete, value), pretty) 
     
-    # Create a separate legend df
-    x1 <- mutate(df1, x = ifelse(model == "model1", 0.20, 0.80), y = 0.10)
-    ## Split x by model and population
-    x_split <- split(x1, list(x1$pop, x1$model))
-    
-    # Map over this split
-    g_list <- vector("list", length = length(x_split))
-    
-    for (i in seq_along(g_list)) {
-      x2 <- x_split[[i]]
-      
-      ## Extract the appropriate accuracy annotation
-      r_mp_annotation <- left_join(distinct(x2, trait, type, model, pop), loo_prediction_accuracy_annotation,
-                                   by = c("trait", "type", "model", "pop")) %>%
-        select(trait:pop, contains("annotation")) %>% 
-        mutate(annotation = ability_all_annotation) %>%
-        mutate(x = breaks$pred_complete[1], y = c(last(breaks$value)))
-    
-      g_x <- ggplot(data = x2, aes(x = pred_complete, y = value, color = environment)) +
-        geom_abline(slope = 1, intercept = 0) +
-        geom_point(size = 0.5) +
-        geom_text(data = r_mp_annotation, aes(x = x, y = y, label = annotation), parse = TRUE, inherit.aes = FALSE,
-                  hjust = 0, size = 2) +
-        scale_y_continuous(name = "Observation", breaks = breaks$value, labels = scale_trunc, limits = range(breaks$value)) +
-        scale_x_continuous(name = "Prediction", breaks = breaks$pred_complete, limits = range(breaks$pred_complete)) +
-        scale_color_discrete(name = NULL, labels = function(x) parse(text = x), guide = FALSE) +
-        theme_presentation2(10) +
-        theme(axis.title = element_blank())
-      
-      ## Add faceting depending on position
-      if (i == 1) {
-        g_list[[i]] <- g_x + 
-          facet_grid(trait ~ model + pop, switch = "y", labeller = labeller(trait = str_add_space, model = f_model_replace))
-      } else {
-        g_list[[i]] <- g_x + 
-          facet_grid(. ~ model + pop, switch = "y", labeller = labeller(trait = str_add_space, model = f_model_replace)) +
-          theme(axis.text.y = element_blank())
-        
-      }
-      
-    } # Close loop
-    
-    ## Combine the list of plots and return - this is plot version 1
-    combined_plot1 <- plot_grid(plotlist = g_list, nrow = 1, 
-                                rel_widths = c(1, rep(0.75, length(g_list) - 1)))
     
     ## Extract the appropriate accuracy annotation
-    r_mp_annotation <- left_join(distinct(df1, trait, type), loo_prediction_accuracy_annotation,
-                                 by = c("trait", "type")) %>%
+    r_mp_annotation <- left_join(distinct(df1, trait, type, model, pop), loo_prediction_accuracy_annotation,
+                                 by = c("trait", "type", "model", "pop")) %>%
       select(trait:pop, contains("annotation")) %>% 
-      # Code below create two lines that are left justified using atop
       mutate(annotation = ability_all_annotation) %>%
-      mutate(x = breaks$pred_complete[1], y = c(last(breaks$value))) %>%
-      mutate(y = y - 0.05*y)
-
-
-    ## Plot version 2 is simply a grid without the complicated legend
-    # Next, plot
-    combined_plot2 <- df1 %>%
-      ggplot(aes(x = pred_complete, y = value, color = environment, group = 1)) +
+      mutate(x = breaks$pred_complete[1], y = c(last(breaks$value)))
+    
+    ## Create the plot
+    g_plot <- df1 %>%
+      ggplot(aes(x = pred_complete, y = value, color = environment)) +
       geom_abline(slope = 1, intercept = 0) +
-      geom_point(size = 0.5) +
+      geom_point(size = 0.5, alpha = 0.5) +
       geom_text(data = r_mp_annotation, aes(x = x, y = y, label = annotation), parse = TRUE, inherit.aes = FALSE,
                 hjust = 0, size = 2) +
       scale_y_continuous(name = "Observation", breaks = pretty, labels = scale_trunc) +
       scale_x_continuous(name = "Prediction", breaks = pretty) +
-      scale_color_discrete(guide = FALSE) +
-      facet_grid(trait ~ model + pop, switch = "y", labeller = labeller(trait = str_add_space, model = f_model_replace)) +
-      theme_presentation2(10) +
-      theme(axis.title = element_blank())
-
-    ## Return both plots
-    tibble(plot_name = c("plot1", "plot2"), plot = list(combined_plot1, combined_plot2))
+      scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
+      facet_grid(type + pop ~ model, switch = "y", 
+                 labeller = labeller(type = toupper, pop = f_pop_replace, model = f_model_replace)) +
+      labs(subtitle = str_add_space(unique(df1$trait))) +
+      theme_presentation2(10)
+    
+    ## Return the plot
+    g_plot
     
     }) %>% ungroup()
 
 
-# ### Combine plots (type 1) ###
-# g_loo_predictions2 <- g_loo_prediction_list %>%
-#   split(.$type) %>%
-#   map(~mutate(.x, plot = modify_at(.x = plot, .at = -1, ~. + theme(strip.text.x = element_blank())))) %>%
-#   map(~plot_grid(plotlist = .x$plot, align = "v", ncol = 1, rel_heights = c(1, rep(0.8, length(.) - 1))))
-
-
-### Combine plots (type 2) ###
-g_loo_prediction_list1 <- g_loo_prediction_list %>%
-  unnest(plot) %>%
-  filter(plot_name == "plot2") %>%
-  split(.$type) %>%
-  # Remove strip names from all but first element
-  map(~mutate(., plot = modify_at(.x = plot, .at = -1, .f = ~. + theme(strip.text.x = element_blank()))))
-
-# Use cowplot
-g_loo_predictions2 <- g_loo_prediction_list1 %>%
-  map(., ~pull(., plot) %>%
-        plot_grid(plotlist = ., align = "v", ncol = 1, rel_heights = c(1, rep(0.8, length(.) - 1))) )
-
-
-for (type in names(g_loo_predictions2)) {
+for (i in seq_len(nrow(g_loo_prediction_list))) {
   
   # Save
-  ggsave(filename = paste0(type, "_model_predictions_observations.jpg"), plot = g_loo_predictions2[[type]],
-         path = fig_dir, width = 15, height = 10, dpi = 1000)
+  ggsave(filename = paste0("loo_model_predictions_observations_", g_loo_prediction_list$trait[[i]], ".jpg"), 
+         plot = g_loo_prediction_list$plot[[i]], path = fig_dir, width = 15, height = 10, dpi = 1000)
   
 }
 
@@ -257,7 +189,9 @@ g_loo_predictions_all_summ <- loo_predictive_ability_all %>%
   geom_col(aes(y = base, fill = model), position = "dodge") + 
   geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), position = position_dodge(0.9),
                 width = 0.5, color = "black") + 
-  scale_fill_manual(name = "Model", labels = f_model_replace, values = model_colors) + 
+  # scale_fill_manual(name = "Model", labels = f_model_replace, values = model_colors) + 
+  scale_fill_paletteer_d(package = "dutchmasters", palette = "milkmaid",
+                         name = "Model", labels = f_model_replace) +
   scale_y_continuous(name = "Predictive ability", breaks = pretty) +
   scale_x_discrete(name = "Validation scheme", labels = f_pop_replace) +
   facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
@@ -266,12 +200,17 @@ g_loo_predictions_all_summ <- loo_predictive_ability_all %>%
 
 # Save
 ggsave(filename = "loo_model_predictions_all_summary.jpg", plot = g_loo_predictions_all_summ,
-       path = fig_dir, width = 8, height = 6, dpi = 1000)
+       path = fig_dir, width = 10, height = 6, dpi = 1000)
 
 
 
 
 
+## Create a function list for calculating quantiles
+q <- c(alpha / 2, 0.5, 1 - (alpha / 2))
+# Function vector
+q_funs <- c(map(q, ~partial(quantile, probs = .x, na.rm = TRUE)), partial(mean, na.rm = TRUE)) %>%
+  set_names(., c("lower", "median", "upper", "mean"))
 
 
 ## Summarize mean and range
@@ -279,9 +218,8 @@ loo_prediction_accuracy_summ <- loo_prediction_accuracy %>%
   filter(!is.na(ability)) %>%
   mutate(type = str_extract(type, "l[a-z]{3}")) %>%
   group_by(type, trait, model, pop) %>%
-  summarize_at(vars(ability, bias, accuracy), 
-               list(~mean, wmean = ~weighted.mean(x = ., w = nEnv), ~min, q25 = ~quantile(., 0.25), 
-                    q75 = ~quantile(., 0.75), ~max)) %>% ungroup()
+  summarize_at(vars(ability, bias, accuracy), funs(!!!q_funs))
+                 
 
 
 
@@ -289,13 +227,15 @@ loo_prediction_accuracy_summ <- loo_prediction_accuracy %>%
 # Plot mean and range of predictions
 g_loo_predictions_summ <- loo_prediction_accuracy_summ %>%
   ggplot(aes(x = pop, color = model)) +
-  geom_linerange(aes(ymin = ability_min, ymax = ability_max, group = model), 
+  geom_linerange(aes(ymin = ability_lower, ymax = ability_upper, group = model), 
                  position = position_dodge(0.9), color = "grey85") +
-  geom_linerange(aes(ymin = ability_q25, ymax = ability_q75, group = model), 
-                 position = position_dodge(0.9), color = "grey85", lwd = 1) +
-  # geom_point(aes(y = ability_mean), position = position_dodge(0.9)) +
-  geom_point(aes(y = ability_wmean), position = position_dodge(0.9)) +
-  scale_color_manual(name = "Model", labels = f_model_replace, values = model_colors) + 
+  # geom_linerange(aes(ymin = ability_q25, ymax = ability_q75, group = model), 
+  #                position = position_dodge(0.9), color = "grey85", lwd = 1) +
+  geom_point(aes(y = ability_mean), position = position_dodge(0.9)) +
+  # geom_point(aes(y = ability_wmean), position = position_dodge(0.9)) +
+  # scale_color_manual(name = "Model", labels = f_model_replace, values = model_colors) + 
+  scale_color_paletteer_d(package = "dutchmasters", palette = "milkmaid",
+                          name = "Model", labels = f_model_replace) +
   scale_y_continuous(name = "Predictive ability", breaks = pretty) +
   scale_x_discrete(name = "Validation scheme", labels = f_pop_replace) +
   facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
@@ -304,7 +244,7 @@ g_loo_predictions_summ <- loo_prediction_accuracy_summ %>%
 
 # Save
 ggsave(filename = "loo_model_predictions_summary.jpg", plot = g_loo_predictions_summ,
-       path = fig_dir, width = 8, height = 6, dpi = 1000)
+       path = fig_dir, width = 10, height = 6, dpi = 1000)
 
 
 

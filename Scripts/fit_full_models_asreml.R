@@ -12,28 +12,8 @@
 
 # Run on a local machine
 repo_dir <- getwd()
-source(file.path(repo_dir, "source.R"))
-
-# Other packages
-library(modelr)
-library(broom)
-
-
-## Load environmental covariables
-load(file = file.path(result_dir, "ec_model_building.RData"))
-load(file = file.path(result_dir, "historical_ec_model_building.RData"))
-# Rename
-ec_model_building <- unified_ec_models
-
-
-
-## Data.frame to use to fit models
-data_to_model <- S2_MET_BLUEs %>% 
-  filter(line_name %in% c(tp_geno)) %>%
-  # add covariates
-  droplevels() %>%
-  mutate(line_name = factor(line_name, levels = c(tp_geno)),
-         environment = as.factor(environment))
+# Load the environment
+load(file.path(repo_dir, "Scripts/asreml_model_environment.RData"))
 
 
 ### Models
@@ -134,6 +114,8 @@ for (i in seq_len(nrow(full_model_df))) {
   GE_IPC <- kronecker(X = K, Y = E_IPC, make.dimnames = TRUE)
   GL_IPC <- kronecker(X = K, Y = L_IPC, make.dimnames = TRUE)
   
+  
+  
   ## Define an expression that fits the model
   fit_mmer_exp <- expression({
     model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
@@ -141,13 +123,13 @@ for (i in seq_len(nrow(full_model_df))) {
   })
   
   
-  ## Create a new tibble with model formulas
-  model_formula_df <- tibble(model = model_list, fixed = model_fixed_forms,
-                             rand = model_rand_forms)
-  model_formula_df <- bind_rows(
-    filter(model_formula_df, ! model %in% c("model4", "model5")),
-    crossing(filter(model_formula_df, model %in% c("model4", "model5")), time_frame = location_relmat_df$time_frame)
-  )
+  ## Tibble for model results
+  model_fits_out <- tibble(trait = tr, model = names(model_rand_forms)) %>%
+    mutate(prediction = list(NULL))
+  
+  
+  
+  
   
   # Iterate over this df
   model_fits <- pmap(.l = model_formula_df, ~{

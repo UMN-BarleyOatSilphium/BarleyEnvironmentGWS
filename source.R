@@ -41,6 +41,7 @@ source(file.path(proj_dir, "source_functions.R"))
 
 # Load the phenotypic data
 load(file.path(pheno_dir, "S2_tidy_BLUE.RData"))
+
 # Load the trial metadata
 trial_info <- read_csv(file = file.path(meta_dir, "trial_metadata.csv")) %>%
   filter(population %in% c("s2tp", "s2c1", "s2met"), type == "spy") %>%
@@ -83,7 +84,7 @@ K <- A.mat(X = s2_imputed_mat_use, min.MAF = 0, max.missing = 1)
 
 ## Rank the environments according to heritability
 env_herit_rank <- s2_metadata %>% 
-  select(trial, trait, heritability = h2) %>% 
+  select(trial, trait, heritability) %>% 
   left_join(., distinct(s2_tidy_BLUE, trial, environment)) %>%
   filter(!str_detect(trial, "S2C1"),
          trial %in% trials) %>%

@@ -31,10 +31,10 @@ S2_MET_BLUEs %>%
 
 # trait        location  year environment
 # 1 GrainProtein        7     3          10
-# 2 GrainYield         13     3          22
-# 3 HeadingDate        12     3          25
-# 4 PlantHeight        13     3          27
-# 5 TestWeight          8     2          12
+# 2 GrainYield         13     3          27
+# 3 HeadingDate        11     3          25
+# 4 PlantHeight        12     3          27
+# 5 TestWeight          7     2          12
 
 
 
@@ -75,11 +75,11 @@ distinct(S2_MET_BLUEs, trait, environment) %>%
   summarize_at(vars(heritability), list(~min, ~max, ~mean))
 
 # trait         min   max  mean
-# 1 GrainProtein 0.165 0.838 0.612
-# 2 GrainYield   0.180 0.900 0.564
-# 3 HeadingDate  0.643 0.970 0.865
-# 4 PlantHeight  0.106 0.883 0.525
-# 5 TestWeight   0.587 0.945 0.716
+# 1 GrainProtein 0.295 0.840 0.647
+# 2 GrainYield   0.179 0.861 0.541
+# 3 HeadingDate  0.656 0.980 0.863
+# 4 PlantHeight  0.160 0.882 0.530
+# 5 TestWeight   0.501 0.945 0.689
 
 
 ## Output a table
@@ -131,42 +131,19 @@ stage_two_fits <- S2_MET_BLUEs_tomodel %>%
   do({
     
     df <- droplevels(.)
-    
-    # Table of lines by environments (i.e. plots)
-    plot_table <- xtabs(formula = ~ line_name + location + year, data = df)
-    
-    ## Harmonic means
-    # Locations
-    harm_loc <- apply(X = plot_table, MARGIN = c(1,2), sum) %>% 
-      ifelse(. > 1, 1, .) %>%
-      rowSums() %>% 
-      harm_mean()
-    
-    # Year
-    harm_year <- apply(X = plot_table, MARGIN = c(2,3), sum) %>% 
-      ifelse(. > 1, 1, .) %>%
-      rowSums() %>% 
-      harm_mean()
-    
-    harm_env <- xtabs(formula = ~ line_name + environment, data = df) %>%
-      ifelse(. > 1, 1, .) %>%
-      rowSums() %>% 
-      harm_mean()
-      
-    
-    # Reps
-    harm_rep <- apply(X = plot_table, MARGIN = c(1,2,3), sum) %>% 
-      harm_mean()
+    # Edit factors
+    df1 <- df %>%
+      mutate_at(vars(location, year, line_name), fct_contr_sum)
     
     # Get the weights
     wts <- df$std_error^2
     
     ## fit the full model
     fit_gly <- lmer(formula = value ~ 1 + location + year + location:year + (1|line_name) + (1|line_name:location) +
-                  (1|line_name:year) + (1|line_name:location:year), data = df, control = lmer_control, weights = wts)
+                  (1|line_name:year) + (1|line_name:location:year), data = df, control = lmer_control)
     
     fit_ge <- lmer(formula = value ~ 1 + environment + (1|line_name) + (1|line_name:environment), 
-                   data = df, control = lmer_control, weights = wts)
+                   data = df, control = lmer_control)
 
     
     # ## Likelihood ratio tests
@@ -185,31 +162,19 @@ stage_two_fits <- S2_MET_BLUEs_tomodel %>%
     #   select(term, LRT, df, p.value)
     
     
-    ## Calculate heritability
-    # Expression for heritability
-    exp_gly <- "line_name / (line_name + (line_name:location / n_l) + (line_name:year / n_y) +(line_name:location:year / (n_l * n_y)) + (Residual / (n_y * n_l * n_r)))"
-    exp_ge <- "line_name / (line_name + (line_name:environment / n_e) + (Residual / (n_e * n_r)))"
+    ## Get variance components
+    var_comp_gly <- as.data.frame(VarCorr(fit_gly)) %>% 
+      select(term = grp, variance = vcov)
+    var_comp_ge <- as.data.frame(VarCorr(fit_ge)) %>% 
+      select(term = grp, variance = vcov)
     
-    
-    ## Use bootstrapping to calculate a confidence interval
-    # Generate bootstrapping samples and calculate heritability using the bootMer function
-    h2_gly <- herit(object = fit_gly, exp = exp_gly, n_l = harm_loc, n_y = harm_year, n_r = harm_rep)
-    h2_ge <- herit(object = fit_ge, exp = exp_ge, n_e = harm_env, n_r = harm_rep)
-    
-    
-    # h2_boot <- bootMer(x = fit, nsim = boot_reps, FUN = function(x) 
-    #   herit(object = x, exp = exp, n_l = harm_loc, n_y = harm_year, n_r = harm_rep)$heritability)
-    # 
-    # # Add the bootstrapping results with a confidence interval
-    # h2$heritability <- tidy(h2_boot) %>% 
-    #   cbind(., t(quantile(h2_boot$t, probs = c(alpha / 2, 1 - (alpha / 2))))) %>% 
-    #   rename_at(vars(4, 5), ~c("lower", "upper"))
+    ## Calculate heritability based on Cullis
+    h2_gly <- list(heritability = herit2(fit_gly), var_comp = var_comp_gly)
+    h2_ge <- list(heritability = herit2(fit_ge), var_comp = var_comp_ge)
     
     
     # Return data_frame
-    tibble(fit = list(fit_gly), fit_ge = list(fit_ge), h2 = list(h2_gly), h2_ge = list(h2_ge),
-           # lrt = list(lrt), lrt = list(lrt),
-           n_l = harm_loc, n_y = harm_year, n_e = harm_env, n_r = harm_rep)
+    tibble(fit = list(fit_gly), fit_ge = list(fit_ge), h2 = list(h2_gly), h2_ge = list(h2_ge))
     
   }) %>% ungroup()
 
@@ -231,10 +196,11 @@ stage_two_fits_GYL_varcomp <- stage_two_fits %>%
 
 ## Plot the proportion of variance from each source
 stage_two_fits_GYL_varprop <- stage_two_fits_GYL_varcomp %>% 
-  mutate(source = map(source, ~str_split(., pattern = ":", simplify = FALSE) %>% map(str_to_title) %>% .[[1]]) %>% 
+  mutate(term = map(term, ~str_split(., pattern = ":", simplify = FALSE) %>% map(str_to_title) %>% .[[1]]) %>% 
            map_chr(~paste(., collapse = " x ")),
-         source = str_replace_all(source, "Line_name", "Genotype"),
-         source = factor(source, levels = c("Genotype", "Location", "Year", "Location x Year", "Genotype x Location", "Genotype x Year",
+         term = str_replace_all(term, "Line_name", "Genotype"),
+         term = factor(term, levels = c("Genotype", "Location", "Year", "Location x Year", 
+                                            "Genotype x Location", "Genotype x Year",
                                             "Genotype x Location x Year", "Residual")))
 
 stage_two_fits_GYL_varprop1 <- stage_two_fits_GYL_varprop %>%
@@ -248,7 +214,7 @@ var_comp_colors <- set_names(umn_palette(3, 8), levels(stage_two_fits_GYL_varpro
 ## Plot both populations and all traits
 g_varprop <- stage_two_fits_GYL_varprop1 %>% 
   mutate(population = str_to_upper(population)) %>% 
-  ggplot(aes(x = trait, y = var_prop, fill = source)) + 
+  ggplot(aes(x = trait, y = var_prop, fill = term)) + 
   geom_col() +
   ylab("Proportion of variance") +
   scale_fill_manual(values = var_comp_colors, name = NULL) +
@@ -258,87 +224,6 @@ g_varprop <- stage_two_fits_GYL_varprop1 %>%
 
 # Save
 ggsave(filename = "variance_components_expanded.jpg", plot = g_varprop, path = fig_dir, width = 9, height = 6, dpi = 1000)
-
-
-
-
-
-
-#### 
-#### Heading Date Analysis
-#### 
-#### Remove potential outlier environments and re-analyze
-#### 
-
-# Group by trait and fit the multi-environment model
-# Fit models in the TP and the TP + VP
-stage_two_fits_HD <- S2_MET_BLUEs_tomodel %>%
-  filter(trait == "HeadingDate", ! environment %in% c("EON17", "CRM15", "HNY15")) %>%
-  group_by(trait, population) %>%
-  do({
-    
-    df <- droplevels(.)
-    
-    # Table of lines by environments (i.e. plots)
-    plot_table <- xtabs(formula = ~ line_name + location + year, data = df)
-    
-    ## Harmonic means
-    # Locations
-    harm_loc <- apply(X = plot_table, MARGIN = c(1,2), sum) %>% 
-      ifelse(. > 1, 1, .) %>%
-      rowSums() %>% 
-      harm_mean()
-    
-    # Year
-    harm_year <- apply(X = plot_table, MARGIN = c(2,3), sum) %>% 
-      ifelse(. > 1, 1, .) %>%
-      rowSums() %>% 
-      harm_mean()
-    
-    # Reps
-    harm_rep <- apply(X = plot_table, MARGIN = c(1,2,3), sum) %>% 
-      harm_mean()
-    
-    # Get the weights
-    wts <- df$std_error^2
-    
-    ## fit the full model
-    fit <- lmer(formula = value ~ 1 + (1|line_name) + (1|location) + (1|year) + (1|location:year) + (1|line_name:location) + 
-                  (1|line_name:year) + (1|line_name:location:year),
-                data = df, control = lmer_control, weights = wts)
-    
-    # fit <- lmer(formula = value ~ 1 + (1|line_name) + (1|location) + (1|year) + (1|line_name:location) + (1|line_name:year) + (1|line_name:location:year),
-    #             data = df, control = lmer_control)
-    
-    
-    ## Likelihood ratio tests
-    lrt <- ranova(fit) %>% 
-      tidy() %>% 
-      filter(!str_detect(term, "none")) %>% 
-      mutate(term = str_remove(term, "\\(1 \\| ") %>% 
-               str_remove("\\)")) %>% 
-      select(term, LRT, df, p.value)
-    
-    # Return data_frame
-    data_frame(fit = list(fit), lrt = list(lrt), n_l = harm_loc, 
-               n_y = harm_year, n_r = harm_rep)
-    
-  }) %>% ungroup()
-
-
-## Create a table for output
-stage_two_fits_HD_varcomp <- stage_two_fits_HD %>%
-  mutate(var_comp = map(fit, ~as.data.frame(VarCorr(.)) %>% select(source = grp, variance = vcov)),
-         var_comp = map2(var_comp, lrt, ~full_join(.x, .y, by = c("source" = "term")))) %>% 
-  unnest(var_comp) %>%
-  mutate(source = map(source, ~str_split(., pattern = ":", simplify = FALSE) %>% map(str_to_title) %>% .[[1]]) %>% 
-           map_chr(~paste(., collapse = " x ")),
-         source = str_replace_all(source, "Line_name", "Genotype"),
-         source = factor(source, levels = c("Genotype", "Location", "Year", "Location x Year", "Genotype x Location", "Genotype x Year",
-                                            "Genotype x Location x Year", "Residual"))) %>%
-  group_by(trait, population) %>% 
-  mutate(var_prop = variance / sum(variance)) %>%
-  ungroup()
 
 
 
@@ -379,147 +264,42 @@ ggsave(filename = "heritability_expanded.jpg", plot = g_herit, path = fig_dir, w
 
 
 
-
-
-
-### Calculate the proportion of GxE that is due to environmental genetic variance
-### heterogeneity versus lack of environmental correlation
-
-# For each environment, calculate the genetic variance via reml
-env_varG <- S2_MET_BLUEs_tomodel %>% 
-  group_by(population, trait, environment) %>%
-  do(varG = {
-    df <- .
-    wts <- df$std_error^2
-    
-    # If more than one trial is present, average over trials
-    if (n_distinct(df$trial) > 1) {
-      formula <- value ~ 1 + trial + (1|line_name)
-    } else {
-      formula <- value ~ 1 + (1|line_name)
-    }
-    
-    suppressMessages(fit <- lmer(formula = formula, data = df, control = lmer_control, weights = wts) )
-    
-    as.data.frame(VarCorr(fit))[1,"vcov"]
-    
-  }) %>% ungroup() %>%
-  mutate(varG = unlist(varG))
-
-# Calculate the genetic heterogeneity, V
-env_varG_V <- env_varG %>% 
-  group_by(population, trait) %>% 
-  summarize(V = var(sqrt(varG))) %>%
-  ungroup()
-
-
-## Use the variance components estinated in the previous random model
-# prop_varcomp <- stage_two_fits_GE %>%
-prop_varcomp <- stage_two_fits %>%
-  mutate(varcomp = map(h2, "var_comp")) %>% 
-  unnest(varcomp)
-
-
-# Use the estimate of varGE across all environments to calculate L
-env_L <- env_varG_V %>%
-  # left_join(., subset(prop_varcomp, source == "line_name:environment", c(population, trait, variance))) %>% 
-  left_join(., subset(prop_varcomp, source == "line_name:location:year", c(population, trait, variance))) %>% 
-  rename(varGE = variance) %>%
-  mutate(L = varGE - V)
-
-# Use the estimate of genetic variance across all environments to calculate the 
-# genetic correlation
-env_r <- left_join(env_L, subset(prop_varcomp, source == "line_name", c(population, trait, variance)), by = c("population", "trait")) %>% 
-  rename(varG = variance) %>%
-  mutate(r_G = varG / (varG + L))
-
-env_r %>% 
-  select(population, trait, r_G) %>% 
-  spread(population, r_G)
-
-# trait          all    tp    vp
-# 1 GrainProtein 0.442 0.460 0.300
-# 2 GrainYield   0.357 0.362 0.272
-# 3 HeadingDate  0.801 0.860 0.600
-# 4 PlantHeight  0.401 0.393 0.421
-# 5 TestWeight   0.451 0.417 0.459
-
-
-## What proportion do V and L make up of varGE?
-## This is from Li et al 2018 or Cooper and DeLacey 1994
-## Add to the variance component table
-varGE_components <- env_r %>% 
-  mutate_at(vars(V, L), list(prop = ~. / varGE)) 
-
-
-varGE_components %>%
-  mutate(heterogeneity = str_c(round(V, 3), " (", round(V_prop, 2) * 100, "%)"), 
-         lackCorrelation = str_c(round(L, 3), " (", round(L_prop, 2) * 100, "%)")) %>% 
-  select(population, trait, heterogeneity, lackCorrelation) %>% 
-  gather(grp, value, -trait, -population) %>% 
-  spread(grp, value) %>%
-  arrange(trait, population)
-
-# population trait           heterogeneity  lackCorrelation 
-# 1 all        GrainProtein 0.131 (25%)     0.403 (75%)     
-# 2 tp         GrainProtein 0.13 (24%)      0.419 (76%)     
-# 3 vp         GrainProtein 0.035 (8%)      0.412 (92%)     
-# 4 all        GrainYield   84672.705 (33%) 170628.915 (67%)
-# 5 tp         GrainYield   88238.353 (33%) 177820.796 (67%)
-# 6 vp         GrainYield   51709.965 (25%) 154130.275 (75%)
-# 7 all        HeadingDate  3.805 (58%)     2.803 (42%)     
-# 8 tp         HeadingDate  3.867 (64%)     2.147 (36%)     
-# 9 vp         HeadingDate  2.787 (52%)     2.559 (48%)     
-# 10 all        PlantHeight  5.667 (29%)     13.941 (71%)    
-# 11 tp         PlantHeight  4.87 (25%)      14.252 (75%)    
-# 12 vp         PlantHeight  6.36 (32%)      13.456 (68%)    
-# 13 all        TestWeight   129.551 (32%)   273.045 (68%)   
-# 14 tp         TestWeight   133.357 (32%)   289.227 (68%)   
-# 15 vp         TestWeight   115.139 (34%)   221.69 (66%)
-
-
-
 ## Output a table of all variance components for all populations
 prop_varcomp1 <- prop_varcomp %>% 
-  select(trait, population, source, variance) %>% 
+  select(trait, population, term, variance) %>% 
   group_by(trait, population) %>% 
   mutate(proportion = variance / sum(variance),
-         source = str_replace_all(source, ":", " x "), 
-         source = str_replace_all(source, "line_name", "Genotype"), 
-         source = str_to_title(source))
+         term = str_replace_all(term, ":", " x "), 
+         term = str_replace_all(term, "line_name", "Genotype"), 
+         term = str_to_title(term))
 
-
-varGE_components1 <- varGE_components %>% 
-  select(trait, population, V, L) %>% 
-  gather(source, variance, V, L) %>%
-  group_by(trait, population) %>% 
-  mutate(source = ifelse(source == "V", "GeneticHeterogeneity", "LackOfCorrelation"),  
-         proportion = variance / sum(variance))
 
 # Component order
-comp_order <- unique(stage_two_fits_GYL_varprop1$source) %>% 
+comp_order <- unique(stage_two_fits_GYL_varprop1$term) %>% 
   {.[order(str_count(., "x"))]} %>%
   {c(str_subset(., "[^Residual]"), "Genetic Heterogeneity", "Lack Of Correlation", "Residual")}
 
 ## Combine and output
-var_comp_table <- select(stage_two_fits_GYL_varprop1, trait, population, source, variance, proportion = var_prop) %>%
-  bind_rows(., varGE_components1) %>%
+var_comp_table <- select(stage_two_fits_GYL_varprop1, trait, population, term, variance, proportion = var_prop) %>%
+  # bind_rows(., varGE_components1) %>%
   ungroup() %>%
   mutate(significance = "",
          # significance = case_when(p.value < 0.001 ~ "***",
          #                          p.value < 0.01 ~ "**",
          #                          p.value < 0.05 ~ "*",
          #                          TRUE ~ ""),
-         variance = signif(variance, 3) %>% formatC(x = ., digits = 3, format = "f") %>% str_remove(., "[0]*$") %>% str_remove(., "\\.$"),
-         proportion = signif(proportion * 100, 3) %>% formatC(x = ., digits = 3, format = "f") %>% str_remove(., "[0]*$") %>% str_remove(., "\\.$"),
+         variance = signif(variance, 3) %>% formatC(x = ., digits = 3, format = "f") %>%
+           str_remove(., "[0]*$") %>% str_remove(., "\\.$"),
+         proportion = signif(proportion * 100, 3) %>% formatC(x = ., digits = 3, format = "f") %>%
+           str_remove(., "[0]*$") %>% str_remove(., "\\.$"),
          annotation = paste0(variance, significance, " (", proportion, "%)"),
          annotation = str_trim(annotation)) %>%
-  select(trait, population, source, annotation) %>%
-  mutate(source = str_add_space(source),
+  select(trait, population, term, annotation) %>%
+  mutate(term = str_add_space(term),
          trait = str_add_space(trait),
-         source = factor(source, levels = comp_order),
+         term = factor(term, levels = comp_order),
          population = toupper(population)) %>% 
-  arrange(population, source) %>%
+  arrange(population, term) %>%
   rename_all(str_to_title) %>%
   spread(Population, Annotation)
 
@@ -701,8 +481,10 @@ var_comp_table <- select(stage_two_fits_GYL_varprop1, trait, population, source,
          #                          p.value < 0.01 ~ "**",
          #                          p.value < 0.05 ~ "*",
          #                          TRUE ~ ""),
-         variance = signif(variance, 3) %>% formatC(x = ., digits = 3, format = "f") %>% str_remove(., "[0]*$") %>% str_remove(., "\\.$"),
-         proportion = signif(proportion * 100, 3) %>% formatC(x = ., digits = 3, format = "f") %>% str_remove(., "[0]*$") %>% str_remove(., "\\.$"),
+         variance = signif(variance, 3) %>% formatC(x = ., digits = 3, format = "f") %>% 
+           str_remove(., "[0]*$") %>% str_remove(., "\\.$"),
+         proportion = signif(proportion * 100, 3) %>% formatC(x = ., digits = 3, format = "f") %>% 
+           str_remove(., "[0]*$") %>% str_remove(., "\\.$"),
          annotation = paste0(variance, significance, " (", proportion, "%)"),
          annotation = str_trim(annotation)) %>%
   select(trait, population, source, annotation) %>%
@@ -766,14 +548,14 @@ mixed_model_fit <- S2_MET_BLUEs_tomodel %>%
     # Use this to create G-E relationship matrix
     K_ge <- kronecker(K1[levels(df1$line_name), levels(df1$line_name)], E_cor, make.dimnames = TRUE)
     
-    ## fit a mixed model to predict all genotype-environment means ##
-    # MF
-    mf <- model.frame(value ~ line_name + environment, df1)
-    y <- model.response(mf)
-    X <- model.matrix(~ 1 + line_name + environment, data = mf)
-    Z <- model.matrix(~ -1 + line_name:environment, mf)
-    
-    fit1 <- mixed.solve(y = y, Z = Z, K = K_ge, X = X, method = "REML")
+    # ## fit a mixed model to predict all genotype-environment means ##
+    # # MF
+    # mf <- model.frame(value ~ line_name + environment, df1)
+    # y <- model.response(mf)
+    # X <- model.matrix(~ 1 + line_name + environment, data = mf)
+    # Z <- model.matrix(~ -1 + line_name:environment, mf)
+    # 
+    # fit1 <- mixed.solve(y = y, Z = Z, K = K_ge, X = X, method = "REML")
     
     ## Fit the model using sommer
     fit1 <- mmer(fixed = value ~ line_name + environment, random = ~ vs(line_name:environment, Gu = K_ge), data = df1,
