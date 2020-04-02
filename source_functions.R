@@ -836,7 +836,15 @@ genomewide_prediction <- function(x) {
 
 
 
+# function to impute missing data using mean
+impute <- function(x) {
+  x1 <- x
+  x1[is.na(x1)] <- mean(x1, na.rm = T)
+  return(x1)
+}
 
+# Function to calculate the coefficient of variation
+cv <- function(x, na.rm = FALSE) sd(x = x, na.rm = na.rm) / mean(x = x, na.rm = na.rm)
 
 
 

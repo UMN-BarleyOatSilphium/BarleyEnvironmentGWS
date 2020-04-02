@@ -116,7 +116,7 @@ S2_MET_BLUEs <- s2_tidy_BLUE %>%
   filter(!str_detect(environment, "HTM|BZI|AID")) %>%
   # Remove environments deemed failures (i.e. HNY16 for grain yield)
   filter(!(environment == "HNY16" & trait == "GrainYield"),
-         !(environment == "BCW16" & trait == "PlantHeight"),
+         !(environment == "EON17" & trait == "HeadingDate"),
          !(environment == "KNY16" & trait == "TestWeight")) %>%
   # Rename and reorder
   select(trial, environment, location, year, trait, line_name, value, std_error = std.error)

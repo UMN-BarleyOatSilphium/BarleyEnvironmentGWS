@@ -53,7 +53,7 @@ load(file.path(result_dir, "ec_model_building.RData"))
 
 
 ## Create the ECs and select the relevant ones for modeling
-ec_select <- growth_stage_covariates %>%
+growth_stage_covariates1 <- growth_stage_covariates %>%
   ## Remove heading as a growth stage
   filter(stage != "heading") %>%
   ## Separate trial into location and year
@@ -71,12 +71,40 @@ ec_select <- growth_stage_covariates %>%
   ## Remove "radn_mean" 
   filter(str_detect(covariate, "radn_mean", negate = TRUE))
 
+soil_covariates1 <- soil_covariates %>%
+  mutate(location = str_replace_all(location, "Ithaca1|Ithaca2", "Ithaca")) %>%
+  ## Only use TP environments
+  inner_join(., loc_trials, by = "location") %>%
+  gather(covariate, value, -trial, -location) %>%
+  left_join(distinct(growth_stage_covariates1, year, trial, location), .)
+
+## Combine
+ec_select <- bind_rows(growth_stage_covariates1, soil_covariates1)
+
+
+## Summarize min/max/var for each covariate
+ec_select_summ <- ec_select %>%
+  group_by(covariate, year) %>%
+  summarize_at(vars(value), list(min = min, max = max, sd = sd, cv = cv), 
+               na.rm = T) %>%
+  ungroup()
+
+ec_year_tokeep <- ec_select_summ %>% 
+  filter(!is.na(cv)) %>%
+  select(covariate, year)
+
+## Remove covariates with low CV
+ec_select <- ec_select %>%
+  inner_join(ec_year_tokeep, .)
+
+  
+
 # Vector of covariate names
 ec_names <- unique(ec_select$covariate)
 
 
 ## Summarize covariates at a location over three time_frames
-year_time_frame <- c(5, 15, 30)
+year_time_frame <- seq(1, 30)
 
 ec_select_timeframe <- tibble(
   time_frame = year_time_frame, 
@@ -153,9 +181,21 @@ ec_tomodel_normality <- ec_select_timeframe_summary_wide %>%
   group_by(time_frame, covariate) %>%
   do(ks_test = ks.test(x = .$value, y = "pnorm", mean = mean(.$value), sd = sd(.$value))) %>%
   ungroup() %>%
-  mutate(p_value = map_dbl(ks_test, "p.value"))
+  mutate(p_value = map_dbl(ks_test, "p.value")) %>%
+  split(.$time_frame) %>%
+  map_df(~mutate(., p_adj = p.adjust(p_value, method = "bonf")))
 
-(ec_sig_nonnormal <- subset(ec_tomodel_normality, p_value < 0.10))
+(ec_sig_nonnormal <- subset(ec_tomodel_normality, p_adj < 0.10))
+
+# Check covariate by time_frame
+# Determine which covariates to exclude
+ec_to_remove <- group_by(ec_sig_nonnormal, covariate) %>% 
+  summarize(n = n_distinct(time_frame)) %>% 
+  filter(n > 20) %>% 
+  pull(covariate)
+
+
+
 
 ## Visualize
 ec_select_timeframe_summary_wide %>%
@@ -167,14 +207,11 @@ ec_select_timeframe_summary_wide %>%
 
 ## Remove this covariate from the df
 ec_select_timeframe_summary_wide1 <- ec_select_timeframe_summary_wide %>%
-  select(which(! names(.) %in% unique(ec_sig_nonnormal$covariate)) )
-
-
-## Determine if there is sufficient variation for a covariate
-ec_select_timeframe_summary_wide1 %>%
-  split(.$time_frame) %>%
-  map_df(~summarize_at(., vars(-location, -time_frame), var)) %>%
-  as.data.frame()
+  select(which(! names(.) %in% ec_to_remove) ) %>%
+  group_by(time_frame) %>%
+  # Inpute using the mean
+  mutate_at(vars(-location, -time_frame), impute) %>%
+  ungroup()
 
 
 
@@ -214,7 +251,7 @@ s2_met_tomodel <- historical_ec_tomodel_centered %>%
 
 #  New vector of covariates
 environmental_covariates <- s2_met_tomodel %>% 
-  select(matches("vegetative|heading|flowering|grain_fill")) %>%
+  select(-trial:-time_frame) %>%
   names()
 
 
@@ -224,7 +261,7 @@ historical_ec_by_trait <- tibble(
   covariates = list(
     environmental_covariates, # Grain protein
     environmental_covariates, # Grain yield
-    str_subset(environmental_covariates, "vegetative"), # Heading date
+    str_subset(environmental_covariates, "flowering|grain", negate = TRUE), # Heading date
     str_subset(environmental_covariates, "grain", negate = TRUE), # Plant height
     environmental_covariates # Test weight
   )
@@ -251,7 +288,7 @@ location_effect_to_model <- base_model_location_effect %>%
   left_join(., s2_met_tomodel)
 
 
-# Group by trait
+# Group by trait and time_frame and nest
 location_effect_models <- location_effect_to_model %>%
   group_by(trait, time_frame) %>%
   nest() %>%
@@ -279,7 +316,7 @@ for (i in seq(nrow(location_effect_models))) {
   
   
   # Did we run out of dfs? If so, reduce terms
-  while (df.residual(fit_step) <= 1) {
+  while (df.residual(fit_step) <= 2) {
     
     ## Drop1
     fit_step_drop1 <- drop1(fit_step) %>%
@@ -341,20 +378,83 @@ for (i in seq(nrow(location_effect_models))) {
 }
 
 
-## Examine coefficients of covariates
-location_effect_models$model %>% 
-  map(summary)
-
-
 
 
 ## Plot fitted values versus observed environmental mean
 location_effect_models %>%
+  filter(time_frame %in% paste0("time_frame", c(5, 10, 15, 20))) %>%
   mutate(model_data = map(model, ~add_predictions(data = model.frame(.x), model = .x))) %>%
   unnest(model_data) %>%
   ggplot(aes(x = pred, y = effect)) +
   geom_abline(slope = 1, intercept = 0) +
   geom_point() +
+  scale_y_continuous(name = "effect", breaks = pretty) +
+  scale_x_continuous(name = "fitted", breaks = pretty) +
+  facet_wrap(~ trait + time_frame, scales = "free", ncol = 4) +
+  theme_acs()
+
+
+
+## Perform leave-one-out cross-validation
+location_effect_models_looCV <- location_effect_models %>%
+  mutate(model_data = map(model, ~add_predictions(data = model.frame(.x), model = .x))) %>% 
+  group_by(trait, time_frame) %>%
+  do({
+    row <- .
+    cv_df <- unnest(row, model_data) %>%
+      crossv_loo() %>%
+      mutate_at(vars(test, train), ~map(., as.data.frame))
+    model_fits <- map(cv_df$train, ~update(object = row$model[[1]], data = .))
+    
+    # Predictions
+    predictions <- map2_df(cv_df$test, model_fits, add_predictions)
+    
+    # RMSE
+    rmse_df <- mean(map2_dbl(model_fits, cv_df$test, rmse))
+    
+    # Accuracy
+    accuracy <- cor(predictions$effect, predictions$pred)
+    
+    ## Return summaries
+    tibble(predictions = list(predictions), accuracy = accuracy, rmse = rmse_df)
+    
+  }) %>% ungroup()
+
+
+## Plot predicted values versus observed environmental mean
+location_effect_models_looCV %>%
+  unnest(predictions) %>%
+  filter(time_frame %in% paste0("time_frame", c(5, 10, 15, 20))) %>%
+  ggplot(aes(x = pred, y = effect)) +
+  geom_abline(slope = 1, intercept = 0) +
+  geom_point() +
+  scale_y_continuous(name = "effect", breaks = pretty) +
+  scale_x_continuous(name = "prediction", breaks = pretty) +
+  facet_wrap(~ trait + time_frame, scales = "free", ncol = 4) +
+  theme_acs()
+
+
+
+
+## Find the best model
+(best_model <- location_effect_models_looCV %>%
+  group_by(trait) %>% 
+  top_n(x = ., n = 1, wt = -rmse)
+  # top_n(x = ., n = 1, wt = accuracy)
+)
+
+# What about time_frame 5?
+location_effect_models_looCV %>%
+  filter(time_frame == "time_frame5")
+
+# Plot accuracy from the best model
+best_model %>%
+  unnest(predictions) %>%
+  ggplot(aes(x = pred, y = effect)) +
+  geom_abline(slope = 1, intercept = 0) +
+  geom_point() +
+  scale_y_continuous(name = "effect", breaks = pretty) +
+  scale_x_continuous(name = "prediction", breaks = pretty) +
   facet_wrap(~ trait + time_frame, scales = "free", ncol = 3) +
   theme_acs()
 
@@ -386,7 +486,11 @@ historical_ec_tomodel_scaled_mat_list <- historical_ec_tomodel_scaled %>%
 ## Add the coviarates assigned to each trait
 historical_ec_tomodel_ammi <- left_join(ammi_dist, historical_ec_by_trait, by = "trait") %>%
   crossing(., tibble(time_frame = names(historical_ec_tomodel_scaled_mat_list), 
-                     ec_mat = historical_ec_tomodel_scaled_mat_list))
+                     ec_mat = historical_ec_tomodel_scaled_mat_list)) %>%
+  # Reorder factors
+  mutate(tf_num = parse_number(time_frame),
+         time_frame = fct_reorder(.f = time_frame, .x = tf_num, .desc = FALSE)) %>%
+  select(-tf_num)
 
 
 # Tolerance of difference of correlations
@@ -476,17 +580,51 @@ historical_ec_ammi_dist <- historical_ec_tomodel_ammi %>%
   }) %>% ungroup()
 
 
+# Look at the best time frame per trait
+(best_cor <- historical_ec_ammi_dist %>%
+  group_by(trait) %>%
+  top_n(x = ., n = 1, wt = final_cor) %>%
+  slice(1))
+
+# Compare with a series
+best_cor %>%
+  select(trait, time_frame, final_cor) %>%
+  left_join(., historical_ec_ammi_dist %>% 
+              filter(time_frame %in% paste0("time_frame", c(5, 10, 15, 20, 25, 30))) %>% 
+              select(trait, time_frame1 = time_frame, final_cor1 = final_cor)) %>%
+  as.data.frame()
+
+# It lools like time_frame 5 is ideal
+
 
 ## Plot the results
 g_hist_ec_ammi <- historical_ec_ammi_dist %>% 
-  unnest(test_results) %>% 
-  ggplot(aes(x = number, y = cor_with_ammi, color = trait, lty = time_frame)) +
+  unnest(test_results) %>%
+  filter(time_frame %in% paste0("time_frame", c(5, 10, 15, 20, 25, 30))) %>%
+  ggplot(aes(x = number, y = cor_with_ammi, color = time_frame)) +
   # geom_point() +
   geom_line() +
   facet_grid(~ trait, scales = "free_x") +
   theme_acs()
 ggsave(filename = "ec_locations_correlation_with_AMMI.jpg", plot = g_hist_ec_ammi, 
        path = fig_dir, width = 8, height = 4, dpi = 1000)
+
+## Plot the results - continuous
+g_hist_ec_ammi <- historical_ec_ammi_dist %>% 
+  unnest(test_results) %>%
+  mutate(time_frame = parse_number(as.character(time_frame))) %>%
+  ggplot(aes(x = number, y = cor_with_ammi, color = time_frame, group = time_frame)) +
+  # geom_point() +
+  geom_line() +
+  # scale_color_gradient2(low = wesanderson::wes_palette("Zissou1")[1], mid = wesanderson::wes_palette("Zissou1")[3],
+  #                       high = wesanderson::wes_palette("Zissou1")[5], midpoint = 15) +
+  facet_grid(~ trait, scales = "free_x") +
+  theme_acs()
+ggsave(filename = "ec_locations_correlation_with_AMMI_continuous.jpg", plot = g_hist_ec_ammi, 
+       path = fig_dir, width = 8, height = 4, dpi = 1000)
+
+
+
 
 
 
@@ -510,7 +648,9 @@ location_relmat_df <- historical_ec_ammi_dist %>%
     } }) ) %>%
   select(trait, time_frame, interaction_covariate_mat = final_covariates,
          main_covariate_mat = main_environment_covariates, E_mat_main, E_mat_int = ec_dist_mat_final,
-         K_IPC)
+         K_IPC) %>%
+  # Tag the best time frame
+  left_join(., select(best_cor, trait, time_frame) %>% mutate(best = TRUE))
 
 
 ## Overlap in main-effect versus interaction ECs
@@ -573,6 +713,24 @@ location_relmat_df %>%
 #     
 #     
 #   }) %>% ungroup()
+
+
+## Output a table of covariates for each term
+historical_covariate_table <- location_relmat_df %>%
+  filter(time_frame == "time_frame5") %>%
+  mutate_at(vars(interaction_covariate_mat, main_covariate_mat), ~map(., colnames)) %>% 
+  select(trait, contains("covariate"))  %>% 
+  gather(term, covariates, -trait) %>% 
+  mutate(covariates = modify_if(covariates, is.null, ~NA)) %>%
+  unnest(covariates) %>%
+  mutate(term = ifelse(str_detect(term, "interaction"), "GE", "E")) %>%
+  group_by(trait, covariates) %>%
+  summarize(term = paste0(term, collapse = "+")) %>%
+  spread(trait, term) %>%
+  arrange(covariates) %>%
+  filter(!is.na(covariates))
+write_csv(x = historical_covariate_table, path = file.path(fig_dir, "historical_covariate_summary_table.csv"), na = "")
+
 
 
 
