@@ -32,7 +32,7 @@ S2_MET_BLUEs %>%
 # trait        location  year environment
 # 1 GrainProtein        7     3          10
 # 2 GrainYield         13     3          27
-# 3 HeadingDate        11     3          25
+# 3 HeadingDate        11     3          24
 # 4 PlantHeight        12     3          27
 # 5 TestWeight          7     2          12
 
@@ -265,7 +265,7 @@ ggsave(filename = "heritability_expanded.jpg", plot = g_herit, path = fig_dir, w
 
 
 ## Output a table of all variance components for all populations
-prop_varcomp1 <- prop_varcomp %>% 
+prop_varcomp1 <- stage_two_fits_GYL_varcomp %>% 
   select(trait, population, term, variance) %>% 
   group_by(trait, population) %>% 
   mutate(proportion = variance / sum(variance),
@@ -384,9 +384,9 @@ varG_V <- location_year_varG %>%
   mutate(V = map_dbl(varG, ~var(sqrt(.$varG))))
 
 ## Modify the prop_varcomp for use with varGL and varGY
-prop_varcomp1 <- prop_varcomp %>%
-  filter(source %in% c("line_name:location", "line_name:year")) %>%
-  select(trait, population, term = source, variance) %>%
+prop_varcomp1 <- stage_two_fits_GYL_varcomp %>%
+  filter(term %in% c("line_name:location", "line_name:year")) %>%
+  select(trait, population, term, variance) %>%
   mutate(term = str_remove_all(term, "line_name:"))
 
 
@@ -398,7 +398,8 @@ varG_L <- varG_V %>%
 
 # Use the estimate of genetic variance across all environments to calculate the 
 # genetic correlation
-rG <- left_join(varG_L, subset(prop_varcomp, source == "line_name", c(population, trait, variance)), by = c("population", "trait")) %>% 
+rG <- left_join(varG_L, subset(stage_two_fits_GYL_varcomp, term == "line_name", c(population, trait, variance)), 
+                by = c("population", "trait")) %>% 
   rename(varG_broad = variance) %>%
   mutate(r_G = varG_broad / (varG_broad + L))
 
@@ -450,30 +451,30 @@ varGLY_components %>%
 
 
 ## Output a table of all variance components for all populations
-prop_varcomp1 <- prop_varcomp %>% 
-  select(trait, population, source, variance) %>% 
+prop_varcomp1 <- stage_two_fits_GYL_varcomp %>% 
+  select(trait, population, term, variance) %>% 
   group_by(trait, population) %>% 
   mutate(proportion = variance / sum(variance),
-         source = str_replace_all(source, ":", " x "), 
-         source = str_replace_all(source, "line_name", "Genotype"), 
-         source = str_to_title(source))
+         term = str_replace_all(term, ":", " x "), 
+         term = str_replace_all(term, "line_name", "Genotype"), 
+         term = str_to_title(term))
 
 
 varGLY_components1 <- varGLY_components %>% 
   filter(term == "location") %>%
   select(trait, population, V, L) %>% 
-  gather(source, variance, V, L) %>%
+  gather(term, variance, V, L) %>%
   group_by(trait, population) %>% 
-  mutate(source = ifelse(source == "V", "GeneticHeterogeneity", "LackOfCorrelation"),  
+  mutate(term = ifelse(term == "V", "GeneticHeterogeneity", "LackOfCorrelation"),  
          proportion = variance / sum(variance))
 
 # Component order
-comp_order <- unique(stage_two_fits_GYL_varprop1$source) %>% 
+comp_order <- unique(stage_two_fits_GYL_varprop1$term) %>% 
   {.[order(str_count(., "x"))]} %>%
   {c(str_subset(., "[^Residual]"), "Genetic Heterogeneity", "Lack Of Correlation", "Residual")}
 
 ## Combine and output
-var_comp_table <- select(stage_two_fits_GYL_varprop1, trait, population, source, variance, proportion = var_prop) %>%
+var_comp_table <- select(stage_two_fits_GYL_varprop1, trait, population, term, variance, proportion = var_prop) %>%
   bind_rows(., varGLY_components1) %>%
   ungroup() %>%
   mutate(significance = "",
@@ -487,12 +488,12 @@ var_comp_table <- select(stage_two_fits_GYL_varprop1, trait, population, source,
            str_remove(., "[0]*$") %>% str_remove(., "\\.$"),
          annotation = paste0(variance, significance, " (", proportion, "%)"),
          annotation = str_trim(annotation)) %>%
-  select(trait, population, source, annotation) %>%
-  mutate(source = str_add_space(source),
+  select(trait, population, term, annotation) %>%
+  mutate(term = str_add_space(term),
          trait = str_add_space(trait),
-         source = factor(source, levels = comp_order),
+         term = factor(term, levels = comp_order),
          population = toupper(population)) %>% 
-  arrange(population, source) %>%
+  arrange(population, term) %>%
   rename_all(str_to_title) %>%
   spread(Population, Annotation)
 
