@@ -222,6 +222,8 @@ S2_MET_BLUEs <- filter(S2_MET_BLUEs, environment %in% tp_vp_env) %>%
 
 ## Trait units - renaming vector
 trait_units <- setNames(object = c("kg~ha^-1", "days", "cm", "g~L^-1", "'%'"), nm = traits)
+# The favorable sign for each trait
+trait_sign <- tibble(trait = traits, sign = c(1, -1, -1, 1, -1))
 
 
 ## Remove

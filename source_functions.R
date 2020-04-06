@@ -683,24 +683,77 @@ genomewide_prediction <- function(x) {
   # 
   
   
+  # ## Create a list of model formulas
+  # model_fixed_forms <- formulas(
+  #   .response = ~ value, 
+  #   model1 = ~ 1,
+  #   model2 = model1,
+  #   # model2a = add_predictors(model2, ~ env),
+  #   # model2b = reformulate(c("1", main_environment_covariates)),
+  #   model3 = model2,
+  #   # model3a = model2a,
+  #   # model3b = model2b
+  #   model4 = model1,
+  #   model5 = model4,
+  #   model2_P = model2,
+  #   model3_P = model3,
+  #   model4_P = model4,
+  #   model5_P = model5,
+  #   model3_GxE = model3,
+  #   model5_GxL = model5
+  # )
+  
+  
+  ## Models for de novo fitting 
+  ## Create a list of model formulas
+  model_rand_forms <- formulas(
+    .response = ~ value,
+    model1 = ~ vs(line_name, Gu = K),
+    model2 = add_predictors(model1, ~ vs(env, Gu = E)),
+    # model2a = model1,
+    # model2b = model1,
+    model3 = add_predictors(model2, ~ vs(line_name:env1, Gu = GE)),
+    # model3a = add_predictors(model1, ~ vs(line_name:env1, Gu = GE)),
+    # model3b = model3a
+    model4 = add_predictors(model1, ~vs(loc, Gu = L)),
+    model5 = add_predictors(model4, ~vs(line_name:loc, Gu = GL)),
+    # Modified models
+    model2_P = add_predictors(model1, ~ vs(env, Gu = E_IPC)),
+    model3_P = add_predictors(model2, ~ vs(line_name:env1, Gu = GE_IPC)),
+    model4_P = add_predictors(model1, ~vs(loc, Gu = L_IPC)),
+    model5_P = add_predictors(model4, ~vs(line_name:loc, Gu = GL_IPC)),
+    model3_GxE = add_predictors(model2, ~ vs(line_name:env1, Gu = GxE)),
+    model5_GxL = add_predictors(model4, ~vs(line_name:loc, Gu = GxL))
+  ) %>% map(~ formula(delete.response(terms(.)))) # Remove response
+  
+  # Residual formula
+  resid_form <- ~ vs(units)
+  
+  
   
   ## Create relationship matrices
   K <- K # Genomic
   # E <- Env_mat(x = ec_df[,main_environment_covariates, drop = FALSE], method = "Rincent2019")
-  E <- subset(environmental_relmat_df, trait == tr, E_mat_main, drop = TRUE)[[1]]
-  L <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use, E_mat_main, drop = TRUE)[[1]]
+  E <- subset(environmental_relmat_df, trait == tr & term == "main", EC, drop = TRUE)[[1]]
+  L <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use & term == "main", EC, drop = TRUE)[[1]]
   
-  GE <- subset(environmental_relmat_df, trait == tr, E_mat_int, drop = TRUE)[[1]] %>%
+  GE <- subset(environmental_relmat_df, trait == tr & term == "int", EC, drop = TRUE)[[1]] %>%
     kronecker(X = K, Y = ., make.dimnames = TRUE)
-  GL <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use, E_mat_int, drop = TRUE)[[1]] %>%
+  GL <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use & term == "int", EC, drop = TRUE)[[1]] %>%
     kronecker(X = K, Y = ., make.dimnames = TRUE)
+  
+  GxE <- kronecker(X = K, Y = E, make.dimnames = TRUE)
+  GxL <- kronecker(X = K, Y = L, make.dimnames = TRUE)
+  
   
   ## AMMI covariance matrices
-  E_IPC <- subset(environmental_relmat_df, trait == tr, K_IPC, drop = TRUE)[[1]]
-  L_IPC <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use, K_IPC, drop = TRUE)[[1]]
+  E_IPC <- subset(environmental_relmat_df, trait == tr & term == "main", K, drop = TRUE)[[1]]
+  L_IPC <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use & term == "int", K, drop = TRUE)[[1]]
   
-  GE_IPC <- kronecker(X = K, Y = E_IPC, make.dimnames = TRUE)
-  GL_IPC <- kronecker(X = K, Y = L_IPC, make.dimnames = TRUE)
+  GE_IPC <- subset(environmental_relmat_df, trait == tr & term == "int", K, drop = TRUE)[[1]] %>%
+    kronecker(X = K, Y = ., make.dimnames = TRUE)
+  GL_IPC <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use & term == "int", K, drop = TRUE)[[1]] %>%
+    kronecker(X = K, Y = ., make.dimnames = TRUE)
   
   ## Define an expression that fits the model
   fit_mmer_exp <- expression({
@@ -726,7 +779,8 @@ genomewide_prediction <- function(x) {
     
     # Model name and formulas
     mod <- prediction_out$model[m]
-    fixed_form <- model_fixed_forms[[mod]]
+    # fixed_form <- model_fixed_forms[[mod]]
+    fixed_form <- value ~ 1
     rand_form <- model_rand_forms[[mod]]
     
     # ## Get the variance components from the full model

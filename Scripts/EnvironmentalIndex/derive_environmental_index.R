@@ -20,6 +20,7 @@ library(pbr)
 library(cowplot)
 library(pls)
 library(car)
+library(ggrepel)
 
 # Significance level
 alpha <- 0.05
@@ -412,181 +413,23 @@ environmental_covariates_all <- reduce(ec_by_trait_all$covariates, union)
 
 
 ############################
-### Model covariates that are predictive of the environmental mean
+### Identify covariates that are correlated with the E and GE distance matrices
 ############################
 
-## Get the environmental effects from the AMMI model
-base_model_env_effect <- ammiN_fit_location %>%
-  unnest(e_scores) %>% 
-  select(trait, environment, effect)
+## Calculate distance matrices between environmental main effects and GxE effects
+## identified from the AMMI model, consistent with Rincent 2019
 
-
-
-## Use stepwise regression to find the best model
-env_effect_to_model <- base_model_env_effect %>%
-  left_join(s2_met_tomodel)
-
-# Group by trait
-env_effect_models <- env_effect_to_model %>%
-  group_by(trait) %>%
-  nest() %>%
-  mutate(model = list(NULL))
-
-
-
-for (i in seq(nrow(env_effect_models))) {
-
-  df <- env_effect_models$data[[i]]
-  tr <- env_effect_models$trait[i]
-
-  ## Remove some covariates depending on when the trait is measured
-  df1 <- select(df, environment, effect, subset(ec_by_trait_all, trait == tr, covariates, drop = T)[[1]]) %>%
-    distinct()
-
-  # Minimal model
-  min_model <- effect ~ 1
-  # Max model
-  max_model <- add_predictors(min_model, as.formula(paste0("~", paste0(names(df1)[-1:-2], collapse = " + "))))
-
-  # Stepwise regression
-  fit_base <- lm(formula = min_model, data = df1, contrasts = "contr.sum")
-  fit_step <- step(object = fit_base, scope = max_model, direction = "forward")
-  
-  
-  # Did we run out of dfs? If so, reduce terms
-  while (df.residual(fit_step) <= 1) {
-    
-    ## Drop1
-    fit_step_drop1 <- drop1(fit_step) %>%
-      as.data.frame() %>%
-      rownames_to_column("term")
-    
-    ## Remove the two covariates that gives the lowest AIC, besides "none"
-    to_remove <- fit_step_drop1 %>%
-      filter(str_detect(term, "none", negate = T)) %>% 
-      top_n(x = ., n = 2, wt = -AIC) %>%
-      pull(term) %>% 
-      sort() %>%
-      first()
-    
-    ## Reduce the number of parameters by 1
-    fit_step_new_formula <- terms(formula(fit_step)) %>% 
-      drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% to_remove), keep.response = TRUE) %>%
-      formula()
-    
-    ## Refit the model
-    fit_step <- update(object = fit_step, formula = fit_step_new_formula)
-
-  }
-  
-  fit_step1 <- fit_step
-
-  
-  ## Remove covariates based on VIF
-  vif_i <- vif(fit_step1)
-  fit_stepi <- fit_step1
-  vif_cutoff <- 4
-  
-  while (any(vif_i > vif_cutoff)) {
-    form_i <- terms(formula(fit_stepi)) %>%
-      drop.terms(., dropx = which( attr(., "term.labels") %in% names(which.max(vif_i))), keep.response = TRUE ) %>%
-      formula()
-    
-    fit_stepi <- update(object = fit_stepi, formula = form_i)
-    vif_i <- vif(fit_stepi)
-  }
-  
-  # Backward elimination from here
-  fit_step_final <- step(object = fit_stepi, direction = "backward")
-
-  ## Return the model
-  env_effect_models$model[[i]] <- fit_step_final
-
-}
-
-
-## Examine coefficients of covariates
-env_effect_models$model %>% 
-  map(summary)
-
-
-### This seems to have helped.
-
-
-
-
-## Plot fitted values versus observed environmental mean
-env_effect_models %>%
-  mutate(model_data = map(model, ~add_predictions(data = model.frame(.x), model = .x))) %>%
-  unnest(model_data) %>%
-  ggplot(aes(x = pred, y = effect)) +
-  geom_abline(slope = 1, intercept = 0) +
-  geom_point() +
-  facet_wrap(~ trait, scales = "free") +
-  theme_acs()
-  
-## Perform leave-one-out cross-validation
-env_effect_models_looCV <- env_effect_models %>%
-  mutate(model_data = map(model, ~add_predictions(data = model.frame(.x), model = .x))) %>% 
-  group_by(trait) %>%
-  do({
-    row <- .
-    cv_df <- unnest(row, model_data) %>%
-      crossv_loo() %>%
-      mutate_at(vars(test, train), ~map(., as.data.frame))
-    model_fits <- map(cv_df$train, ~update(object = row$model[[1]], data = .))
-    
-    # Predictions
-    predictions <- map2_df(cv_df$test, model_fits, add_predictions)
-    
-    # RMSE
-    rmse_df <- mean(map2_dbl(model_fits, cv_df$test, rmse))
-    
-    # Accuracy
-    accuracy <- cor(predictions$effect, predictions$pred)
-    
-    ## Return summaries
-    tibble(predictions = list(predictions), accuracy = accuracy, rmse = rmse_df)
-    
-  }) %>% ungroup()
-  
-
-# Plot
-env_effect_models_looCV %>%
-  unnest(predictions) %>%
-  ggplot(aes(x = pred, y = effect)) +
-  geom_abline(slope = 1, intercept = 0) +
-  geom_point() +
-  facet_wrap(~ trait, scales = "free") +
-  theme_acs()
-
-
-
-# trait        predictions       accuracy     rmse
-# 1 GrainProtein <tibble [10 x 8]>    0.853    0.674
-# 2 GrainYield   <tibble [27 x 6]>    0.455 1357.   
-# 3 HeadingDate  <tibble [24 x 4]>    0.805    3.22 
-# 4 PlantHeight  <tibble [27 x 7]>    0.599    7.79 
-# 5 TestWeight   <tibble [12 x 8]>    0.849   19.6  
-
-
-
-
-
-############################
-### Identify covariates that are correlated with the AMMI distance matrix
-############################
-
-
-## Using the AMMI output and phi, calculate the distance matrix between environments
-## This will be denoted as W_ammi, consistent with Rincent 2019
-ammi_dist <- ammiN_fit_location %>%
-  mutate(W = map(phi, ~as.matrix(dist(t(.)))),
-         W_ammi = map(W, ~1 - (. / max(.)))) %>%
-  select(trait, W_ammi)
+dist_matrices <- ammiN_fit_location %>%
+  # Convert environmental effects into a matrix
+  mutate(e_scores = map(e_scores, ~as.matrix(select(., effect))),
+         phi = map(phi, t)) %>%
+  rename(main = e_scores, int = phi) %>%
+  mutate_at(vars(main, int), list(~map(., make_dist_mat))) %>%
+  select(trait, main, int)
 
 ## Add the coviarates assigned to each trait
-ec_tomodel_ammi <- left_join(ammi_dist, ec_by_trait_all, by = "trait")
+ec_tomodel <- left_join(dist_matrices, ec_by_trait_all, by = "trait") %>%
+  gather(term, matrix, -trait, -covariates)
 
 # Create a matrix of scaled and centered covariates
 ec_tomodel_scaled_mat <- ec_tomodel_scaled %>% 
@@ -596,29 +439,29 @@ ec_tomodel_scaled_mat <- ec_tomodel_scaled %>%
 
 
 # Tolerance of difference of correlations
-cor_tol <- 0.01
+cor_tol <- 0.005
 
 
 ## For each trait, use an algorithm to determine the covariates to use
 ## This is based on the approach of Rincent 2019
-ec_ammi_dist <- ec_tomodel_ammi %>%
-  group_by(trait) %>%
+ec_dist <- ec_tomodel %>%
+  group_by(trait, term) %>%
   do({
     
     row <- .
     
-    # AMMI dist matrix
-    W_ammi <- row$W_ammi[[1]]
+    # Relationship matrix
+    relmat <- row$matrix[[1]]
     # Vector of covariates
     covariates <- row$covariates[[1]]
     
     ## Subset the EC scaled matrix
-    ec_tomodel_scaled_mat_use <- ec_tomodel_scaled_mat[rownames(W_ammi), covariates]
+    ec_tomodel_scaled_mat_use <- ec_tomodel_scaled_mat[rownames(relmat), covariates]
     
     ## Choose the starting covariate as the one whose distance matrix has
-    ## the highest correlation with the W_ammi distance matrix
+    ## the highest correlation with the relmat distance matrix
     initial_W_cov <- map(covariates, ~make_dist_mat(ec_tomodel_scaled_mat_use[, ., drop = FALSE])) %>%
-      map_dbl(~cor(as.numeric(.), as.numeric(W_ammi)))
+      map_dbl(~cor(as.numeric(.), as.numeric(relmat)))
     
     starting_covariate <- covariates[which.max(initial_W_cov)]
     # Create two vectors of available and used covariates
@@ -629,8 +472,8 @@ ec_ammi_dist <- ec_tomodel_ammi %>%
     
     ## Vector of correlations
     i <- 1
-    ec_ammi_cor_list <- vector("list", length(covariates))
-    ec_ammi_cor_list[[i]] <- tibble(added_covariate = starting_covariate, cor_with_ammi = max(initial_W_cov))
+    ec_cor_list <- vector("list", length(covariates))
+    ec_cor_list[[i]] <- tibble(added_covariate = starting_covariate, cor_with_relmat = max(initial_W_cov))
     
     ## For each remaining covariate, find the next one that gives the highest gain (or lowest loss)
     while (length(available_covariates) > 0) {
@@ -638,10 +481,10 @@ ec_ammi_dist <- ec_tomodel_ammi %>%
       # Advance i
       i <- i + 1
       
-      # Scan the available covariates, add to the matrix, calculate distance, compare to W_ammi
+      # Scan the available covariates, add to the matrix, calculate distance, compare to relmat
       new_W_cov <- map(available_covariates, ~c(used_covariates, .)) %>%
         map(~make_dist_mat(ec_tomodel_scaled_mat_use[, ., drop = FALSE])) %>%
-        map_dbl(~cor(as.numeric(.), as.numeric(W_ammi)))
+        map_dbl(~cor(as.numeric(.), as.numeric(relmat)))
       
       old_cor <- max(new_W_cov)
       
@@ -652,7 +495,7 @@ ec_ammi_dist <- ec_tomodel_ammi %>%
       selected_covariate <- available_covariates[which_max_diff]
       
       ## Add to the list
-      ec_ammi_cor_list[[i]] <- tibble(added_covariate = selected_covariate, cor_with_ammi = new_W_cov[which_max_diff])
+      ec_cor_list[[i]] <- tibble(added_covariate = selected_covariate, cor_with_relmat = new_W_cov[which_max_diff])
       
       # Determine remaining covariates
       used_covariates <- union(used_covariates, selected_covariate)
@@ -662,89 +505,92 @@ ec_ammi_dist <- ec_tomodel_ammi %>%
     }
     
     ## Collapse the list; calculate difference from previous
-    ec_ammi_cor_df <- bind_rows(ec_ammi_cor_list) %>%
-      mutate(difference = c(diff(cor_with_ammi), 0),
+    ec_cor_df <- bind_rows(ec_cor_list) %>%
+      mutate(difference = c(diff(cor_with_relmat), 0),
              stop = which.min(difference >= cor_tol),
              number = seq(nrow(.)))
     
     
     ## List of final covariates
-    final_covariates <- subset(ec_ammi_cor_df, number <= stop, added_covariate, drop = TRUE)
+    final_covariates <- subset(ec_cor_df, number <= stop, added_covariate, drop = TRUE)
     # Final distance matrix
     ec_dist_mat_final <- make_dist_mat(ec_tomodel_scaled_mat_use[, final_covariates, drop = FALSE])
     # final correlation
-    final_cor <- subset(ec_ammi_cor_df, number == stop, cor_with_ammi, drop = TRUE)
+    final_cor <- subset(ec_cor_df, number == stop, cor_with_relmat, drop = TRUE)
     
     ## Return these results
-    tibble(final_cor = final_cor, final_covariates = list(final_covariates), ec_dist_mat_final = list(ec_dist_mat_final),
-           test_results = list(ec_ammi_cor_df), K_IPC = list(W_ammi))
+    tibble(relmat = list(relmat), final_cor = final_cor, final_covariates = list(final_covariates), 
+           ec_dist_mat_final = list(ec_dist_mat_final), test_results = list(ec_cor_df))
     
   }) %>% ungroup()
 
+# Get results ready to plot
+ec_dist_toplot <- ec_dist %>% 
+  unnest(test_results) %>%
+  # Find the stopping point and annotate
+  mutate(annotation = ifelse(stop == number, stop, ""),
+         term = ifelse(term == "int", "GxE", "E"))
+
 
 ## Plot the results
-ec_ammi_dist %>% 
-  unnest(test_results) %>% 
-  qplot(x = number, y = cor_with_ammi, color = trait, data = ., geom = c("line", "point")) %>%
-  ggsave(filename = "ec_correlation_with_AMMI.jpg", plot = ., path = fig_dir, width = 5, height = 4, dpi = 1000)
+(g_ec_dist <- ec_dist_toplot %>% 
+  ggplot(aes(x = number, y = cor_with_relmat, lty = term)) + 
+  geom_point(aes(x = stop, y = final_cor)) +
+  geom_line() +
+  geom_text_repel(aes(label = annotation), nudge_y = 0.03, nudge_x = 5) +
+  facet_grid(~ trait) +
+  scale_x_continuous(name = "Number of covariates", breaks = pretty) +
+  scale_y_continuous(name = "Correlation with phenotypic\nrelationship matrix", breaks = pretty) +
+  scale_linetype_discrete(name = NULL) +
+  theme_light() +
+  theme(legend.position = "top") )
+# Save
+ggsave(filename = "ec_correlation_with_relmat.jpg", plot = g_ec_dist, path = fig_dir, width = 5, height = 3, dpi = 1000)
 
 
 
 
 ### Create relationship matrices for environments ####
 
-environmental_relmat_df <- ec_ammi_dist %>%
-  # Add location main effect models
-  left_join(., select(env_effect_models, -data)) %>%
-  # Get a list of main effect models
-  mutate(main_environment_covariates = map(model, ~attr(terms(formula(.)), "term.labels"))) %>%
-  mutate_at(vars(main_environment_covariates, final_covariates), ~map(., ~ec_tomodel_scaled_mat[, .x, drop = FALSE] )) %>%
-  # Calculate E mat for the main environmental covariates
-  mutate(E_mat_main = map(main_environment_covariates, ~{
-    if (ncol(.x) == 0) {
-      d1 <- diag(x = nrow(.x))
-      `dimnames<-`(x = d1, value = replicate(2, row.names(.x), simplify = FALSE))
-    } else {
-      Env_mat(x = .x, method = "Rincent2")
-    } }) ) %>%
-  select(trait, interaction_covariate_mat = final_covariates, main_covariate_mat = main_environment_covariates, 
-         E_mat_main, E_mat_int = ec_dist_mat_final, K_IPC)
-
+environmental_relmat_df <- ec_dist %>%
+  select(trait, term, K = relmat, EC = ec_dist_mat_final, final_covariates)
 
 
 ## Overlap in main-effect versus interaction ECs
-environmental_relmat_df %>%
-  mutate(covariate_overlap = map2(interaction_covariate_mat, main_covariate_mat, ~intersect(colnames(.x), colnames(.y)))) %>%
-  mutate_at(vars(contains("covariate_mat")), ~map2(., covariate_overlap, ~setdiff(colnames(.x), .y))) %>%
-  select(-E_mat_main, -E_mat_int, -K_IPC)
+environmental_relmat_covariates <- environmental_relmat_df %>%
+  select(trait, term, final_covariates) %>%
+  spread(term, final_covariates) %>%
+  mutate(covariate_overlap = map2(int, main, intersect)) %>%
+  mutate_at(vars(int, main), list(covariate_unique = ~map2(., covariate_overlap, setdiff))) 
 
+environmental_relmat_covariates %>%
+  mutate_at(vars(-trait), ~map_dbl(., length))
 
-# trait        interaction_covariate_mat main_covariate_mat covariate_overlap
-#   1 GrainProtein <chr [2]>                 <chr [2]>          <chr [3]>        
-#   2 GrainYield   <chr [2]>                 <chr [3]>          <chr [0]>        
-#   3 HeadingDate  <chr [3]>                 <chr [0]>          <chr [1]>        
-#   4 PlantHeight  <chr [1]>                 <chr [4]>          <chr [0]>        
-#   5 TestWeight   <chr [4]>                 <chr [5]>          <chr [0]>
+# trait        int       main      covariate_overlap int_covariate_unique main_covariate_unique
+# 1 GrainProtein     5     3                 2                    3                     1
+# 2 GrainYield       4     3                 2                    2                     1
+# 3 HeadingDate      4     2                 1                    3                     1
+# 4 PlantHeight      4     3                 0                    4                     3
+# 5 TestWeight       4     4                 1                    3                     3
 
 
 
 ## Output a table of covariates for each term
 ec_covariate_table <- environmental_relmat_df %>%
-  mutate_at(vars(interaction_covariate_mat, main_covariate_mat), ~map(., colnames)) %>% 
-  select(trait, contains("covariate"))  %>% 
-  gather(term, covariates, -trait) %>% 
+  select(trait, term, covariates = final_covariates)  %>% 
   unnest(covariates) %>%
-  mutate(term = ifelse(str_detect(term, "interaction"), "GE", "E")) %>%
+  mutate(term = ifelse(term == "int", "GE", "E")) %>%
   group_by(trait, covariates) %>%
   summarize(term = paste0(term, collapse = "+")) %>%
   spread(trait, term) %>%
-  arrange(covariates)
+  arrange(covariates) %>%
+  as.data.frame()
 write_csv(x = ec_covariate_table, path = file.path(fig_dir, "env_covariate_summary_table.csv"), na = "")
 
 
 
 ## Save these results
-save("environmental_relmat_df", "ec_ammi_dist", "ec_tomodel_centered", "ec_tomodel_scaled", "ec_tomodel_centers", 
+save("environmental_relmat_df", "ec_dist", "ec_tomodel_centered", "ec_tomodel_scaled", "ec_tomodel_centers", 
      file = file.path(result_dir, "ec_model_building.RData"))
 
 
@@ -785,6 +631,173 @@ save("environmental_relmat_df", "ec_ammi_dist", "ec_tomodel_centered", "ec_tomod
 ##################################
 ### Appendix
 ##################################
+
+############################
+### Model covariates that are predictive of the environmental mean
+############################
+
+# ## Get the environmental effects from the AMMI model
+# base_model_env_effect <- ammiN_fit_location %>%
+#   unnest(e_scores) %>% 
+#   select(trait, environment, effect)
+# 
+# 
+# 
+# ## Use stepwise regression to find the best model
+# env_effect_to_model <- base_model_env_effect %>%
+#   left_join(s2_met_tomodel)
+# 
+# # Group by trait
+# env_effect_models <- env_effect_to_model %>%
+#   group_by(trait) %>%
+#   nest() %>%
+#   mutate(model = list(NULL))
+# 
+# 
+# 
+# for (i in seq(nrow(env_effect_models))) {
+#   
+#   df <- env_effect_models$data[[i]]
+#   tr <- env_effect_models$trait[i]
+#   
+#   ## Remove some covariates depending on when the trait is measured
+#   df1 <- select(df, environment, effect, subset(ec_by_trait_all, trait == tr, covariates, drop = T)[[1]]) %>%
+#     distinct()
+#   
+#   # Minimal model
+#   min_model <- effect ~ 1
+#   # Max model
+#   max_model <- add_predictors(min_model, as.formula(paste0("~", paste0(names(df1)[-1:-2], collapse = " + "))))
+#   
+#   # Stepwise regression
+#   fit_base <- lm(formula = min_model, data = df1, contrasts = "contr.sum")
+#   fit_step <- step(object = fit_base, scope = max_model, direction = "forward")
+#   
+#   
+#   # Did we run out of dfs? If so, reduce terms
+#   while (df.residual(fit_step) <= 1) {
+#     
+#     ## Drop1
+#     fit_step_drop1 <- drop1(fit_step) %>%
+#       as.data.frame() %>%
+#       rownames_to_column("term")
+#     
+#     ## Remove the two covariates that gives the lowest AIC, besides "none"
+#     to_remove <- fit_step_drop1 %>%
+#       filter(str_detect(term, "none", negate = T)) %>% 
+#       top_n(x = ., n = 2, wt = -AIC) %>%
+#       pull(term) %>% 
+#       sort() %>%
+#       first()
+#     
+#     ## Reduce the number of parameters by 1
+#     fit_step_new_formula <- terms(formula(fit_step)) %>% 
+#       drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% to_remove), keep.response = TRUE) %>%
+#       formula()
+#     
+#     ## Refit the model
+#     fit_step <- update(object = fit_step, formula = fit_step_new_formula)
+#     
+#   }
+#   
+#   fit_step1 <- fit_step
+#   
+#   
+#   ## Remove covariates based on VIF
+#   vif_i <- vif(fit_step1)
+#   fit_stepi <- fit_step1
+#   vif_cutoff <- 4
+#   
+#   while (any(vif_i > vif_cutoff)) {
+#     form_i <- terms(formula(fit_stepi)) %>%
+#       drop.terms(., dropx = which( attr(., "term.labels") %in% names(which.max(vif_i))), keep.response = TRUE ) %>%
+#       formula()
+#     
+#     fit_stepi <- update(object = fit_stepi, formula = form_i)
+#     vif_i <- vif(fit_stepi)
+#   }
+#   
+#   # Backward elimination from here
+#   fit_step_final <- step(object = fit_stepi, direction = "backward")
+#   
+#   ## Return the model
+#   env_effect_models$model[[i]] <- fit_step_final
+#   
+# }
+# 
+# 
+# ## Examine coefficients of covariates
+# env_effect_models$model %>% 
+#   map(summary)
+# 
+# 
+# ### This seems to have helped.
+# 
+# 
+# 
+# 
+# ## Plot fitted values versus observed environmental mean
+# env_effect_models %>%
+#   mutate(model_data = map(model, ~add_predictions(data = model.frame(.x), model = .x))) %>%
+#   unnest(model_data) %>%
+#   ggplot(aes(x = pred, y = effect)) +
+#   geom_abline(slope = 1, intercept = 0) +
+#   geom_point() +
+#   facet_wrap(~ trait, scales = "free") +
+#   theme_acs()
+# 
+# ## Perform leave-one-out cross-validation
+# env_effect_models_looCV <- env_effect_models %>%
+#   mutate(model_data = map(model, ~add_predictions(data = model.frame(.x), model = .x))) %>% 
+#   group_by(trait) %>%
+#   do({
+#     row <- .
+#     cv_df <- unnest(row, model_data) %>%
+#       crossv_loo() %>%
+#       mutate_at(vars(test, train), ~map(., as.data.frame))
+#     model_fits <- map(cv_df$train, ~update(object = row$model[[1]], data = .))
+#     
+#     # Predictions
+#     predictions <- map2_df(cv_df$test, model_fits, add_predictions)
+#     
+#     # RMSE
+#     rmse_df <- mean(map2_dbl(model_fits, cv_df$test, rmse))
+#     
+#     # Accuracy
+#     accuracy <- cor(predictions$effect, predictions$pred)
+#     
+#     ## Return summaries
+#     tibble(predictions = list(predictions), accuracy = accuracy, rmse = rmse_df)
+#     
+#   }) %>% ungroup()
+# 
+# 
+# # Plot
+# env_effect_models_looCV %>%
+#   unnest(predictions) %>%
+#   ggplot(aes(x = pred, y = effect)) +
+#   geom_abline(slope = 1, intercept = 0) +
+#   geom_point() +
+#   facet_wrap(~ trait, scales = "free") +
+#   theme_acs()
+# 
+# 
+# 
+# # trait        predictions       accuracy     rmse
+# # 1 GrainProtein <tibble [10 x 8]>    0.853    0.674
+# # 2 GrainYield   <tibble [27 x 6]>    0.455 1357.   
+# # 3 HeadingDate  <tibble [24 x 4]>    0.805    3.22 
+# # 4 PlantHeight  <tibble [27 x 7]>    0.599    7.79 
+# # 5 TestWeight   <tibble [12 x 8]>    0.849   19.6  
+
+
+
+
+
+
+
+
+
 
 
 

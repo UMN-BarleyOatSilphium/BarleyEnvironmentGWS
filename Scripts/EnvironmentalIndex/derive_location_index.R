@@ -20,6 +20,7 @@ library(broom)
 library(pbr)
 library(cowplot)
 library(car)
+library(ggrepel)
 
 # Significance level
 alpha <- 0.05
@@ -273,207 +274,32 @@ environmental_covariates_all <- reduce(historical_ec_by_trait$covariates, union)
 
 
 
-############################
-### Model covariates that are predictive of the location mean
-############################
-
-## Get the location effects from the AMMI model (average environmental effects)
-base_model_location_effect <- ammiN_fit_location %>%
-  unnest(loc_scores) %>% 
-  select(trait, location, effect)
-
-
-## Use stepwise regression to find the best model
-location_effect_to_model <- base_model_location_effect %>%
-  left_join(., s2_met_tomodel)
-
-
-# Group by trait and time_frame and nest
-location_effect_models <- location_effect_to_model %>%
-  group_by(trait, time_frame) %>%
-  nest() %>%
-  mutate(model = list(NULL))
-
-
-
-for (i in seq(nrow(location_effect_models))) {
-  
-  df <- location_effect_models$data[[i]]
-  tr <- location_effect_models$trait[i]
-  
-  ## Remove some covariates depending on when the trait is measured
-  df1 <- select(df, location, effect, subset(historical_ec_by_trait, trait == tr, covariates, drop = T)[[1]]) %>%
-    distinct()
-  
-  # Minimal model
-  min_model <- effect ~ 1
-  # Max model
-  max_model <- add_predictors(min_model, as.formula(paste0("~", paste0(names(df1)[-1:-2], collapse = " + "))))
-  
-  # Stepwise regression
-  fit_base <- lm(formula = min_model, data = df1, contrasts = "contr.sum")
-  fit_step <- step(object = fit_base, scope = max_model, direction = "forward")
-  
-  
-  # Did we run out of dfs? If so, reduce terms
-  while (df.residual(fit_step) <= 2) {
-    
-    ## Drop1
-    fit_step_drop1 <- drop1(fit_step) %>%
-      as.data.frame() %>%
-      rownames_to_column("term")
-    
-    ## Remove the two covariates that gives the lowest AIC, besides "none"
-    to_remove <- fit_step_drop1 %>%
-      filter(str_detect(term, "none", negate = T)) %>% 
-      top_n(x = ., n = 2, wt = -AIC) %>%
-      pull(term) %>% 
-      sort() %>%
-      first()
-    
-    ## Reduce the number of parameters by 1
-    fit_step_new_formula <- terms(formula(fit_step)) %>% 
-      drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% to_remove), keep.response = TRUE) %>%
-      formula()
-    
-    ## Refit the model
-    fit_step <- update(object = fit_step, formula = fit_step_new_formula)
-    
-  }
-  
-  fit_step1 <- fit_step
-  
-  
-  
-  
-  ## Remove covariates based on VIF
-  # Proceed only if the number of terms is >= 2
-  if (length(attr(terms(formula(fit_step1)), "term.labels")) >= 2) {
-  
-    vif_i <- vif(fit_step1)
-    fit_stepi <- fit_step1
-    vif_cutoff <- 4
-    
-    while (any(vif_i > vif_cutoff) & class(vif_i) != "try-error") {
-      
-      form_i <- terms(formula(fit_stepi)) %>%
-        drop.terms(., dropx = which( attr(., "term.labels") %in% names(which.max(vif_i))), keep.response = TRUE ) %>%
-        formula()
-      
-      fit_stepi <- update(object = fit_stepi, formula = form_i)
-      vif_i <- try( vif(fit_stepi), silent = TRUE)
-    }
-    
-    # Backward elimination from here
-    fit_step_final <- step(object = fit_stepi, direction = "backward")
-    
-  } else {
-    fit_step_final <- fit_step1
-    
-  }
-  
-  ## Return the model
-  location_effect_models$model[[i]] <- fit_step_final
-  
-}
-
-
-
-
-## Plot fitted values versus observed environmental mean
-location_effect_models %>%
-  filter(time_frame %in% paste0("time_frame", c(5, 10, 15, 20))) %>%
-  mutate(model_data = map(model, ~add_predictions(data = model.frame(.x), model = .x))) %>%
-  unnest(model_data) %>%
-  ggplot(aes(x = pred, y = effect)) +
-  geom_abline(slope = 1, intercept = 0) +
-  geom_point() +
-  scale_y_continuous(name = "effect", breaks = pretty) +
-  scale_x_continuous(name = "fitted", breaks = pretty) +
-  facet_wrap(~ trait + time_frame, scales = "free", ncol = 4) +
-  theme_acs()
-
-
-
-## Perform leave-one-out cross-validation
-location_effect_models_looCV <- location_effect_models %>%
-  mutate(model_data = map(model, ~add_predictions(data = model.frame(.x), model = .x))) %>% 
-  group_by(trait, time_frame) %>%
-  do({
-    row <- .
-    cv_df <- unnest(row, model_data) %>%
-      crossv_loo() %>%
-      mutate_at(vars(test, train), ~map(., as.data.frame))
-    model_fits <- map(cv_df$train, ~update(object = row$model[[1]], data = .))
-    
-    # Predictions
-    predictions <- map2_df(cv_df$test, model_fits, add_predictions)
-    
-    # RMSE
-    rmse_df <- mean(map2_dbl(model_fits, cv_df$test, rmse))
-    
-    # Accuracy
-    accuracy <- cor(predictions$effect, predictions$pred)
-    
-    ## Return summaries
-    tibble(predictions = list(predictions), accuracy = accuracy, rmse = rmse_df)
-    
-  }) %>% ungroup()
-
-
-## Plot predicted values versus observed environmental mean
-location_effect_models_looCV %>%
-  unnest(predictions) %>%
-  filter(time_frame %in% paste0("time_frame", c(5, 10, 15, 20))) %>%
-  ggplot(aes(x = pred, y = effect)) +
-  geom_abline(slope = 1, intercept = 0) +
-  geom_point() +
-  scale_y_continuous(name = "effect", breaks = pretty) +
-  scale_x_continuous(name = "prediction", breaks = pretty) +
-  facet_wrap(~ trait + time_frame, scales = "free", ncol = 4) +
-  theme_acs()
-
-
-
-
-## Find the best model
-(best_model <- location_effect_models_looCV %>%
-  group_by(trait) %>% 
-  top_n(x = ., n = 1, wt = -rmse)
-  # top_n(x = ., n = 1, wt = accuracy)
-)
-
-# What about time_frame 5?
-location_effect_models_looCV %>%
-  filter(time_frame == "time_frame5")
-
-# Plot accuracy from the best model
-best_model %>%
-  unnest(predictions) %>%
-  ggplot(aes(x = pred, y = effect)) +
-  geom_abline(slope = 1, intercept = 0) +
-  geom_point() +
-  scale_y_continuous(name = "effect", breaks = pretty) +
-  scale_x_continuous(name = "prediction", breaks = pretty) +
-  facet_wrap(~ trait + time_frame, scales = "free", ncol = 3) +
-  theme_acs()
 
 
 
 ############################
-### Identify covariates that are correlated with the AMMI location distance matrix
+### Identify covariates that are correlated with the L and GL distance matrices
 ############################
 
 
-## Using the AMMI output and phi, calculate the distance matrix between environments
-## This will be denoted as W_ammi, consistent with Rincent 2019
-ammi_dist <- ammiN_fit_location %>%
+## Calculate distance matrices between environmental main effects and GxE effects
+## identified from the AMMI model, consistent with Rincent 2019
+
+dist_matrices <- ammiN_fit_location %>%
   # Calculate a location PHI matrix
   mutate(loc_phi = map2(.x = g_scores, .y = loc_scores, ~outer(X = .x$score, Y = .y$score) %>%
                           `dimnames<-`(x = ., value = list(.x$line_name, .y$location)) )) %>%
-  mutate(W = map(loc_phi, ~as.matrix(dist(t(.)))),
-         W_ammi = map(W, ~1 - (. / max(.)))) %>%
-  select(trait, W_ammi)
+  # Convert location effects into a matrix
+  mutate(loc_scores = map(loc_scores, ~as.data.frame(.) %>% column_to_rownames(., "location")),
+         loc_scores = map(loc_scores, ~as.matrix(select(., effect))),
+         loc_phi = map(loc_phi, t)) %>%
+  rename(main = loc_scores, int = loc_phi) %>%
+  mutate_at(vars(main, int), list(~map(., make_dist_mat))) %>%
+  select(trait, main, int)
+
+## Add the coviarates assigned to each trait
+historical_ec_tomodel <- left_join(dist_matrices, historical_ec_by_trait, by = "trait") %>%
+  gather(term, matrix, -trait, -covariates)
 
 
 # Create a matrix of scaled and centered covariates
@@ -483,40 +309,35 @@ historical_ec_tomodel_scaled_mat_list <- historical_ec_tomodel_scaled %>%
         select(-time_frame) %>%
         as.matrix() )
 
-## Add the coviarates assigned to each trait
-historical_ec_tomodel_ammi <- left_join(ammi_dist, historical_ec_by_trait, by = "trait") %>%
-  crossing(., tibble(time_frame = names(historical_ec_tomodel_scaled_mat_list), 
-                     ec_mat = historical_ec_tomodel_scaled_mat_list)) %>%
-  # Reorder factors
-  mutate(tf_num = parse_number(time_frame),
-         time_frame = fct_reorder(.f = time_frame, .x = tf_num, .desc = FALSE)) %>%
-  select(-tf_num)
-
 
 # Tolerance of difference of correlations
-cor_tol <- 0.01
+cor_tol <- 0.005
 
 
 ## For each trait, use an algorithm to determine the covariates to use
 ## This is based on the approach of Rincent 2019
-historical_ec_ammi_dist <- historical_ec_tomodel_ammi %>%
-  group_by(trait, time_frame) %>%
+historical_ec_dist <- historical_ec_tomodel %>%
+  # Add timeframe as a character
+  crossing(., time_frame = names(historical_ec_tomodel_scaled_mat_list)) %>%
+  group_by(trait, term, time_frame) %>%
   do({
     
     row <- .
     
-    # AMMI dist matrix
-    W_ammi <- row$W_ammi[[1]]
+    # Relationship matrix
+    relmat <- row$matrix[[1]]
     # Vector of covariates
     covariates <- row$covariates[[1]]
+    # timeframe
+    tf <- row$time_frame[1]
     
     ## Subset the EC scaled matrix
-    ec_tomodel_scaled_mat_use <- row$ec_mat[[1]][rownames(W_ammi), covariates]
+    ec_tomodel_scaled_mat_use <- historical_ec_tomodel_scaled_mat_list[[tf]][rownames(relmat), covariates]
     
     ## Choose the starting covariate as the one whose distance matrix has
-    ## the highest correlation with the W_ammi distance matrix
+    ## the highest correlation with the relmat distance matrix
     initial_W_cov <- map(covariates, ~make_dist_mat(ec_tomodel_scaled_mat_use[, ., drop = FALSE])) %>%
-      map_dbl(~cor(as.numeric(.), as.numeric(W_ammi)))
+      map_dbl(~cor(as.numeric(.), as.numeric(relmat)))
     
     starting_covariate <- covariates[which.max(initial_W_cov)]
     # Create two vectors of available and used covariates
@@ -527,8 +348,8 @@ historical_ec_ammi_dist <- historical_ec_tomodel_ammi %>%
     
     ## Vector of correlations
     i <- 1
-    ec_ammi_cor_list <- vector("list", length(covariates))
-    ec_ammi_cor_list[[i]] <- tibble(added_covariate = starting_covariate, cor_with_ammi = max(initial_W_cov))
+    ec_cor_list <- vector("list", length(covariates))
+    ec_cor_list[[i]] <- tibble(added_covariate = starting_covariate, cor_with_relmat = max(initial_W_cov))
     
     ## For each remaining covariate, find the next one that gives the highest gain (or lowest loss)
     while (length(available_covariates) > 0) {
@@ -536,10 +357,10 @@ historical_ec_ammi_dist <- historical_ec_tomodel_ammi %>%
       # Advance i
       i <- i + 1
       
-      # Scan the available covariates, add to the matrix, calculate distance, compare to W_ammi
+      # Scan the available covariates, add to the matrix, calculate distance, compare to relmat
       new_W_cov <- map(available_covariates, ~c(used_covariates, .)) %>%
         map(~make_dist_mat(ec_tomodel_scaled_mat_use[, ., drop = FALSE])) %>%
-        map_dbl(~cor(as.numeric(.), as.numeric(W_ammi)))
+        map_dbl(~cor(as.numeric(.), as.numeric(relmat)))
       
       old_cor <- max(new_W_cov)
       
@@ -550,7 +371,7 @@ historical_ec_ammi_dist <- historical_ec_tomodel_ammi %>%
       selected_covariate <- available_covariates[which_max_diff]
       
       ## Add to the list
-      ec_ammi_cor_list[[i]] <- tibble(added_covariate = selected_covariate, cor_with_ammi = new_W_cov[which_max_diff])
+      ec_cor_list[[i]] <- tibble(added_covariate = selected_covariate, cor_with_relmat = new_W_cov[which_max_diff])
       
       # Determine remaining covariates
       used_covariates <- union(used_covariates, selected_covariate)
@@ -560,68 +381,66 @@ historical_ec_ammi_dist <- historical_ec_tomodel_ammi %>%
     }
     
     ## Collapse the list; calculate difference from previous
-    ec_ammi_cor_df <- bind_rows(ec_ammi_cor_list) %>%
-      mutate(difference = c(diff(cor_with_ammi), 0),
+    ec_cor_df <- bind_rows(ec_cor_list) %>%
+      mutate(difference = c(diff(cor_with_relmat), 0),
              stop = which.min(difference >= cor_tol),
              number = seq(nrow(.)))
     
     
     ## List of final covariates
-    final_covariates <- subset(ec_ammi_cor_df, number <= stop, added_covariate, drop = TRUE)
+    final_covariates <- subset(ec_cor_df, number <= stop, added_covariate, drop = TRUE)
     # Final distance matrix
     ec_dist_mat_final <- make_dist_mat(ec_tomodel_scaled_mat_use[, final_covariates, drop = FALSE])
     # final correlation
-    final_cor <- subset(ec_ammi_cor_df, number == stop, cor_with_ammi, drop = TRUE)
+    final_cor <- subset(ec_cor_df, number == stop, cor_with_relmat, drop = TRUE)
     
     ## Return these results
-    tibble(final_cor = final_cor, final_covariates = list(final_covariates), ec_dist_mat_final = list(ec_dist_mat_final),
-           test_results = list(ec_ammi_cor_df), K_IPC = list(W_ammi))
+    tibble(relmat = list(relmat), final_cor = final_cor, final_covariates = list(final_covariates), 
+           ec_dist_mat_final = list(ec_dist_mat_final), test_results = list(ec_cor_df))
     
   }) %>% ungroup()
 
 
 # Look at the best time frame per trait
-(best_cor <- historical_ec_ammi_dist %>%
-  group_by(trait) %>%
+(best_cor <- historical_ec_dist %>%
+  group_by(trait, term) %>%
   top_n(x = ., n = 1, wt = final_cor) %>%
   slice(1))
 
 # Compare with a series
 best_cor %>%
-  select(trait, time_frame, final_cor) %>%
-  left_join(., historical_ec_ammi_dist %>% 
+  select(trait, time_frame, term, final_cor) %>%
+  left_join(., historical_ec_dist %>% 
               filter(time_frame %in% paste0("time_frame", c(5, 10, 15, 20, 25, 30))) %>% 
-              select(trait, time_frame1 = time_frame, final_cor1 = final_cor)) %>%
+              select(trait, term, time_frame1 = time_frame, final_cor1 = final_cor)) %>%
   as.data.frame()
 
 # It lools like time_frame 5 is ideal
 
 
-## Plot the results
-g_hist_ec_ammi <- historical_ec_ammi_dist %>% 
+# Get results ready to plot
+historical_ec_dist_toplot <- historical_ec_dist %>% 
   unnest(test_results) %>%
-  filter(time_frame %in% paste0("time_frame", c(5, 10, 15, 20, 25, 30))) %>%
-  ggplot(aes(x = number, y = cor_with_ammi, color = time_frame)) +
-  # geom_point() +
-  geom_line() +
-  facet_grid(~ trait, scales = "free_x") +
-  theme_acs()
-ggsave(filename = "ec_locations_correlation_with_AMMI.jpg", plot = g_hist_ec_ammi, 
-       path = fig_dir, width = 8, height = 4, dpi = 1000)
+  # Find the stopping point and annotate
+  mutate(annotation = ifelse(stop == number, stop, ""),
+         term = ifelse(term == "int", "GxE", "E"))
+
 
 ## Plot the results - continuous
-g_hist_ec_ammi <- historical_ec_ammi_dist %>% 
-  unnest(test_results) %>%
+(g_hist_ec_dist <- historical_ec_dist_toplot %>% 
   mutate(time_frame = parse_number(as.character(time_frame))) %>%
-  ggplot(aes(x = number, y = cor_with_ammi, color = time_frame, group = time_frame)) +
-  # geom_point() +
-  geom_line() +
-  # scale_color_gradient2(low = wesanderson::wes_palette("Zissou1")[1], mid = wesanderson::wes_palette("Zissou1")[3],
-  #                       high = wesanderson::wes_palette("Zissou1")[5], midpoint = 15) +
-  facet_grid(~ trait, scales = "free_x") +
-  theme_acs()
-ggsave(filename = "ec_locations_correlation_with_AMMI_continuous.jpg", plot = g_hist_ec_ammi, 
-       path = fig_dir, width = 8, height = 4, dpi = 1000)
+  ggplot(aes(x = number, y = cor_with_relmat, color = time_frame, group = time_frame)) + 
+  geom_point(aes(x = stop, y = final_cor)) +
+  geom_line(lwd = 0.25) +
+  facet_grid(term ~ trait) +
+  scale_x_continuous(name = "Number of covariates", breaks = pretty) +
+  scale_y_continuous(name = "Correlation with phenotypic\nrelationship matrix", breaks = pretty) +
+  scale_color_gradient(name = "Time frame (years)", breaks = pretty) +
+  scale_linetype_discrete(name = NULL) +
+  theme_light() +
+  theme(legend.position = "top"))
+ggsave(filename = "ec_locations_correlation__continuous.jpg", plot = g_hist_ec_dist, 
+       path = fig_dir, width = 8, height = 5, dpi = 1000)
 
 
 
@@ -660,84 +479,255 @@ location_relmat_df %>%
   select(-E_mat_main, -E_mat_int, -K_IPC)
 
 
+location_relmat_df <- historical_ec_dist %>%
+  select(trait, term, time_frame, K = relmat, EC = ec_dist_mat_final, final_covariates)
 
 
+## Overlap in main-effect versus interaction ECs
+location_relmat_covariates <- location_relmat_df %>%
+  select(trait, time_frame, term, final_covariates) %>%
+  spread(term, final_covariates) %>%
+  mutate(covariate_overlap = map2(int, main, intersect)) %>%
+  mutate_at(vars(int, main), list(covariate_unique = ~map2(., covariate_overlap, setdiff))) 
 
+location_relmat_covariates %>%
+  mutate_at(vars(-trait, -time_frame), ~map_dbl(., length)) %>%
+  filter(time_frame %in% paste0("time_frame", c(5)))
+  as.data.frame()
 
-# ############################
-# ### Use covariables determined to be significant in the environment-specific model
-# ############################
-# 
-# ## Calculate environmental similarity matrices
-# 
-# ## Iterate over traits
-# location_relmat_previous_ecs_df <- ec_model_touse %>%
-#   group_by(trait) %>%
-#   do({
-#     row <- .
-# 
-#     # Get the model formula
-#     ec_model_form <- formula(row$object[[1]])
-#     
-#     # main_environment_covariates
-#     main_environment_covariates <- all.vars(ec_model_form) %>% 
-#       subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|", negate = T), 
-#                                            pattern = .))))
-#     
-#     # interaction_environment_covariates
-#     interaction_environment_covariates <- all.vars(ec_model_form) %>% 
-#       subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|"), 
-#                                            pattern = .)))) %>% setdiff(., "line_name")
-#     
-#     ## Subset the ec_tomodel_centered list for these covariates - convert each to a matrix
-#     main_historical_covariates <- historical_ec_tomodel_scaled %>%
-#       map(~select(., which(names(.) %in% c("location", main_environment_covariates))) %>%
-#             as.data.frame() %>%
-#             column_to_rownames("location") %>%
-#             as.matrix() )
-#     
-#     interaction_historical_covariates <- historical_ec_tomodel_scaled %>%
-#       map(~select(., which(names(.) %in% c("location", interaction_environment_covariates))) %>%
-#             as.data.frame() %>%
-#             column_to_rownames("location") %>%
-#             as.matrix() )
-#     
-#     ## Create relationship matrices
-#     E_mat_main <- map(main_historical_covariates, ~Env_mat(x = ., method = "Rincent2019"))
-#     E_mat_int <- map(interaction_historical_covariates, ~Env_mat(x = ., method = "Rincent2019"))
-#     
-#     
-#     ## Output a tibble with the matrices and relationship matrices
-#     tibble(time_frame = names(main_historical_covariates), main_covariate_mat = main_historical_covariates, 
-#            interaction_covariate_mat = interaction_historical_covariates, E_mat_main, E_mat_int)
-#     
-#     
-#   }) %>% ungroup()
+# trait        time_frame    int  main covariate_overlap int_covariate_unique main_covariate_unique
+# 1 GrainProtein time_frame5     2     2                 1                    1                     1
+# 2 GrainYield   time_frame5     2     3                 1                    1                     2
+# 3 HeadingDate  time_frame5     2     4                 2                    0                     2
+# 4 PlantHeight  time_frame5     1     2                 0                    1                     2
+# 5 TestWeight   time_frame5     3     5                 1                    2                     4
 
 
 ## Output a table of covariates for each term
 historical_covariate_table <- location_relmat_df %>%
   filter(time_frame == "time_frame5") %>%
-  mutate_at(vars(interaction_covariate_mat, main_covariate_mat), ~map(., colnames)) %>% 
-  select(trait, contains("covariate"))  %>% 
-  gather(term, covariates, -trait) %>% 
-  mutate(covariates = modify_if(covariates, is.null, ~NA)) %>%
+  select(trait, term, covariates = final_covariates)  %>% 
   unnest(covariates) %>%
-  mutate(term = ifelse(str_detect(term, "interaction"), "GE", "E")) %>%
+  mutate(term = ifelse(term == "int", "GL", "L")) %>%
   group_by(trait, covariates) %>%
   summarize(term = paste0(term, collapse = "+")) %>%
   spread(trait, term) %>%
   arrange(covariates) %>%
-  filter(!is.na(covariates))
-write_csv(x = historical_covariate_table, path = file.path(fig_dir, "historical_covariate_summary_table.csv"), na = "")
-
-
-
+  as.data.frame()
+write_csv(x = historical_covariate_table, path = file.path(fig_dir, "historical_covariate_summary_table_TF5.csv"), na = "")
 
 
 ## Save these results
 save("location_relmat_df", "historical_ec_tomodel_centered", 
      "historical_ec_tomodel_centers", "historical_ec_tomodel_scaled", "ec_select_timeframe",
-     "historical_ec_ammi_dist",
+     "historical_ec_dist",
      file = file.path(result_dir, "historical_ec_model_building.RData"))
+
+
+
+
+
+
+
+
+
+
+
+
+#####################################
+## Appendix
+#####################################
+
+############################
+### Model covariates that are predictive of the location mean
+############################
+
+# ## Get the location effects from the AMMI model (average environmental effects)
+# base_model_location_effect <- ammiN_fit_location %>%
+#   unnest(loc_scores) %>% 
+#   select(trait, location, effect)
+# 
+# 
+# ## Use stepwise regression to find the best model
+# location_effect_to_model <- base_model_location_effect %>%
+#   left_join(., s2_met_tomodel)
+# 
+# 
+# # Group by trait and time_frame and nest
+# location_effect_models <- location_effect_to_model %>%
+#   group_by(trait, time_frame) %>%
+#   nest() %>%
+#   mutate(model = list(NULL))
+# 
+# 
+# 
+# for (i in seq(nrow(location_effect_models))) {
+#   
+#   df <- location_effect_models$data[[i]]
+#   tr <- location_effect_models$trait[i]
+#   
+#   ## Remove some covariates depending on when the trait is measured
+#   df1 <- select(df, location, effect, subset(historical_ec_by_trait, trait == tr, covariates, drop = T)[[1]]) %>%
+#     distinct()
+#   
+#   # Minimal model
+#   min_model <- effect ~ 1
+#   # Max model
+#   max_model <- add_predictors(min_model, as.formula(paste0("~", paste0(names(df1)[-1:-2], collapse = " + "))))
+#   
+#   # Stepwise regression
+#   fit_base <- lm(formula = min_model, data = df1, contrasts = "contr.sum")
+#   fit_step <- step(object = fit_base, scope = max_model, direction = "forward")
+#   
+#   
+#   # Did we run out of dfs? If so, reduce terms
+#   while (df.residual(fit_step) <= 2) {
+#     
+#     ## Drop1
+#     fit_step_drop1 <- drop1(fit_step) %>%
+#       as.data.frame() %>%
+#       rownames_to_column("term")
+#     
+#     ## Remove the two covariates that gives the lowest AIC, besides "none"
+#     to_remove <- fit_step_drop1 %>%
+#       filter(str_detect(term, "none", negate = T)) %>% 
+#       top_n(x = ., n = 2, wt = -AIC) %>%
+#       pull(term) %>% 
+#       sort() %>%
+#       first()
+#     
+#     ## Reduce the number of parameters by 1
+#     fit_step_new_formula <- terms(formula(fit_step)) %>% 
+#       drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% to_remove), keep.response = TRUE) %>%
+#       formula()
+#     
+#     ## Refit the model
+#     fit_step <- update(object = fit_step, formula = fit_step_new_formula)
+#     
+#   }
+#   
+#   fit_step1 <- fit_step
+#   
+#   
+#   
+#   
+#   ## Remove covariates based on VIF
+#   # Proceed only if the number of terms is >= 2
+#   if (length(attr(terms(formula(fit_step1)), "term.labels")) >= 2) {
+#     
+#     vif_i <- vif(fit_step1)
+#     fit_stepi <- fit_step1
+#     vif_cutoff <- 4
+#     
+#     while (any(vif_i > vif_cutoff) & class(vif_i) != "try-error") {
+#       
+#       form_i <- terms(formula(fit_stepi)) %>%
+#         drop.terms(., dropx = which( attr(., "term.labels") %in% names(which.max(vif_i))), keep.response = TRUE ) %>%
+#         formula()
+#       
+#       fit_stepi <- update(object = fit_stepi, formula = form_i)
+#       vif_i <- try( vif(fit_stepi), silent = TRUE)
+#     }
+#     
+#     # Backward elimination from here
+#     fit_step_final <- step(object = fit_stepi, direction = "backward")
+#     
+#   } else {
+#     fit_step_final <- fit_step1
+#     
+#   }
+#   
+#   ## Return the model
+#   location_effect_models$model[[i]] <- fit_step_final
+#   
+# }
+# 
+# 
+# 
+# 
+# ## Plot fitted values versus observed environmental mean
+# location_effect_models %>%
+#   filter(time_frame %in% paste0("time_frame", c(5, 10, 15, 20))) %>%
+#   mutate(model_data = map(model, ~add_predictions(data = model.frame(.x), model = .x))) %>%
+#   unnest(model_data) %>%
+#   ggplot(aes(x = pred, y = effect)) +
+#   geom_abline(slope = 1, intercept = 0) +
+#   geom_point() +
+#   scale_y_continuous(name = "effect", breaks = pretty) +
+#   scale_x_continuous(name = "fitted", breaks = pretty) +
+#   facet_wrap(~ trait + time_frame, scales = "free", ncol = 4) +
+#   theme_acs()
+# 
+# 
+# 
+# ## Perform leave-one-out cross-validation
+# location_effect_models_looCV <- location_effect_models %>%
+#   mutate(model_data = map(model, ~add_predictions(data = model.frame(.x), model = .x))) %>% 
+#   group_by(trait, time_frame) %>%
+#   do({
+#     row <- .
+#     cv_df <- unnest(row, model_data) %>%
+#       crossv_loo() %>%
+#       mutate_at(vars(test, train), ~map(., as.data.frame))
+#     model_fits <- map(cv_df$train, ~update(object = row$model[[1]], data = .))
+#     
+#     # Predictions
+#     predictions <- map2_df(cv_df$test, model_fits, add_predictions)
+#     
+#     # RMSE
+#     rmse_df <- mean(map2_dbl(model_fits, cv_df$test, rmse))
+#     
+#     # Accuracy
+#     accuracy <- cor(predictions$effect, predictions$pred)
+#     
+#     ## Return summaries
+#     tibble(predictions = list(predictions), accuracy = accuracy, rmse = rmse_df)
+#     
+#   }) %>% ungroup()
+# 
+# 
+# ## Plot predicted values versus observed environmental mean
+# location_effect_models_looCV %>%
+#   unnest(predictions) %>%
+#   filter(time_frame %in% paste0("time_frame", c(5, 10, 15, 20))) %>%
+#   ggplot(aes(x = pred, y = effect)) +
+#   geom_abline(slope = 1, intercept = 0) +
+#   geom_point() +
+#   scale_y_continuous(name = "effect", breaks = pretty) +
+#   scale_x_continuous(name = "prediction", breaks = pretty) +
+#   facet_wrap(~ trait + time_frame, scales = "free", ncol = 4) +
+#   theme_acs()
+# 
+# 
+# 
+# 
+# ## Find the best model
+# (best_model <- location_effect_models_looCV %>%
+#     group_by(trait) %>% 
+#     top_n(x = ., n = 1, wt = -rmse)
+#   # top_n(x = ., n = 1, wt = accuracy)
+# )
+# 
+# # What about time_frame 5?
+# location_effect_models_looCV %>%
+#   filter(time_frame == "time_frame5")
+# 
+# # Plot accuracy from the best model
+# best_model %>%
+#   unnest(predictions) %>%
+#   ggplot(aes(x = pred, y = effect)) +
+#   geom_abline(slope = 1, intercept = 0) +
+#   geom_point() +
+#   scale_y_continuous(name = "effect", breaks = pretty) +
+#   scale_x_continuous(name = "prediction", breaks = pretty) +
+#   facet_wrap(~ trait + time_frame, scales = "free", ncol = 3) +
+#   theme_acs()
+
+
+
+
+
+
+
+
 

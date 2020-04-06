@@ -53,49 +53,8 @@ load(file.path(result_dir, "full_models.RData"))
 # Models with the suffix 'a' use the AMMI covariance matrix, instead of the one
 # derived from ECs
 # 
-
-
-## Create a list of model formulas
-model_fixed_forms <- formulas(
-  .response = ~ value, 
-  model1 = ~ 1,
-  model2 = model1,
-  # model2a = add_predictors(model2, ~ env),
-  # model2b = reformulate(c("1", main_environment_covariates)),
-  model3 = model2,
-  # model3a = model2a,
-  # model3b = model2b
-  model4 = model1,
-  model5 = model4,
-  model2a = model2,
-  model3a = model3,
-  model4a = model4,
-  model5a = model5
-)
-
-
-## Models for de novo fitting 
-## Create a list of model formulas
-model_rand_forms <- formulas(
-  .response = ~ value,
-  model1 = ~ vs(line_name, Gu = K),
-  model2 = add_predictors(model1, ~ vs(env, Gu = E)),
-  # model2a = model1,
-  # model2b = model1,
-  model3 = add_predictors(model2, ~ vs(line_name:env1, Gu = GE)),
-  # model3a = add_predictors(model1, ~ vs(line_name:env1, Gu = GE)),
-  # model3b = model3a
-  model4 = add_predictors(model1, ~vs(loc, Gu = L)),
-  model5 = add_predictors(model4, ~vs(line_name:loc, Gu = GL)),
-  # Modified models
-  model2a = add_predictors(model1, ~ vs(env, Gu = E_IPC)),
-  model3a = add_predictors(model2, ~ vs(line_name:env1, Gu = GE_IPC)),
-  model4a = add_predictors(model1, ~vs(loc, Gu = L_IPC)),
-  model5a = add_predictors(model4, ~vs(line_name:loc, Gu = GL_IPC)),
-) %>% map(~ formula(delete.response(terms(.)))) # Remove response
-
-# Residual formula
-resid_form <- ~ vs(units)
+# Models with the suffix 'b' use the same covariance matrix for E and GE
+# 
 
 
 ### CV0 and POV0

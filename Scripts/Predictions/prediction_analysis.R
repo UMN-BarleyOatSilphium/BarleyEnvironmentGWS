@@ -45,6 +45,7 @@ model_replace <- c("model1" = "G", "model2" = "G + E", "model2a" = "G + E (AMMI)
 
 
 f_model_replace <- function(x) model_replace[x]
+f_model_replace2 <- function(x) model_replace[grep(pattern = "a$", x = names(model_replace), value = TRUE, invert = TRUE)][x]
 # f_model_replace <- function(x) paste0("M", toupper(str_extract(x, "[0-9]{1}[a-z]{0,1}")))
 # Vector to rename validation schemes
 f_pop_replace <- function(x) str_replace_all(x, c("tp" = "CV0", "vp" = "POV00"))
@@ -53,6 +54,8 @@ f_pop_replace <- function(x) str_replace_all(x, c("tp" = "CV0", "vp" = "POV00"))
 model_colors <- c(neyhart_palette("umn1")[1], neyhart_palette("umn3")[3], neyhart_palette("umn1")[3],
                   neyhart_palette("umn2")[3], neyhart_palette("umn3")[4], neyhart_palette("umn1")[4],
                   neyhart_palette("umn2")[4])
+names(model_colors) <- grep(pattern = "a$", x = names(model_replace), value = TRUE, invert = TRUE)
+
 
 
 # Phenotye data to use
@@ -194,6 +197,20 @@ for (i in seq_len(nrow(g_loo_prediction_list))) {
   
 }
 
+## Save realistic data
+for (i in seq_len(nrow(g_loo_prediction_list))) {
+  
+  # Edit the plot
+  g_new <- g_loo_prediction_list$plot[[i]]  %>%
+    modify_at(.x = ., .at = "data", ~filter(., str_detect(model, "a$", negate = TRUE)))
+  g_new$layers[[3]]$data <- filter(g_new$layers[[3]]$data, str_detect(model, "a$", negate = TRUE))
+  
+  # Save
+  ggsave(filename = paste0("loo_model_predictions_observations_", g_loo_prediction_list$trait[[i]], "_realistic.jpg"), 
+         plot = g_new, path = fig_dir, width = 12, height = 10, dpi = 1000)
+  
+}
+
 
 
 
@@ -216,6 +233,15 @@ g_loo_predictions_all_summ <- loo_predictive_ability_all %>%
 ggsave(filename = "loo_model_predictions_all_accuracy.jpg", plot = g_loo_predictions_all_summ,
        path = fig_dir, width = 10, height = 6, dpi = 1000)
 
+# Remove unrealistic levels
+g_loo_predictions_all_summ1 <- g_loo_predictions_all_summ %>%
+  modify_at(.x = ., .at = "data", ~filter(., str_detect(model, "a$", negate = TRUE)))
+# Save
+ggsave(filename = "loo_model_predictions_all_accuracy_realistic.jpg", plot = g_loo_predictions_all_summ1,
+       path = fig_dir, width = 8, height = 6, dpi = 1000)
+
+
+
 ## Plot bias versus accuracy
 # Transform
 loo_accuracy_bias_all1 <- loo_accuracy_bias_all %>% 
@@ -233,7 +259,9 @@ g_loo_ability_bias_all <- loo_accuracy_bias_all1 %>%
                color = "grey85", lwd = 0.5) +
   geom_point(size = 2) +
   scale_color_paletteer_d(package = "dutchmasters", palette = "milkmaid",
-                         name = "Model", labels = f_model_replace) +  scale_x_continuous(name = "Bias", breaks = pretty) +
+                         name = "Model", labels = f_model_replace) +
+  scale_shape_discrete(name = "Validation\nscheme", labels = f_pop_replace) +
+  scale_x_continuous(name = "Bias (%)", breaks = pretty) +
   scale_y_continuous(name = "Predictive ability", breaks = pretty) +
   facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
              switch = "y", scales = "free_x") +
@@ -242,6 +270,17 @@ g_loo_ability_bias_all <- loo_accuracy_bias_all1 %>%
 # Save
 ggsave(filename = "loo_model_predictions_all_summary.jpg", plot = g_loo_ability_bias_all,
        path = fig_dir, width = 10, height = 6, dpi = 1000)
+
+# Remove unrealistic levels
+g_loo_ability_bias_all1 <- g_loo_ability_bias_all %>%
+  modify_at(.x = ., .at = "data", ~filter(., str_detect(model, "a$", negate = TRUE)))
+# Save
+ggsave(filename = "loo_model_predictions_all_summary_realistic.jpg", plot = g_loo_ability_bias_all1,
+       path = fig_dir, width = 8, height = 6, dpi = 1000)
+
+# Save as HTML widget
+htmlwidgets::saveWidget(widget = plotly::as_widget(plotly::ggplotly(g_loo_ability_bias_all)),
+                        file = file.path(fig_dir, "loo_model_predictions_all_summary.html"))
 
 
 
@@ -297,6 +336,12 @@ g_loo_predictions_summ <- loo_prediction_accuracy_summ %>%
 ggsave(filename = "loo_model_predictions_summary.jpg", plot = g_loo_predictions_summ,
        path = fig_dir, width = 10, height = 6, dpi = 1000)
 
+# Remove unrealistic models
+g_loo_predictions_summ1 <- g_loo_predictions_summ %>% 
+  modify_at(.x = ., .at = "data", ~filter(., str_detect(model, "a$", negate = TRUE)))
+# Save
+ggsave(filename = "loo_model_predictions_summary_realistc.jpg", plot = g_loo_predictions_summ1,
+       path = fig_dir, width = 8, height = 6, dpi = 1000)
 
 
 ## Create a table
@@ -342,6 +387,71 @@ loo_prediction_accuracy_table1 <- loo_prediction_accuracy_summ %>%
 
 write_csv(x = loo_prediction_accuracy_table1, path = file.path(fig_dir, "loo_prediction_accuracy_table1.csv"))
 
+
+
+
+## Practical exercises ##
+
+## Load the fitted ammi models
+load(file.path(result_dir, "ammi_model_fit.RData"))
+n_select <- 20
+
+# Make predictions in each location using the AMMI results
+ammiN_fit_location1 <- ammiN_fit_location %>%
+  mutate(y_hat = map2(g_scores, loc_scores, ~{
+    # Effects
+    g_eff <- select(.x, line_name, effect)
+    l_eff <- select(.y, location, effect)
+    gl_eff_mat <- outer(X = .x[["score"]], Y = .y[["score"]], FUN = "*")
+    dimnames(gl_eff_mat) <- list(g_eff$line_name, l_eff$location)
+    gl_eff <- gl_eff_mat %>%
+      as.data.frame() %>%
+      rownames_to_column("line_name") %>%
+      gather(location, effect, -line_name)
+    # Calculate y_hat
+    full_join(gl_eff, g_eff, by = "line_name") %>% 
+      full_join(., l_eff, by = "location") %>% 
+      mutate(y_hat = effect.x + effect.y + effect) %>%
+      select(line_name, location, y_hat)
+  })) %>%
+  mutate(y_hat = map2(mu, y_hat, ~mutate(.y, y_hat = y_hat + .x)))
+
+
+# For each location, find the best 10 varieties, according to the AMMI model
+tp_ammi_location_winners <- ammiN_fit_location1 %>% 
+  unnest(y_hat) %>%
+  filter(line_name %in% tp_geno) %>%
+  # Add trait sign and location information
+  left_join(., trait_sign, by = "trait") %>%
+  group_by(trait, location) %>%
+  top_n(x = ., n = n_select, wt = (y_hat * sign)) %>%
+  ungroup()
+
+
+# Find the ideal variety-location combinations in the TP
+tp_prediction_location_winners <- loo_predictions_df %>%
+  filter(pop == "tp", type == "lolo") %>%
+  group_by(trait, location, model, line_name) %>%
+  summarize_at(vars(value, pred_complete), mean) %>%
+  # Assign trait signs
+  left_join(., trait_sign, by = "trait") %>%
+  top_n(x = ., n = n_select, wt = (pred_complete * sign)) %>%
+  ungroup()
+
+## For each trait, location, and model, determine the proportion of recovered genotypes
+tp_location_winners_recovery <- full_join(
+  x = nest(group_by(tp_prediction_location_winners, trait, location, model), line_name, .key = "prediction"),
+  y = nest(group_by(tp_ammi_location_winners, trait, location), line_name, .key = "ammi"),
+  by = c("trait", "location")
+) %>%
+  mutate(pRecover = map2_dbl(.x = prediction, .y = ammi, ~sum(.x$line_name %in% .y$line_name)/nrow(.y)))
+
+## Calculate mean and range for each trait and model
+tp_location_winners_recovery %>% 
+  filter(str_detect(model, "a$", negate = TRUE)) %>%
+  group_by(trait, model) %>% 
+  summarize_at(vars(pRecover), list(~mean, ~min, ~max)) %>%
+  as.data.frame()
 
 
 
