@@ -567,11 +567,11 @@ environmental_relmat_covariates %>%
   mutate_at(vars(-trait), ~map_dbl(., length))
 
 # trait        int       main      covariate_overlap int_covariate_unique main_covariate_unique
-# 1 GrainProtein     5     3                 2                    3                     1
-# 2 GrainYield       4     3                 2                    2                     1
-# 3 HeadingDate      4     2                 1                    3                     1
+# 1 GrainProtein     2     3                 1                    1                     2
+# 2 GrainYield       2     3                 2                    0                     1
+# 3 HeadingDate      3     2                 0                    3                     2
 # 4 PlantHeight      4     3                 0                    4                     3
-# 5 TestWeight       4     4                 1                    3                     3
+# 5 TestWeight       3     4                 1                    2                     3
 
 
 

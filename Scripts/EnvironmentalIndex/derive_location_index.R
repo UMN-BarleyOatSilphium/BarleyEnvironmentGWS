@@ -432,9 +432,9 @@ historical_ec_dist_toplot <- historical_ec_dist %>%
   ggplot(aes(x = number, y = cor_with_relmat, color = time_frame, group = time_frame)) + 
   geom_point(aes(x = stop, y = final_cor)) +
   geom_line(lwd = 0.25) +
-  facet_grid(term ~ trait) +
+  facet_grid(term ~ trait, switch = "y") +
   scale_x_continuous(name = "Number of covariates", breaks = pretty) +
-  scale_y_continuous(name = "Correlation with phenotypic\nrelationship matrix", breaks = pretty) +
+  scale_y_continuous(name = "Correlation with phenotypic relationship matrix", breaks = pretty) +
   scale_color_gradient(name = "Time frame (years)", breaks = pretty) +
   scale_linetype_discrete(name = NULL) +
   theme_light() +
@@ -448,36 +448,6 @@ ggsave(filename = "ec_locations_correlation__continuous.jpg", plot = g_hist_ec_d
 
 
 ### Create relationship matrices for locations ####
-
-location_relmat_df <- historical_ec_ammi_dist %>%
-  # Add location main effect models
-  left_join(., select(location_effect_models, -data)) %>%
-  # Get a list of main effect models
-  mutate(main_environment_covariates = map(model, ~attr(terms(formula(.)), "term.labels"))) %>%
-  mutate_at(vars(main_environment_covariates, final_covariates), ~map2(.x = ., .y = time_frame, ~{
-    historical_ec_tomodel_scaled_mat_list[[.y]][, .x, drop = FALSE]
-  })) %>%
-  # Calculate E mat for the main environmental covariates
-  mutate(E_mat_main = map(main_environment_covariates, ~{
-    if (ncol(.x) == 0) {
-      d1 <- diag(x = nrow(.x))
-      `dimnames<-`(x = d1, value = replicate(2, row.names(.x), simplify = FALSE))
-    } else {
-      Env_mat(x = .x, method = "Rincent2")
-    } }) ) %>%
-  select(trait, time_frame, interaction_covariate_mat = final_covariates,
-         main_covariate_mat = main_environment_covariates, E_mat_main, E_mat_int = ec_dist_mat_final,
-         K_IPC) %>%
-  # Tag the best time frame
-  left_join(., select(best_cor, trait, time_frame) %>% mutate(best = TRUE))
-
-
-## Overlap in main-effect versus interaction ECs
-location_relmat_df %>%
-  mutate(covariate_overlap = map2(interaction_covariate_mat, main_covariate_mat, ~intersect(colnames(.x), colnames(.y)))) %>%
-  mutate_at(vars(contains("covariate_mat")), ~map2(., covariate_overlap, ~setdiff(colnames(.x), .y))) %>%
-  select(-E_mat_main, -E_mat_int, -K_IPC)
-
 
 location_relmat_df <- historical_ec_dist %>%
   select(trait, term, time_frame, K = relmat, EC = ec_dist_mat_final, final_covariates)
@@ -496,11 +466,11 @@ location_relmat_covariates %>%
   as.data.frame()
 
 # trait        time_frame    int  main covariate_overlap int_covariate_unique main_covariate_unique
-# 1 GrainProtein time_frame5     2     2                 1                    1                     1
-# 2 GrainYield   time_frame5     2     3                 1                    1                     2
-# 3 HeadingDate  time_frame5     2     4                 2                    0                     2
-# 4 PlantHeight  time_frame5     1     2                 0                    1                     2
-# 5 TestWeight   time_frame5     3     5                 1                    2                     4
+  # 1 GrainProtein time_frame5     4     2                 1                    3                     1
+  # 2 GrainYield   time_frame5     1     3                 1                    0                     2
+  # 3 HeadingDate  time_frame5     5     4                 1                    4                     3
+  # 4 PlantHeight  time_frame5     1     2                 0                    1                     2
+  # 5 TestWeight   time_frame5     2     5                 1                    1                     4
 
 
 ## Output a table of covariates for each term

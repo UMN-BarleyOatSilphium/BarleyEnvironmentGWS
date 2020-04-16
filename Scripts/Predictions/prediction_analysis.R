@@ -38,23 +38,27 @@ alpha <- 0.05
 
 
 ## A vector to rename models
-model_replace <- c("model1" = "G", "model2" = "G + E", "model2a" = "G + E (AMMI)", 
-                   "model3" = "G + E + GE", "model3a" = "G + E + GE (AMMI)",
-                   "model4" = "G + L", "model4a" = "G + L (AMMI)",
-                   "model5" = "G + L + GL", "model5a" = "G + L + GL (AMMI)")
+model_replace <- c("model1" = "G", "model2" = "G + E", "model2_P" = "G + E (AMMI)", 
+                   "model3" = "G + E + GE", "model3_P" = "G + E + GE (AMMI)", "model3_GxE" = "G + E + GxE",
+                   "model4" = "G + L", "model4_P" = "G + L (AMMI)",
+                   "model5" = "G + L + GL", "model5_P" = "G + L + GL (AMMI)", "model5_GxL" = "G + L + GxL")
+
+## Models to present
+model_present <- model_replace[str_detect(names(model_replace), "_", negate = TRUE)]
 
 
 f_model_replace <- function(x) model_replace[x]
-f_model_replace2 <- function(x) model_replace[grep(pattern = "a$", x = names(model_replace), value = TRUE, invert = TRUE)][x]
+f_model_replace2 <- function(x) model_present[x]
 # f_model_replace <- function(x) paste0("M", toupper(str_extract(x, "[0-9]{1}[a-z]{0,1}")))
 # Vector to rename validation schemes
 f_pop_replace <- function(x) str_replace_all(x, c("tp" = "CV0", "vp" = "POV00"))
+# Replace type
+f_type_replace <- function(x) c("loeo" = "New environment", "lolo" = "New location", "loyo" = "New year")[x]
 
 # Color scheme for models
 model_colors <- c(neyhart_palette("umn1")[1], neyhart_palette("umn3")[3], neyhart_palette("umn1")[3],
-                  neyhart_palette("umn2")[3], neyhart_palette("umn3")[4], neyhart_palette("umn1")[4],
-                  neyhart_palette("umn2")[4])
-names(model_colors) <- grep(pattern = "a$", x = names(model_replace), value = TRUE, invert = TRUE)
+                  neyhart_palette("umn3")[4], neyhart_palette("umn1")[4])
+names(model_colors) <- grep(pattern = "_", x = names(model_replace), value = TRUE, invert = TRUE)
 
 
 
@@ -150,6 +154,7 @@ loo_prediction_accuracy_annotation <- loo_predictive_ability_all %>%
 
 # Plot predicted versus observed value
 g_loo_prediction_list <- loo_predictions_df %>%
+  filter(model %in% names(model_replace)) %>%
   # Max character length of units
   mutate(max_nchar = max(nchar(last(pretty(value))))) %>%
   group_by(trait) %>%
@@ -175,8 +180,8 @@ g_loo_prediction_list <- loo_predictions_df %>%
       geom_point(size = 0.5, alpha = 0.5) +
       geom_text(data = r_mp_annotation, aes(x = x, y = y, label = annotation), parse = TRUE, inherit.aes = FALSE,
                 hjust = 0, size = 2) +
-      scale_y_continuous(name = "Observation", breaks = pretty) +
-      scale_x_continuous(name = "Prediction", breaks = pretty) +
+      scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
+      scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
       scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
       facet_grid(type + pop ~ model, switch = "y", 
                  labeller = labeller(type = toupper, pop = f_pop_replace, model = f_model_replace)) +
@@ -197,17 +202,22 @@ for (i in seq_len(nrow(g_loo_prediction_list))) {
   
 }
 
+
+
 ## Save realistic data
 for (i in seq_len(nrow(g_loo_prediction_list))) {
   
   # Edit the plot
-  g_new <- g_loo_prediction_list$plot[[i]]  %>%
-    modify_at(.x = ., .at = "data", ~filter(., str_detect(model, "a$", negate = TRUE)))
-  g_new$layers[[3]]$data <- filter(g_new$layers[[3]]$data, str_detect(model, "a$", negate = TRUE))
+  g_new <- g_loo_prediction_list$plot[[i]] + 
+    facet_grid(type ~ model, switch = "y", labeller = labeller(type = f_type_replace, model = f_model_replace))
+  g_new <- g_new %>%
+    modify_at(.x = ., .at = "data", ~
+                filter(., model %in% names(model_present), pop == "tp"))
+  g_new$layers[[3]]$data <- filter(g_new$layers[[3]]$data, model %in% names(model_present), pop == "tp") 
   
   # Save
   ggsave(filename = paste0("loo_model_predictions_observations_", g_loo_prediction_list$trait[[i]], "_realistic.jpg"), 
-         plot = g_new, path = fig_dir, width = 12, height = 10, dpi = 1000)
+         plot = g_new, path = fig_dir, width = 8, height = 5, dpi = 1000)
   
 }
 
@@ -217,7 +227,8 @@ for (i in seq_len(nrow(g_loo_prediction_list))) {
 ## Barplot of overall prediction accuracy
 g_loo_predictions_all_summ <- loo_predictive_ability_all %>%
   ggplot(aes(x = pop, group = model)) +
-  geom_col(aes(y = base, fill = model), position = "dodge") + 
+  geom_hline(yintercept = 0, color = "grey85") +
+  geom_col(aes(y = base, fill = model), position = "dodge", color = "black", lwd = 0.1) + 
   geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), position = position_dodge(0.9),
                 width = 0.5, color = "black") + 
   # scale_fill_manual(name = "Model", labels = f_model_replace, values = model_colors) + 
@@ -233,12 +244,28 @@ g_loo_predictions_all_summ <- loo_predictive_ability_all %>%
 ggsave(filename = "loo_model_predictions_all_accuracy.jpg", plot = g_loo_predictions_all_summ,
        path = fig_dir, width = 10, height = 6, dpi = 1000)
 
+
+
 # Remove unrealistic levels
-g_loo_predictions_all_summ1 <- g_loo_predictions_all_summ %>%
-  modify_at(.x = ., .at = "data", ~filter(., str_detect(model, "a$", negate = TRUE)))
+g_loo_predictions_all_summ1 <- g_loo_predictions_all_summ$data %>%
+  filter(., model %in% names(model_present), pop == "tp") %>%
+  mutate(trait = str_add_space(trait) %>% str_replace(., " ", "\n")) %>%
+  ggplot(aes(x = trait, group = model)) +
+  geom_hline(yintercept = 0, color = "grey85") +
+  geom_col(aes(y = base, fill = model), position = position_dodge(0.75), color = "black", width = 0.75) + 
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), position = position_dodge(0.75),
+                width = 0.5, color = "black") + 
+  # scale_fill_manual(name = "Model", labels = f_model_replace, values = model_colors) + 
+  scale_fill_paletteer_d(package = "dutchmasters", palette = "milkmaid",
+                         name = "Model", labels = f_model_replace) +
+  scale_y_continuous(name = "Predictive ability", breaks = pretty) +
+  scale_x_discrete(name = "Trait", labels = f_pop_replace) +
+  facet_grid(type ~ ., labeller = labeller(type = f_type_replace), switch = "y") +
+  theme_presentation2(10)
+
 # Save
 ggsave(filename = "loo_model_predictions_all_accuracy_realistic.jpg", plot = g_loo_predictions_all_summ1,
-       path = fig_dir, width = 8, height = 6, dpi = 1000)
+       path = fig_dir, width = 5, height = 6, dpi = 1000)
 
 
 
@@ -261,7 +288,7 @@ g_loo_ability_bias_all <- loo_accuracy_bias_all1 %>%
   scale_color_paletteer_d(package = "dutchmasters", palette = "milkmaid",
                          name = "Model", labels = f_model_replace) +
   scale_shape_discrete(name = "Validation\nscheme", labels = f_pop_replace) +
-  scale_x_continuous(name = "Bias (%)", breaks = pretty) +
+  scale_x_continuous(name = "Bias (%)", breaks = pretty, labels = scales::percent_format(accuracy = 1, suffix = NULL)) +
   scale_y_continuous(name = "Predictive ability", breaks = pretty) +
   facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
              switch = "y", scales = "free_x") +
@@ -271,12 +298,20 @@ g_loo_ability_bias_all <- loo_accuracy_bias_all1 %>%
 ggsave(filename = "loo_model_predictions_all_summary.jpg", plot = g_loo_ability_bias_all,
        path = fig_dir, width = 10, height = 6, dpi = 1000)
 
+
+
 # Remove unrealistic levels
 g_loo_ability_bias_all1 <- g_loo_ability_bias_all %>%
-  modify_at(.x = ., .at = "data", ~filter(., str_detect(model, "a$", negate = TRUE)))
+  modify_at(.x = ., .at = "data", ~
+              filter(., model %in% names(model_present), pop == "tp"))
+g_loo_ability_bias_all1 <- g_loo_ability_bias_all1 +
+  facet_grid(type ~ trait, scales = "free_x", labeller = labeller(type = f_type_replace), switch = "y") +
+  scale_shape_discrete(guide = FALSE) +
+  theme_presentation2(base_size = 10)
+
 # Save
 ggsave(filename = "loo_model_predictions_all_summary_realistic.jpg", plot = g_loo_ability_bias_all1,
-       path = fig_dir, width = 8, height = 6, dpi = 1000)
+       path = fig_dir, width = 8, height = 4, dpi = 1000)
 
 # Save as HTML widget
 htmlwidgets::saveWidget(widget = plotly::as_widget(plotly::ggplotly(g_loo_ability_bias_all)),
@@ -316,6 +351,7 @@ loo_prediction_accuracy_summ <- loo_prediction_accuracy %>%
 ## Visualize
 # Plot mean and range of predictions
 g_loo_predictions_summ <- loo_prediction_accuracy_summ %>%
+  filter(model %in% names(model_replace)) %>%
   ggplot(aes(x = pop, color = model)) +
   geom_linerange(aes(ymin = ability_lower, ymax = ability_upper, group = model), 
                  position = position_dodge(0.9), color = "grey85") +
@@ -334,14 +370,33 @@ g_loo_predictions_summ <- loo_prediction_accuracy_summ %>%
 
 # Save
 ggsave(filename = "loo_model_predictions_summary.jpg", plot = g_loo_predictions_summ,
-       path = fig_dir, width = 10, height = 6, dpi = 1000)
+       path = fig_dir, width = 12, height = 6, dpi = 1000)
 
-# Remove unrealistic models
-g_loo_predictions_summ1 <- g_loo_predictions_summ %>% 
-  modify_at(.x = ., .at = "data", ~filter(., str_detect(model, "a$", negate = TRUE)))
+
+
+
+# Remove unrealistic levels
+g_loo_predictions_summ1 <- loo_prediction_accuracy_summ %>%
+  filter(model %in% names(model_present),
+         pop == "vp") %>%
+  # rename(mean = ability_mean, upper = ability_upper, lower = ability_lower) %>% # Ability
+  rename(mean = accuracy_mean, upper = accuracy_upper, lower = accuracy_lower) %>% # Accuracy
+  mutate(trait = str_add_space(trait) %>% str_replace_all(" ", "\n")) %>%
+  ggplot(aes(x = trait, color = model)) +
+  geom_linerange(aes(ymin = lower, ymax = upper, group = model), position = position_dodge(0.65), color = "grey85") +
+  geom_point(aes(y = mean), position = position_dodge(0.65)) +
+  scale_color_paletteer_d(package = "dutchmasters", palette = "milkmaid",
+                          name = "Model", labels = f_model_replace) +
+  # scale_y_continuous(name = "Predictive ability", breaks = pretty) +
+  scale_y_continuous(name = "Prediction accuracy", breaks = pretty) +
+  scale_x_discrete(name = "Trait", labels = f_pop_replace) +
+  facet_grid(type ~ ., labeller = labeller(type = f_type_replace),
+             switch = "y") +
+  theme_presentation2(10)
+
 # Save
 ggsave(filename = "loo_model_predictions_summary_realistc.jpg", plot = g_loo_predictions_summ1,
-       path = fig_dir, width = 8, height = 6, dpi = 1000)
+       path = fig_dir, width = 5, height = 4, dpi = 1000)
 
 
 ## Create a table
@@ -386,6 +441,10 @@ loo_prediction_accuracy_table1 <- loo_prediction_accuracy_summ %>%
   arrange(trait, pop, type)
 
 write_csv(x = loo_prediction_accuracy_table1, path = file.path(fig_dir, "loo_prediction_accuracy_table1.csv"))
+
+
+
+
 
 
 
@@ -447,12 +506,44 @@ tp_location_winners_recovery <- full_join(
   mutate(pRecover = map2_dbl(.x = prediction, .y = ammi, ~sum(.x$line_name %in% .y$line_name)/nrow(.y)))
 
 ## Calculate mean and range for each trait and model
-tp_location_winners_recovery %>% 
+(tp_location_winners_recovery_summ <- tp_location_winners_recovery %>% 
   filter(str_detect(model, "a$", negate = TRUE)) %>%
   group_by(trait, model) %>% 
   summarize_at(vars(pRecover), list(~mean, ~min, ~max)) %>%
-  as.data.frame()
+  as.data.frame())
 
+
+
+## Plot
+g_tp_location_winners <- tp_location_winners_recovery_summ %>%
+  ggplot(aes(x = trait, y = mean, fill = model)) +
+  geom_col(position = position_dodge(0.8), color = "black", width = 0.8) +
+  geom_errorbar(aes(ymin = min, ymax = max), width = 0.5, position = position_dodge(0.8)) +
+  scale_fill_paletteer_d(package = "dutchmasters", palette = "milkmaid",
+                         name = "Model", labels = f_model_replace) +
+  scale_x_discrete(name = "Trait", labels = str_add_space) +
+  scale_y_continuous(name = paste0("Proportion of best lines recovered (n/", n_select, ")"), breaks = pretty, limits = c(0,1)) +
+  theme_acs(10)
+
+# Save
+ggsave(filename = "tp_location_winner_recovery.jpg", plot = g_tp_location_winners,
+       path = fig_dir, width = 8, height = 4, dpi = 1000)
+
+
+## Plot realistic levels
+g_tp_location_winners1 <- g_tp_location_winners %>%
+  modify_at(., "data", ~filter(., model %in% names(model_present)))
+
+# Save
+ggsave(filename = "tp_location_winner_recovery_realistic.jpg", plot = g_tp_location_winners1,
+       path = fig_dir, width = 6, height = 4, dpi = 1000)
+
+# Remove range bars
+g_tp_location_winners2 <- g_tp_location_winners1
+g_tp_location_winners2$layers <- g_tp_location_winners2$layers[1]
+ggsave(filename = "tp_location_winner_recovery_realistic2.jpg", plot = g_tp_location_winners2,
+       path = fig_dir, width = 6, height = 4, dpi = 1000)
+ 
 
 
 
