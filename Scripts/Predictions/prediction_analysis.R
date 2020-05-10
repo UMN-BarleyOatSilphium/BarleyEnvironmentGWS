@@ -238,12 +238,20 @@ g_loo_predictions_all_summ <- loo_predictive_ability_all %>%
   scale_x_discrete(name = "Validation scheme", labels = f_pop_replace) +
   facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
              switch = "y") +
-  theme_presentation2(10)
+  theme_presentation2(10) +
+  theme(strip.placement = "outside")
 
 # Save
 ggsave(filename = "loo_model_predictions_all_accuracy.jpg", plot = g_loo_predictions_all_summ,
        path = fig_dir, width = 10, height = 6, dpi = 1000)
 
+## Add points for bias
+g_loo_predictions_all_summ_alt <- g_loo_predictions_all_summ +
+  geom_point(data = subset(loo_accuracy_bias_all, measure == "bias"),
+             aes(y = base), position = position_dodge(0.9)) +
+  scale_y_continuous(name = "Predictive ability", breaks = pretty,
+                     sec.axis = sec_axis(trans = ~ ., name = "Bias"))
+  
 
 
 # Remove unrealistic levels
@@ -255,9 +263,7 @@ g_loo_predictions_all_summ1 <- g_loo_predictions_all_summ$data %>%
   geom_col(aes(y = base, fill = model), position = position_dodge(0.75), color = "black", width = 0.75) + 
   geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), position = position_dodge(0.75),
                 width = 0.5, color = "black") + 
-  # scale_fill_manual(name = "Model", labels = f_model_replace, values = model_colors) + 
-  scale_fill_paletteer_d(package = "dutchmasters", palette = "milkmaid",
-                         name = "Model", labels = f_model_replace) +
+  scale_fill_manual(name = "Model", labels = f_model_replace, values = model_colors) +
   scale_y_continuous(name = "Predictive ability", breaks = pretty) +
   scale_x_discrete(name = "Trait", labels = f_pop_replace) +
   facet_grid(type ~ ., labeller = labeller(type = f_type_replace), switch = "y") +
@@ -269,6 +275,8 @@ ggsave(filename = "loo_model_predictions_all_accuracy_realistic.jpg", plot = g_l
 
 
 
+
+
 ## Plot bias versus accuracy
 # Transform
 loo_accuracy_bias_all1 <- loo_accuracy_bias_all %>% 
@@ -276,6 +284,33 @@ loo_accuracy_bias_all1 <- loo_accuracy_bias_all %>%
   gather(x, y, base, ci_upper, ci_lower) %>% 
   unite(x, measure, x) %>% 
   spread(x, y)
+
+
+## Plot bar plot of accuracy with points for bias
+g_loo_predictions_all_summ1_alt <- loo_accuracy_bias_all1 %>%
+  filter(., model %in% names(model_present), pop == "tp") %>%
+  mutate(trait = str_add_space(trait) %>% str_replace(., " ", "\n")) %>%
+  ggplot(aes(x = trait, group = model)) +
+  geom_hline(yintercept = 0, color = "grey85") +
+  geom_col(aes(y = ability_base, fill = model), position = position_dodge(0.75), color = "black", width = 0.75) + 
+  geom_errorbar(aes(ymin = ability_ci_lower, ymax = ability_ci_upper), position = position_dodge(0.75),
+                width = 0.5, color = "black") + 
+  geom_point(aes(y = bias_base * 10, shape = "Bias"), position = position_dodge(0.75)) +
+  scale_fill_manual(name = "Model", labels = f_model_replace, values = model_colors) +
+  scale_y_continuous(name = expression("Predictive ability"~(italic(r[MP]))), breaks = pretty,
+                     sec.axis = sec_axis(trans = ~ . * 10, name = "Bias (%)", breaks = pretty)) +
+  scale_x_discrete(name = "Trait", labels = f_pop_replace) +
+  scale_shape_discrete(name = NULL) +
+  facet_grid(type ~ ., labeller = labeller(type = f_type_replace), switch = "y") +
+  theme_presentation2(10) +
+  theme(strip.placement = "outside")
+  
+# Save
+ggsave(filename = "loo_model_predictions_all_accuracy_bias_realistic.jpg", plot = g_loo_predictions_all_summ1_alt,
+       path = fig_dir, width = 5, height = 6, dpi = 1000)
+
+
+
 
 g_loo_ability_bias_all <- loo_accuracy_bias_all1 %>%
   ggplot(aes(x = bias_base, y = ability_base, shape = pop, color = model)) +
@@ -306,6 +341,7 @@ g_loo_ability_bias_all1 <- g_loo_ability_bias_all %>%
               filter(., model %in% names(model_present), pop == "tp"))
 g_loo_ability_bias_all1 <- g_loo_ability_bias_all1 +
   facet_grid(type ~ trait, scales = "free_x", labeller = labeller(type = f_type_replace), switch = "y") +
+  scale_color_manual(name = "Model", labels = f_model_replace, values = model_colors) +
   scale_shape_discrete(guide = FALSE) +
   theme_presentation2(base_size = 10)
 
@@ -385,9 +421,7 @@ g_loo_predictions_summ1 <- loo_prediction_accuracy_summ %>%
   ggplot(aes(x = trait, color = model)) +
   geom_linerange(aes(ymin = lower, ymax = upper, group = model), position = position_dodge(0.65), color = "grey85") +
   geom_point(aes(y = mean), position = position_dodge(0.65)) +
-  scale_color_paletteer_d(package = "dutchmasters", palette = "milkmaid",
-                          name = "Model", labels = f_model_replace) +
-  # scale_y_continuous(name = "Predictive ability", breaks = pretty) +
+  scale_color_manual(name = "Model", labels = f_model_replace, values = model_colors) +
   scale_y_continuous(name = "Prediction accuracy", breaks = pretty) +
   scale_x_discrete(name = "Trait", labels = f_pop_replace) +
   facet_grid(type ~ ., labeller = labeller(type = f_type_replace),
@@ -415,33 +449,14 @@ loo_prediction_accuracy_table <- loo_prediction_accuracy_summ %>%
   spread(model, annotation) %>%
   arrange(trait, pop, type)
 
-
-
-# ## Calculate weighted average of accuracy using the number of environments or observations
-# loo_prediction_accuracy_table <- loo_prediction_accuracy %>%
-#   group_by(type, trait, model, pop) %>%
-#   ## Calculate weighted average of prediction accuracy and bias using number of environments
-#   summarize_at(vars(accuracy, bias), ~ weighted.mean(., w = nEnv)) %>%
-#   ungroup()
-
 write_csv(x = loo_prediction_accuracy_table, path = file.path(fig_dir, "loo_prediction_accuracy_table.csv"))
 
-
-
-# Remove range - just report mean
-loo_prediction_accuracy_table1 <- loo_prediction_accuracy_summ %>% 
-  mutate_at(vars(contains("ability")), ~formatC(., digits = 2, width = 2, format = "g")) %>%
-  mutate(annotation = ability_mean) %>%
-  # Rename
-  mutate(model = f_model_replace(model),
-         pop = f_pop_replace(pop),
-         type = toupper(type)) %>%
-  select(trait, type, model, pop, annotation) %>%
-  spread(model, annotation) %>%
-  arrange(trait, pop, type)
-
-write_csv(x = loo_prediction_accuracy_table1, path = file.path(fig_dir, "loo_prediction_accuracy_table1.csv"))
-
+## Report accuracy for POV
+pov_loo_prediction_accuracy_table <- loo_prediction_accuracy_table %>%
+  filter(pop == "POV00") %>%
+  select(trait, type, unname(model_present)) %>%
+  mutate(type = f_type_replace(tolower(type)))
+write_csv(x = pov_loo_prediction_accuracy_table, path = file.path(fig_dir, "pov_loo_prediction_accuracy_table.csv"))
 
 
 
@@ -532,7 +547,8 @@ ggsave(filename = "tp_location_winner_recovery.jpg", plot = g_tp_location_winner
 
 ## Plot realistic levels
 g_tp_location_winners1 <- g_tp_location_winners %>%
-  modify_at(., "data", ~filter(., model %in% names(model_present)))
+  modify_at(., "data", ~filter(., model %in% names(model_present))) +
+  scale_fill_manual(name = "Model", labels = f_model_replace, values = model_colors) +
 
 # Save
 ggsave(filename = "tp_location_winner_recovery_realistic.jpg", plot = g_tp_location_winners1,

@@ -2,13 +2,12 @@
 ## 
 ## A script that automatically loads the data relevant for the S2MET project
 
-library(sommer)
-library(tidyverse)
-library(readxl)
-library(rrBLUP)
-library(neyhart)
-library(pbr)
-library(lmerTest)
+
+# List of packages
+pkgs <- c("sommer", "tidyverse", "readxl", "rrBLUP", "neyhart", "pbr")
+# Load these packages
+invisible(lapply(X = pkgs, library, character.only = TRUE))
+
 
 ## Directories
 proj_dir <- repo_dir

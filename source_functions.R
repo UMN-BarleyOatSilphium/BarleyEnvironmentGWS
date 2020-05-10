@@ -476,58 +476,153 @@ herit2.merMod <- function(object, gen.var = "line_name", type = c("cullis", "pie
 
 
 
-
-
-
-
-
-
-
-
-
-####
-## Function to analyze GxE
+## Function to perform factorial regression analysis to identify covariates
 ## 
-## Used variance components and comparison of lack of correlation versus variance heterogeneity
-####
+## This function will fit three models - a base model, base + main covariates, 
+## and base + main covariates + interaction covariates
+## 
+## It uses stepwise elimination or aprior expectations to determine which
+## covariates to keep
+## 
+## 
+fact_reg <- function(base.formula = value ~ line_name, data, gen = "line_name", 
+                     env = "environment", covariates, method = c("apriori", "step")) {
+  
+  # Match args
+  method <- match.arg(method)
+  
+  # Fit the base models
+  fit1 <- lm(formula = base.formula, data = data)
+  fit1_alt <- update(fit1, formula = add_predictors(formula(fit1), reformulate(env)))
+  
+  # Split by apriori or step
+  if (method == "apriori") {
+  
+    # Fit line name plus main covariates
+    form2 <- add_predictors(formula(fit1), reformulate(covariates))
+    fit2 <- update(object = fit1, formula = form2)
+    
+    # Fit line name + E-covariate + GE-covariates
+    form3 <- add_predictors(form2, reformulate(paste0(paste0(gen, ":"), covariates)))
+    fit3 <- update(object = fit2, formula = form3)
 
+  } else {
+    
+    # Determine the max degrees of freedom for covariates
+    J <- length(unique(data[[env]])) - 1
+    
+    # Fit line name plus E-covariates
+    # Add 1 covariate at-a-time and measure meansq (+ p.value)
+    form_list <- map(covariates, ~add_predictors(formula(fit1), reformulate(.)))
+    fit2_list <- fit_with(data, lm, form_list)
+    fit2_anova_list <- map(fit2_list, anova)
+    
+    # Get a table of mean squares for each covariate
+    fit2_covariate_meansq <- map_df(fit2_anova_list, tidy) %>% 
+      filter(term %in% covariates) %>%
+      # Sort by meansq
+      arrange(desc(meansq)) %>%
+      # Adjust p-values
+      mutate(p.adj = p.adjust(p = p.value, method = "bonf")) %>%
+      filter(p.adj < alpha)
+    
+    # If there are no significant covariates, then assign fit2_fwd as fit1
+    if (nrow(fit2_covariate_meansq) == 0) {
+      fit2_fwd <- fit1
+      
+    } else {
+      ## Significant covariates define the scope for forward regression
+      scope <- list(lower = formula(fit1), upper = add_predictors(formula(fit1), reformulate(fit2_covariate_meansq$term)))
+      fit2_fwd <- step(object = fit1, scope = scope, direction = "forward", trace = 0)
+      # fit2_fwd_anova <- Anova(fit2_fwd, type = "II")
+      
+    }
+    
+    
+    # Fit line name + E-covariate + GE-covariates
+    # Perform the same procedure
+    form_list <- map(covariates, ~add_predictors(formula(fit2_fwd), reformulate(paste0(paste0(gen, ":"), .))))
+    fit3_list <- fit_with(data, lm, form_list)
+    fit3_anova_list <- map(fit3_list, ~Anova(., type = "II"))
+    
+    # Get a table of mean squares for each covariate
+    fit3_covariate_meansq <- map_df(fit3_anova_list, tidy) %>% 
+      filter(str_detect(term, ":")) %>%
+      mutate(meansq = sumsq / df,
+             # Adjust p-values
+             p.adj = p.adjust(p = p.value, method = "bonf")) %>%
+      filter(p.adj < alpha) %>%
+      # Sort by meansq
+      arrange(desc(meansq))
+    
+    # If there are no significant covariates, then assign fit2_fwd as fit1
+    if (nrow(fit3_covariate_meansq) == 0) {
+      fit3_fwd <- fit2_fwd
+      
+    } else {
+      
+      ## Significant covariates define the scope for forward regression
+      scope <- list(lower = formula(fit2_fwd), upper = add_predictors(formula(fit2_fwd), reformulate(fit3_covariate_meansq$term)))
+      fit3_fwd <- step(object = fit2_fwd, scope = scope, direction = "forward", trace = 0) 
+      # fit3_fwd_anova <- Anova(fit3_fwd, type = "II")
+      
+    }
+    
+    
+    ## If there are no more degrees of freedom, remove the last term
+    if (df.residual(fit3_fwd) == 0) {
+      
+      # Determine the interaction terms in this model
+      drop_scope <- formula(fit3_fwd) %>% 
+        terms() %>% 
+        attr(., "term.labels") %>% 
+        str_subset(., ":") %>%
+        reformulate()
+      
+      fit3_drop <- drop1(fit3_fwd, scope = drop_scope)
+      # Find the term to drop
+      term_drop <- tidy(fit3_drop) %>%
+        filter(is.finite(AIC)) %>%
+        arrange(AIC) %>%
+        slice(1) %>%
+        pull(term)
+      
+      fit3_drop_form <- formula(fit3_fwd) %>% 
+        terms() %>%
+        drop.terms(termobj = ., dropx = which(attr(., "term.labels") == term_drop), keep.response = TRUE) %>% 
+        formula()
+      
+      # Refit
+      fit3_fwd <- update(object = fit2_fwd, formula = fit3_drop_form)
+      
+    }
+    
+    
+    # Rename
+    fit2 <- fit2_fwd
+    fit3 <- fit3_fwd
+    
+  }
 
-analyze_gxe <- function(data) {
-  
-  
-  
+  # Return a list of model fits
+  list(fit1 = fit1, fit1_alt = fit1_alt, fit2 = fit2, fit3 = fit3)
+    
 }
-  
 
 
 
 
 
 
-## Functions
-# A function to generate LOO resamples using a grouped data.frame
-crossv_loo2 <- function(data, id = ".id") {
-  
-  # Get the group keys
-  grp_keys <- group_keys(data)
-  # Get group indices
-  grp_ind <- group_indices(data)
-  
-  ## Ungroup the data frame
-  df <- ungroup(data)
-  # Generate integer vector of rows
-  rows <- seq(nrow(df))
-  
-  # For each key, outer join for train and inner join for test
-  train_list <- map(seq(unique(grp_ind)), ~resample(data = df, idx = rows[! grp_ind %in% .]))
-  test_list <- map(seq(unique(grp_ind)), ~resample(data = df, idx = rows[grp_ind %in% .]))
-  
-  # Package into tibble
-  grp_keys[["train"]] <- train_list
-  grp_keys[["test"]] <- test_list
-  
-  return(grp_keys)
-}
+
+
+
+
+
+
+
+
+
 
 # Create a function to generate these relationship matrices
 Env_mat <- function(x, method = c("Jarquin2014", "Malosetti2016", "Rincent2019")) {
@@ -885,6 +980,268 @@ genomewide_prediction <- function(x) {
   
   
 }
+
+
+## Different version of prediction function
+genomewide_prediction2 <- function(x) {
+  
+  # Get training and test data
+  row <- x
+  tr <- unique(row$trait)
+  
+  
+  # List of covariates
+  covariate_list <- row$covariates[[1]] %>% 
+    mutate(class = ifelse(str_detect(term, ":"), "interaction", "main"),
+           covariate = str_remove(term, "line_name:")) %>%
+    split(.$class) %>% 
+    map("covariate")
+  
+  # Edit train and test by adding covariates - centered only
+  train <- left_join(row$train[[1]], select(ec_tomodel_centered, environment, unique(unlist(covariate_list))))
+  test <- left_join(row$test[[1]], select(ec_tomodel_centered, environment, unique(unlist(covariate_list))))
+  
+  
+  
+  ## Create a list of model formulas
+  model_fixed_forms <- formulas(
+    .response = ~ value,
+    model1 = ~ 1,
+    model2_fr = reformulate(covariate_list$main),
+    model2_cov = model1,
+    model3_fr = model2_fr,
+    model3_cov = model1
+  )
+  
+  ## Random factorial regression formula
+  if (is.null(covariate_list$interaction)) {
+    model3_fr_rand <- ~ vs(line_name, Gu = K)
+    # Also define covariance matrix between environments as diagonal
+    KE <- diag(nlevels(train$env1)); dimnames(KE) <- replicate(2, levels(train$env1), simplify = FALSE)
+    
+  } else {
+    model3_fr_rand <- reformulate(c("vs(line_name, Gu = K)", paste0("vs(", covariate_list$interaction, ", line_name, Gu = K)")))
+    KE <- Env_mat(x = covariate_mat[,covariate_list$interaction, drop = FALSE], method = "Jarq") 
+    
+  }
+    
+  ## Models for de novo fitting 
+  ## Create a list of model formulas
+  model_rand_forms <- formulas(
+    .response = ~ value,
+    model1 = ~ vs(line_name, Gu = K),
+    model2_fr = model1,
+    model2_cov = add_predictors(model1, ~ vs(env1, Gu = E)),
+    model3_fr = model3_fr_rand,
+    model3_cov = add_predictors(model2_cov, ~ vs(line_name:env1, Gu = GE))
+  ) %>% map(~ formula(delete.response(terms(.)))) # Remove response
+  
+  
+  # Record the number of environment and observations used for training
+  train_n <- summarize(train, nEnv = n_distinct(environment), nObs = n())
+  
+  # Residual formula
+  resid_form <- ~ vs(units)
+  
+  # Create a matrix of scaled and centered covariates
+  covariate_mat <- ec_tomodel_scaled %>%
+    filter(environment %in% levels(train$env1)) %>%
+    select(., environment, unique(unlist(covariate_list))) %>%
+    as.data.frame() %>%
+    column_to_rownames("environment") %>%
+    as.matrix()
+  
+  
+  ## Create relationship matrices
+  K <- K # Genomic
+  E <- Env_mat(x = covariate_mat[,covariate_list$main, drop = FALSE], method = "Jarq")
+  GE <- kronecker(X = K, Y = KE, make.dimnames = TRUE)
+  
+  ## Define an expression that fits the model
+  fit_mmer_exp <- expression({
+    model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
+                      data = train, date.warning = FALSE, verbose = TRUE)
+  })
+  
+  
+  
+  #################
+  ## Fit models and extract predictions
+  #################
+  
+  prediction_out <- tibble(trait = tr, model = names(model_rand_forms)) %>%
+    mutate(prediction = list(NULL))
+  
+  # Test df to merge
+  test_merge <- select(test, line_name, env, loc = location, year, value) %>%
+    mutate_if(is.factor, as.character)
+  
+  # Iterate over models
+  for (m in seq(nrow(prediction_out))) {
+    
+    # Model name and formulas
+    mod <- prediction_out$model[m]
+    # fixed_form <- model_fixed_forms[[mod]]
+    fixed_form <- model_fixed_forms[[mod]]
+    rand_form <- model_rand_forms[[mod]]
+    
+    # ## Get the variance components from the full model
+    # full_varcomp <- subset(prediction_out, model == mod, sigma, drop = T)[[1]]
+    # # Assign values to separate objects
+    # varG <- full_varcomp$`u:line_name`
+    # varE <- full_varcomp$`u:env`
+    # varGE <- full_varcomp$`u:;line_name:env`
+    # varR <- full_varcomp$units
+    
+    # Use rrBLUP to fit model1 or model2_fr
+    if (mod == "model1") {
+      
+      model_fit <- kin.blup(data = as.data.frame(train), geno = "line_name", pheno = "value", K = K)
+      
+      # Fixed effects
+      fixed_eff <- matrix(data = (model_fit$pred - model_fit$g)[1], nrow = 1, ncol = 1,
+                          dimnames = list("(Intercept)", "estimate"))
+      
+      ## Random effects
+      rand_eff <- list(`u:line_name` = c(model_fit$g))
+      
+    } else if (mod == "model2_fr") {
+      
+      mf <- model.frame(formula = reformulate(c("line_name", covariate_list$main), response = "value"), data = train)
+      y <- model.response(mf)
+      # Covariates
+      X <- model.matrix(reformulate(termlabels = covariate_list$main), data = mf)
+      Z <- model.matrix(~ -1 + line_name, data = mf)
+      
+      model_fit <- mixed.solve(y = y, Z = Z, K = K, X = X)
+      
+      ## Matrices of fixed and random effects
+      fixed_eff <- as.matrix(model_fit$beta)
+
+      ## Random effects
+      rand_eff <- list(`u:line_name` = c(model_fit$u))
+      
+      
+      # All other models use SOMMER
+    } else {
+      
+      ## Try to fit the model; capture the output
+      model_stdout <- capture.output( eval(fit_mmer_exp) )
+      
+      # If model fit is empty, try using a smaller number of iterations; for instance find
+      # the maximum logLik and use those iterations
+      itry <- 1
+      while (is_empty(model_fit) & itry == 1) {
+        
+        # Find the number of iterations that maximized the logLik
+        best_iter <- model_stdout %>% 
+          subset(., str_detect(., "singular", negate = T)) %>% 
+          read_table(.) %>%
+          subset(., LogLik == max(LogLik), iteration, drop = TRUE)
+        
+        # Refit
+        eval(fit_mmer_exp)
+        
+        # Increase the counter
+        itry = itry + 1
+        
+      }
+      
+      # If the model is still empty, create empty fixed and random effects
+      if (is_empty(model_fit)) {
+        fixed_eff <- matrix(as.numeric(NA), nrow = 1, ncol = 1, dimnames = list("(Intercept)", "estimate"))
+        
+        rand_eff <- list("u:line_name" = set_names(x = rep(NA, nlevels(test$line_name)), nm = levels(test$line_name)))
+        
+      } else {
+        
+        ## Fixed effects
+        fixed_eff <- coef(model_fit) %>%
+          select(term = Effect, estimate = Estimate) %>%
+          column_to_rownames("term") %>%
+          as.matrix()
+        
+        ## Random effects
+        rand_eff <- map(randef(model_fit), "value")
+        
+      }
+      
+    }
+    
+    
+    
+    
+    ## Vector of new column names for separation, if necessary
+    separation_col_names <- str_extract(string = attr(terms(rand_form), "term.labels"), pattern = "[a-z_]{1,}:[a-z]{1,}") %>% 
+      str_subset(., ":") %>% 
+      str_split(., ":") %>% 
+      unlist()
+    
+    ## Create an X matrix for test
+    Xtest <- model.matrix(fixed_form, test)[,row.names(fixed_eff), drop = FALSE] # This seems to work
+    # Calculate fixed effects by the formula Xb
+    fixed_pred <- Xtest %*% fixed_eff
+    
+    
+    ## If model3_fr, calculate random effects
+    if (mod == "model3_fr") {
+      
+      ## Create an X matrix for test
+      Ztest <- test %>%
+        mutate(intercept = 1) %>%
+        select(environment, intercept, covariate_list$interaction) %>%
+        distinct() %>%
+        as.data.frame() %>%
+        column_to_rownames("environment") %>%
+        as.matrix() %>%
+        t()
+      
+      ## Calculate random effects - main effect and environmental interaction
+      rand_eff_hat <- do.call("cbind", rand_eff) %*% Ztest
+      
+      # Gather
+      rand_eff_df <- rand_eff_hat %>%
+        as.data.frame() %>% 
+        rownames_to_column("line_name") %>% 
+        gather(env, pred_incomplete, -line_name) %>%
+        left_join(test_merge, .)
+        
+      
+    
+    } else {
+      
+      ## Convert to a complete data.frame
+      rand_eff_df <- rand_eff %>% 
+        map(~tibble(term = names(.), pred = .x)) %>% 
+        imap(~`names<-`(.x, c(str_remove_all(.y, "u:|[0-9]"), paste0("pred", .y)))) %>% 
+        modify_if(~str_detect(names(.x)[1], ":"), 
+                  ~separate(.x, col = 1, into = separation_col_names, sep = ":")) %>% 
+        .[order(map_dbl(., ncol), decreasing = T)] %>% 
+        map(~left_join(test_merge, .x)) %>%
+        reduce(full_join) %>% 
+        mutate(pred_incomplete = rowSums(select(., contains("pred")))) %>% 
+        select(-contains(":"))
+      
+    }
+    
+    
+
+    
+    # Add predictions to the list
+    prediction_out$prediction[[m]] <- mutate(rand_eff_df, pred_complete = pred_incomplete + c(fixed_pred))
+    
+  }
+  
+  # Return predictions
+  return(list(prediction_out = prediction_out, train_n = train_n))
+  
+  
+}
+
+
+
+
+
 
 
 
