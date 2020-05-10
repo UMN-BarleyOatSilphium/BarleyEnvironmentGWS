@@ -997,10 +997,19 @@ genomewide_prediction2 <- function(x) {
     split(.$class) %>% 
     map("covariate")
   
+  
+  
   # Edit train and test by adding covariates - centered only
   train <- left_join(row$train[[1]], select(ec_tomodel_centered, environment, unique(unlist(covariate_list))))
   test <- left_join(row$test[[1]], select(ec_tomodel_centered, environment, unique(unlist(covariate_list))))
   
+  # Create a matrix of scaled and centered covariates
+  covariate_mat <- ec_tomodel_scaled %>%
+    filter(environment %in% levels(train$env1)) %>%
+    select(., environment, unique(unlist(covariate_list))) %>%
+    as.data.frame() %>%
+    column_to_rownames("environment") %>%
+    as.matrix()
   
   
   ## Create a list of model formulas
@@ -1043,13 +1052,7 @@ genomewide_prediction2 <- function(x) {
   # Residual formula
   resid_form <- ~ vs(units)
   
-  # Create a matrix of scaled and centered covariates
-  covariate_mat <- ec_tomodel_scaled %>%
-    filter(environment %in% levels(train$env1)) %>%
-    select(., environment, unique(unlist(covariate_list))) %>%
-    as.data.frame() %>%
-    column_to_rownames("environment") %>%
-    as.matrix()
+
   
   
   ## Create relationship matrices
@@ -1111,9 +1114,12 @@ genomewide_prediction2 <- function(x) {
       y <- model.response(mf)
       # Covariates
       X <- model.matrix(reformulate(termlabels = covariate_list$main), data = mf)
+      # If X is not full rank, drop the last term
+      while (qr(crossprod(X))$rank < ncol(X)) X <- X[,-ncol(X)]
+      
       Z <- model.matrix(~ -1 + line_name, data = mf)
       
-      model_fit <- mixed.solve(y = y, Z = Z, K = K, X = X)
+      model_fit <- mixed.solve(y = y, Z = Z, K = K, X = X, SE = TRUE)
       
       ## Matrices of fixed and random effects
       fixed_eff <- as.matrix(model_fit$beta)
