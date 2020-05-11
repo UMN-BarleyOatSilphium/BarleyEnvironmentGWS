@@ -1132,7 +1132,10 @@ genomewide_prediction2 <- function(x) {
     } else {
       
       ## Try to fit the model; capture the output
-      model_stdout <- capture.output( eval(fit_mmer_exp) )
+      model_try <- try(model_stdout <- capture.output( eval(fit_mmer_exp) ))
+      
+      # If error, just skip and move to the next m
+      if (class(model_try) == "try-error") next
       
       # If model fit is empty, try using a smaller number of iterations; for instance find
       # the maximum logLik and use those iterations
