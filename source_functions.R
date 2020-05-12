@@ -1016,10 +1016,12 @@ genomewide_prediction2 <- function(x) {
   model_fixed_forms <- formulas(
     .response = ~ value,
     model1 = ~ 1,
-    model2_fr = reformulate(covariate_list$main),
+    # model2_fr = reformulate(covariate_list$main),
     model2_cov = model1,
-    model3_fr = model2_fr,
-    model3_cov = model1
+    model2_id = model2_cov,
+    # model3_fr = model2_fr,
+    model3_cov = model1,
+    model3_id = model3_cov
   )
   
   ## Random factorial regression formula
@@ -1039,10 +1041,12 @@ genomewide_prediction2 <- function(x) {
   model_rand_forms <- formulas(
     .response = ~ value,
     model1 = ~ vs(line_name, Gu = K),
-    model2_fr = model1,
+    # model2_fr = model1,
     model2_cov = add_predictors(model1, ~ vs(env1, Gu = E)),
-    model3_fr = model3_fr_rand,
-    model3_cov = add_predictors(model2_cov, ~ vs(line_name:env1, Gu = GE))
+    model2_id = add_predictors(model1, ~ vs(env1, Gu = I)),
+    # model3_fr = model3_fr_rand,
+    model3_cov = add_predictors(model2_cov, ~ vs(line_name:env1, Gu = GE)),
+    model3_id = add_predictors(model2_cov, ~ vs(line_name:env1, Gu = GI))
   ) %>% map(~ formula(delete.response(terms(.)))) # Remove response
   
   
@@ -1058,7 +1062,10 @@ genomewide_prediction2 <- function(x) {
   ## Create relationship matrices
   K <- K # Genomic
   E <- Env_mat(x = covariate_mat[,covariate_list$main, drop = FALSE], method = "Jarq")
+  # Identity matrix for environments
+  I <- diag(ncol(E)); dimnames(I) <- dimnames(E)
   GE <- kronecker(X = K, Y = KE, make.dimnames = TRUE)
+  GI <- kronecker(X = K, Y = I, make.dimnames = TRUE)
   
   ## Define an expression that fits the model
   fit_mmer_exp <- expression({
@@ -1132,10 +1139,8 @@ genomewide_prediction2 <- function(x) {
     } else {
       
       ## Try to fit the model; capture the output
-      model_try <- try(model_stdout <- capture.output( eval(fit_mmer_exp) ))
-      
-      # If error, just skip and move to the next m
-      if (class(model_try) == "try-error") next
+      model_stdout <- capture.output( eval(fit_mmer_exp) )
+
       
       # If model fit is empty, try using a smaller number of iterations; for instance find
       # the maximum logLik and use those iterations

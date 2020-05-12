@@ -27,7 +27,7 @@ library(parallel)
 
 ## Number of cores
 # n_core <- detectCores()
-n_core <- 8
+n_core <- 12
 
 # time_frame to use for the location relationship matrix
 time_frame_use <- "time_frame5"
@@ -142,7 +142,7 @@ loeo_predictions_out <- data_train_test1 %>%
     ## Add results to the core_df
     mutate(core_df, out = out)
     
-  }) %>% bind_rows()
+  })
 
 
 ## Save the results
