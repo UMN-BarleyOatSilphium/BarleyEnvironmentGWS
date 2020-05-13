@@ -2,9 +2,10 @@
 
 #PBS -l walltime=24:00:00,mem=62gb,nodes=1:ppn=12
 # #PBS -N loeo_predictions
-#PBS -N loeo_predictions_fr
+# #PBS -N loeo_predictions_fr
 # #PBS -N loyo_predictions
 # #PBS -N lolo_predictions
+#PBS -N lolo_predictions_fr
 #PBS -M neyha001@umn.edu
 #PBS -m abe
 #PBS -r n
@@ -18,7 +19,7 @@ module load R/3.5.2_mkl
 # Rscript environment_loeo_predictions.R
 
 # # Leave-one-environment-out - factorial regression
-Rscript environment_loeo_predictions2.R
+# Rscript environment_loeo_predictions2.R
 
 # # Leave-one-year-out
 # Rscript environment_loyo_predictions.R
@@ -26,6 +27,7 @@ Rscript environment_loeo_predictions2.R
 # Leave-one-location-out
 # Rscript environment_lolo_predictions.R
 
-
+# Leave-one-location-out - factorial regression
+Rscript environment_lolo_predictions2.R
 
 
