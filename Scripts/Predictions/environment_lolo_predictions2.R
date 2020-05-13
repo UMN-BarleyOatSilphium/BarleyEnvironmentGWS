@@ -145,7 +145,7 @@ data_train_test1 <- loeo_train_test %>%
 
 
 ## Parallelize
-loeo_predictions_out <- data_train_test1 %>%
+lolo_predictions_out <- data_train_test1 %>%
   coreApply(X = ., FUN = function(core_df) {
     
     ## Output list
@@ -200,7 +200,7 @@ loeo_predictions_out <- data_train_test1 %>%
     ## Add results to the core_df
     mutate(core_df, out = out)
     
-  })
+  }) %>% ungroup()
 
 
 ## Save the results
