@@ -22,7 +22,8 @@ library(paletteer)
 
 
 ## Load the validation results
-file_list <- list.files(result_dir, pattern = "predictions.RData$", full.names = TRUE)
+# file_list <- list.files(result_dir, pattern = "predictions.RData$", full.names = TRUE)
+file_list <- list.files(result_dir, pattern = "fact_reg.RData$", full.names = TRUE)
 object_list <- unlist(lapply(file_list, load, envir = .GlobalEnv))
 
 
@@ -37,14 +38,19 @@ alpha <- 0.05
 # model5: y = G + L + GL + r
 
 
+# ## A vector to rename models
+# model_replace <- c("model1" = "G", "model2" = "G + E", "model2_P" = "G + E (AMMI)", 
+#                    "model3" = "G + E + GE", "model3_P" = "G + E + GE (AMMI)", "model3_GxE" = "G + E + GxE",
+#                    "model4" = "G + L", "model4_P" = "G + L (AMMI)",
+#                    "model5" = "G + L + GL", "model5_P" = "G + L + GL (AMMI)", "model5_GxL" = "G + L + GxL")
+                   
 ## A vector to rename models
-model_replace <- c("model1" = "G", "model2" = "G + E", "model2_P" = "G + E (AMMI)", 
-                   "model3" = "G + E + GE", "model3_P" = "G + E + GE (AMMI)", "model3_GxE" = "G + E + GxE",
-                   "model4" = "G + L", "model4_P" = "G + L (AMMI)",
-                   "model5" = "G + L + GL", "model5_P" = "G + L + GL (AMMI)", "model5_GxL" = "G + L + GxL")
+model_replace <- c("model1" = "g", "model2_id" = "g + E", "model2_cov" = "g + w", 
+                   "model3_id" = "g + w + gE", "model3_cov" = "g + w + gw")
 
 ## Models to present
-model_present <- model_replace[str_detect(names(model_replace), "_", negate = TRUE)]
+# model_present <- model_replace[str_detect(names(model_replace), "_", negate = TRUE)]
+model_present <- model_replace
 
 
 f_model_replace <- function(x) model_replace[x]
@@ -54,35 +60,24 @@ f_model_replace2 <- function(x) model_present[x]
 f_pop_replace <- function(x) str_replace_all(x, c("tp" = "CV0", "vp" = "POV00"))
 # Replace type
 f_type_replace <- function(x) c("loeo" = "New environment", "lolo" = "New location", "loyo" = "New year")[x]
+# Replace ec selection
+f_ec_selection_replace <- function(x) 
+  c("adhoc" = "italic(ad~hoc)", "adhoc_nosoil" = "italic(ad~hoc)~(no~soil)", "apriori" = "italic(a~priori)")[x]
 
 # Color scheme for models
 model_colors <- c(neyhart_palette("umn1")[1], neyhart_palette("umn3")[3], neyhart_palette("umn1")[3],
                   neyhart_palette("umn3")[4], neyhart_palette("umn1")[4])
-names(model_colors) <- grep(pattern = "_", x = names(model_replace), value = TRUE, invert = TRUE)
-
-
-
-# Phenotye data to use
-data_to_model <- S2_MET_BLUEs %>% 
-  filter(line_name %in% c(tp_geno, vp_geno),
-         trait %in% traits,
-         environment %in% tp_vp_env) %>%
-  mutate(id = seq(nrow(.))) %>%
-  droplevels() %>%
-  mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno)),
-         # Collapse Ithacas
-         location = str_remove_all(location, "[0-9]{1}")) %>%
-  mutate_at(vars(environment, location, year), as.factor) %>%
-  mutate(env = environment)
+# names(model_colors) <- grep(pattern = "_", x = names(model_replace), value = TRUE, invert = TRUE)
+names(model_colors) <- names(model_replace)
 
 
 
 ## Grab the prediction outputs
 loo_prediction_list <- map(set_names(object_list, object_list), get) %>%
+  # Bind rows if necessary
+  modify_if(is.list, bind_rows) %>%
   subset(., map_lgl(., ~nrow(.) > 1)) %>%
   map(~unnest(., out)) %>%
-  # Select relevant columns
-  map(~select(., c("trait", "model", "prediction", "nEnv", "nObs"))) %>%
   set_names(x = ., nm = str_extract(names(.), "^[a-z]{4}"))
 
 
@@ -90,25 +85,24 @@ loo_predictions_df <- loo_prediction_list %>%
   imap(~unnest(.x, prediction) %>% mutate(type = .y) ) %>%
   map(~rename_at(.x, vars(which(names(.x) %in% c("env", "loc"))),
                  ~str_replace_all(., c("loc" = "location", "env" = "environment")))) %>%
-  map_df(~select(., trait, environment, location, year, type, model, line_name, value, 
-                 contains("nEnv"), contains("nObs"), contains("pred")) %>%
-        mutate_if(is.character, parse_guess) %>%
-        mutate_if(is.factor, ~parse_guess(as.character(.)))) %>%
-  mutate(pop = ifelse(line_name %in% tp, "tp", "vp"))
+  map_df(~mutate_if(., is.character, parse_guess) %>%
+           mutate_if(is.factor, ~parse_guess(as.character(.)))) %>%
+  mutate(pop = ifelse(line_name %in% tp, "tp", "vp")) %>%
+  select(-which(names(.) %in% c(".id", "core", "trait1")))
 
 
 ## Calculate accuracy and bias per environment, model, and population
 loo_predictive_ability <- loo_predictions_df %>%
-  group_by(trait, model, pop, type, environment) %>%
+  group_by(trait, model, pop, type, environment, selection) %>%
   # First calculate accuracy per environment
   mutate(ability = cor(pred_complete, value), 
          bias = mean((pred_complete - value) / value)) %>% # Bias as percent deviation from observed
-  group_by(trait, model, pop, type) %>%
+  group_by(trait, model, pop, type, selection) %>%
   # Next calculate accuracy across all environments
   mutate(ability_all = cor(pred_complete, value), 
          bias_all = mean((pred_complete - value) / value)) %>% # Bias as percent deviation from observed
   # Now summarize across all
-  group_by(trait, model, pop, type, environment) %>%
+  group_by(trait, model, pop, type, environment, selection) %>%
   summarize_at(vars(ability, bias, ability_all, bias_all, nObs, nEnv), mean) %>%
   ungroup()
 
@@ -120,33 +114,54 @@ loo_prediction_accuracy <- loo_predictive_ability %>%
 
 
 
+# ## Quick plot of accuracy for each trait, model, pop, type, and selection
+# loo_prediction_accuracy %>%
+#   group_by(trait, model, pop, type, selection) %>%
+#   summarize_at(vars(accuracy, bias), mean) %>%
+#   ggplot(aes(x = model, y = accuracy, fill = selection)) +
+#   geom_col(position = position_dodge(0.9)) +
+#   facet_grid(trait ~ type + pop)
+# 
+# ## Quick plot of accuracy across all data points
+# loo_prediction_accuracy %>%
+#   distinct(trait, model, pop, type, selection, ability_all, bias_all) %>%
+#   ggplot(aes(x = model, y = ability_all, fill = selection)) +
+#   geom_col(position = position_dodge(0.9)) +
+#   facet_grid(trait ~ type + pop)
+# 
+# loo_predictions_df %>%
+#   filter(trait == "TestWeight") %>%
+#   ggplot(aes(x = pred_complete, y = value, color = environment)) +
+#   geom_point() +
+#   scale_color_discrete(guide = FALSE) +
+#   facet_grid(type + selection ~ model + pop) +
+#   theme_presentation2(10)
+
+
+
+
+
+
 ## Plot predicted and observed value, with mean and range of accuracy per
 ## environment and accuracy overall
 
-# Calculate prediction accuracy over all observations; bootstrap to get a confidence
-# interval
-loo_predictive_ability_all <- loo_predictions_df %>% 
-  group_by(trait, type, model, pop) %>% 
-  do(neyhart::bootstrap(x = .$value, y = .$pred_complete, fun = "cor", boot.reps = 1000)) %>%
-  ungroup()
+# Calculate predictive ability over all observations; bootstrap to get a confidence
+# interval; also calculate bias
+loo_accuracy_bias_all <- loo_predictions_df %>% 
+  group_by(trait, type, model, pop, selection) %>% 
+  do({
+    tibble(measure = c("ability", "bias"),
+           out = list(neyhart::bootstrap(x = .$value, y = .$pred_complete, fun = "cor", boot.reps = 1000),
+                      neyhart::bootstrap(x = .$pred_complete, y = .$value, fun = "bias", boot.reps = 1000)))
+    }) %>% ungroup() %>%
+  unnest() %>%
+  select(-statistic)
 
-# Calculate bias
-# First define a function to calculate bias
-bias <- function(obs, pred) mean((pred - obs) / obs)
-loo_bias_all <- loo_predictions_df %>% 
-  group_by(trait, type, model, pop) %>% 
-  do(neyhart::bootstrap(x = .$pred_complete, y = .$value, fun = "bias", boot.reps = 1000)) %>%
-  ungroup()
-
-## Combine
-loo_accuracy_bias_all <- bind_rows(
-  mutate(loo_predictive_ability_all, measure = "ability"),
-  mutate(loo_bias_all, measure = "bias")
-)
 
 
 # First create annotation df
-loo_prediction_accuracy_annotation <- loo_predictive_ability_all %>%
+loo_prediction_accuracy_annotation <- loo_accuracy_bias_all %>%
+  filter(measure == "ability") %>%
   rename(ability_all = base, ability_lower = ci_lower, ability_upper = ci_upper) %>%
   mutate_at(vars(contains("ability")), ~formatC(., width = 3, digits = 2, format = "f")) %>%
   mutate(ability_all_annotation = paste0("r[MP]==", ability_all, "~(", ability_lower, "*','~", ability_upper, ")"))
@@ -157,24 +172,32 @@ g_loo_prediction_list <- loo_predictions_df %>%
   filter(model %in% names(model_replace)) %>%
   # Max character length of units
   mutate(max_nchar = max(nchar(last(pretty(value))))) %>%
-  group_by(trait) %>%
+  group_by(trait, type) %>%
   do(plot = {
     df <- .
     
-    df1 <- df
+    # Convert yield to t ha^-1
+    if (unique(df$trait) == "GrainYield") {
+      df1 <- mutate_at(df, vars(value, pred_complete), ~. / 1000)
+    } else {
+      df1 <- df
+    }
     
     breaks <- map(select(df1, pred_complete, value), pretty) 
     
     
     ## Extract the appropriate accuracy annotation
-    r_mp_annotation <- left_join(distinct(df1, trait, type, model, pop), loo_prediction_accuracy_annotation,
-                                 by = c("trait", "type", "model", "pop")) %>%
-      select(trait:pop, contains("annotation")) %>% 
-      mutate(annotation = ability_all_annotation) %>%
-      mutate(x = breaks$pred_complete[1], y = c(last(breaks$value)))
+    r_mp_annotation <- left_join(distinct(df1, trait, type, model, pop, selection), loo_prediction_accuracy_annotation,
+                                 by = c("trait", "type", "model", "pop", "selection")) %>%
+      mutate(annotation = ability_all_annotation,
+             x = breaks$pred_complete[1], y = c(last(breaks$value)),
+             # Edit the covariate selection variable
+             selection = paste0("Covariates:~", f_ec_selection_replace(selection)))
     
     ## Create the plot
     g_plot <- df1 %>%
+      # Edit the covariate selection variable
+      mutate(selection = paste0("Covariates:~", f_ec_selection_replace(selection))) %>%
       ggplot(aes(x = pred_complete, y = value, color = environment)) +
       geom_abline(slope = 1, intercept = 0) +
       geom_point(size = 0.5, alpha = 0.5) +
@@ -183,9 +206,9 @@ g_loo_prediction_list <- loo_predictions_df %>%
       scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
       scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
       scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
-      facet_grid(type + pop ~ model, switch = "y", 
-                 labeller = labeller(type = toupper, pop = f_pop_replace, model = f_model_replace)) +
-      labs(subtitle = str_add_space(unique(df1$trait))) +
+      facet_grid(selection + pop ~ model, switch = "y", 
+                 labeller = labeller(selection = label_parsed, pop = f_pop_replace, model = f_model_replace)) +
+      labs(subtitle = paste0(toupper(unique(df1$type)), ": ", str_add_space(unique(df1$trait)))) +
       theme_presentation2(10)
     
     ## Return the plot
@@ -197,8 +220,11 @@ g_loo_prediction_list <- loo_predictions_df %>%
 for (i in seq_len(nrow(g_loo_prediction_list))) {
   
   # Save
-  ggsave(filename = paste0("loo_model_predictions_observations_", g_loo_prediction_list$trait[[i]], ".jpg"), 
-         plot = g_loo_prediction_list$plot[[i]], path = fig_dir, width = 15, height = 10, dpi = 1000)
+  filename <- paste0("loo_model_predictions_observations_", 
+                     paste0(map_chr(select(g_loo_prediction_list, -plot), i), collapse = "_"), 
+                     ".jpg")
+  ggsave(filename = filename, plot = g_loo_prediction_list$plot[[i]], 
+         path = fig_dir, width = 12, height = 10, dpi = 1000)
   
 }
 
@@ -225,8 +251,10 @@ for (i in seq_len(nrow(g_loo_prediction_list))) {
 
 
 ## Barplot of overall prediction accuracy
-g_loo_predictions_all_summ <- loo_predictive_ability_all %>%
-  ggplot(aes(x = pop, group = model)) +
+g_loo_predictions_all_summ <- loo_accuracy_bias_all %>%
+  mutate(selection = f_ec_selection_replace(selection)) %>%
+  filter(measure == "ability") %>%
+  ggplot(aes(x = selection, group = model)) +
   geom_hline(yintercept = 0, color = "grey85") +
   geom_col(aes(y = base, fill = model), position = "dodge", color = "black", lwd = 0.1) + 
   geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), position = position_dodge(0.9),
@@ -235,15 +263,16 @@ g_loo_predictions_all_summ <- loo_predictive_ability_all %>%
   scale_fill_paletteer_d(package = "dutchmasters", palette = "milkmaid",
                          name = "Model", labels = f_model_replace) +
   scale_y_continuous(name = "Predictive ability", breaks = pretty) +
-  scale_x_discrete(name = "Validation scheme", labels = f_pop_replace) +
-  facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
+  # scale_x_discrete(name = "Validation scheme", labels = f_pop_replace) +
+  scale_x_discrete(name = "Covariate selection", labels = function(x) parse(text = x)) +
+  facet_grid(type ~ trait + pop, labeller = labeller(trait = str_add_space, type = toupper, pop = f_pop_replace),
              switch = "y") +
   theme_presentation2(10) +
-  theme(strip.placement = "outside")
+  theme(strip.placement = "outside", axis.text.x = element_text(angle = 45, hjust = 1))
 
 # Save
 ggsave(filename = "loo_model_predictions_all_accuracy.jpg", plot = g_loo_predictions_all_summ,
-       path = fig_dir, width = 10, height = 6, dpi = 1000)
+       path = fig_dir, width = 12, height = 6, dpi = 1000)
 
 ## Add points for bias
 g_loo_predictions_all_summ_alt <- g_loo_predictions_all_summ +
@@ -377,32 +406,53 @@ q_funs <- c(map(q, ~partial(quantile, probs = .x, na.rm = TRUE)), partial(mean, 
 loo_prediction_accuracy_summ <- loo_prediction_accuracy %>%
   filter(!is.na(ability)) %>%
   mutate(type = str_extract(type, "l[a-z]{3}")) %>%
-  group_by(type, trait, model, pop) %>%
+  group_by(type, trait, model, pop, selection) %>%
   summarize_at(vars(ability, bias, accuracy), funs(!!!q_funs)) %>%
   ungroup()
-                 
 
+## Determine the LSD between model-selection groups
+loo_prediction_accuracy_summ1 <- loo_prediction_accuracy %>%
+  filter(!is.na(ability)) %>%
+  mutate(type = str_extract(type, "l[a-z]{3}")) %>%
+  group_by(type, trait, pop) %>%
+  do({
+    dat <- .
+    fit <- lm(accuracy ~ model + selection + model:selection, data = dat)
+    n <- unique(as.numeric(xtabs(~ model + selection, dat)))
+    MS_within <- sigma(fit)^2 # Within-group error (residuals)
+    df <- df.residual(fit)
+    LSD <- qt(p = 1 - (0.05 / 2), df = df) * sqrt(MS_within * (2 / n))
+    
+    # Return mean and LSD of prediction accuracy
+    aggregate(accuracy ~ model + selection, dat, mean) %>% 
+      mutate(LSD = LSD)
+  }) %>% ungroup()
 
+annotation_df <- loo_prediction_accuracy_summ1 %>%
+  distinct(type, trait, pop, LSD) %>%
+  mutate(annotation = paste0("LSD: ", round(LSD, 2)))
 
 ## Visualize
 # Plot mean and range of predictions
-g_loo_predictions_summ <- loo_prediction_accuracy_summ %>%
+g_loo_predictions_summ <- loo_prediction_accuracy_summ1 %>%
   filter(model %in% names(model_replace)) %>%
-  ggplot(aes(x = pop, color = model)) +
-  geom_linerange(aes(ymin = ability_lower, ymax = ability_upper, group = model), 
-                 position = position_dodge(0.9), color = "grey85") +
-  # geom_linerange(aes(ymin = ability_q25, ymax = ability_q75, group = model), 
-  #                position = position_dodge(0.9), color = "grey85", lwd = 1) +
-  geom_point(aes(y = ability_mean), position = position_dodge(0.9)) +
-  # geom_point(aes(y = ability_wmean), position = position_dodge(0.9)) +
-  # scale_color_manual(name = "Model", labels = f_model_replace, values = model_colors) + 
+  mutate(selection = f_ec_selection_replace(selection)) %>%
+  ggplot(aes(x = selection, group = model, color = model)) +
+  # geom_linerange(aes(ymin = ability_lower, ymax = ability_upper, group = model), 
+  #                position = position_dodge(0.9), color = "grey85") +
+  geom_point(aes(y = accuracy), position = position_dodge(0.9)) +
+  geom_text(data = annotation_df, aes(x = 1, y = 1, label = annotation), size = 2, hjust = 0,
+            inherit.aes = FALSE) +
+  geom_segment(data = annotation_df, aes(x = 3, xend = 3, y = 1, yend = 1 - LSD), inherit.aes = FALSE) +
   scale_color_paletteer_d(package = "dutchmasters", palette = "milkmaid",
                           name = "Model", labels = f_model_replace) +
   scale_y_continuous(name = "Predictive ability", breaks = pretty) +
-  scale_x_discrete(name = "Validation scheme", labels = f_pop_replace) +
-  facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
+  # scale_x_discrete(name = "Validation scheme", labels = f_pop_replace) +
+  scale_x_discrete(name = "Covariate selection", labels = function(x) parse(text = x)) +
+  facet_grid(type ~ trait + pop, labeller = labeller(trait = str_add_space, type = toupper, pop = f_pop_replace),
              switch = "y") +
-  theme_presentation2(10)
+  theme_presentation2(10) +
+  theme(strip.placement = "outside", axis.text.x = element_text(angle = 45, hjust = 1))
 
 # Save
 ggsave(filename = "loo_model_predictions_summary.jpg", plot = g_loo_predictions_summ,

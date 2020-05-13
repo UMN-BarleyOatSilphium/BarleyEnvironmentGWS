@@ -983,76 +983,22 @@ genomewide_prediction <- function(x) {
 
 
 ## Different version of prediction function
-genomewide_prediction2 <- function(x) {
+genomewide_prediction2 <- function(x, model.list, K, E, KE) {
   
   # Get training and test data
   row <- x
   tr <- unique(row$trait)
   
   
-  # List of covariates
-  covariate_list <- row$covariates[[1]] %>% 
-    mutate(class = ifelse(str_detect(term, ":"), "interaction", "main"),
-           covariate = str_remove(term, "line_name:")) %>%
-    split(.$class) %>% 
-    map("covariate")
-  
-  
-  
   # Edit train and test by adding covariates - centered only
-  train <- left_join(row$train[[1]], select(ec_tomodel_centered, environment, unique(unlist(covariate_list))))
-  test <- left_join(row$test[[1]], select(ec_tomodel_centered, environment, unique(unlist(covariate_list))))
+  train <- row$train[[1]]
+  test <- row$test[[1]]
   
-  # Create a matrix of scaled and centered covariates
-  covariate_mat <- ec_tomodel_scaled %>%
-    filter(environment %in% levels(train$env1)) %>%
-    select(., environment, unique(unlist(covariate_list))) %>%
-    as.data.frame() %>%
-    column_to_rownames("environment") %>%
-    as.matrix()
+  # Extract fixed and random formulas from the list
+  model_fixed_forms <- model.list$fixed
+  model_rand_forms <- model.list$random
   
-  
-  ## Create a list of model formulas
-  model_fixed_forms <- formulas(
-    .response = ~ value,
-    model1 = ~ 1,
-    # model2_fr = reformulate(covariate_list$main),
-    model2_cov = model1,
-    model2_id = model2_cov,
-    # model3_fr = model2_fr,
-    model3_cov = model1,
-    model3_id = model3_cov
-  )
-  
-  ## Random factorial regression formula
-  if (is.null(covariate_list$interaction)) {
-    model3_fr_rand <- ~ vs(line_name, Gu = K)
-    # Also define covariance matrix between environments as diagonal
-    KE <- diag(nlevels(train$env1)); dimnames(KE) <- replicate(2, levels(train$env1), simplify = FALSE)
-    
-  } else {
-    model3_fr_rand <- reformulate(c("vs(line_name, Gu = K)", paste0("vs(", covariate_list$interaction, ", line_name, Gu = K)")))
-    KE <- Env_mat(x = covariate_mat[,covariate_list$interaction, drop = FALSE], method = "Jarq") 
-    
-  }
-    
-  ## Models for de novo fitting 
-  ## Create a list of model formulas
-  model_rand_forms <- formulas(
-    .response = ~ value,
-    model1 = ~ vs(line_name, Gu = K),
-    # model2_fr = model1,
-    model2_cov = add_predictors(model1, ~ vs(env1, Gu = E)),
-    model2_id = add_predictors(model1, ~ vs(env1, Gu = I)),
-    # model3_fr = model3_fr_rand,
-    model3_cov = add_predictors(model2_cov, ~ vs(line_name:env1, Gu = GE)),
-    model3_id = add_predictors(model2_cov, ~ vs(line_name:env1, Gu = GI))
-  ) %>% map(~ formula(delete.response(terms(.)))) # Remove response
-  
-  
-  # Record the number of environment and observations used for training
-  train_n <- summarize(train, nEnv = n_distinct(environment), nObs = n())
-  
+
   # Residual formula
   resid_form <- ~ vs(units)
   
@@ -1061,7 +1007,8 @@ genomewide_prediction2 <- function(x) {
   
   ## Create relationship matrices
   K <- K # Genomic
-  E <- Env_mat(x = covariate_mat[,covariate_list$main, drop = FALSE], method = "Jarq")
+  E <- E
+  KE <- KE 
   # Identity matrix for environments
   I <- diag(ncol(E)); dimnames(I) <- dimnames(E)
   GE <- kronecker(X = K, Y = KE, make.dimnames = TRUE)
@@ -1083,7 +1030,8 @@ genomewide_prediction2 <- function(x) {
     mutate(prediction = list(NULL))
   
   # Test df to merge
-  test_merge <- select(test, line_name, env, loc = location, year, value) %>%
+  test_merge <- test %>%
+    select(which(names(.) %in% c("line_name", "env", "loc", "year", "value"))) %>%
     mutate_if(is.factor, as.character)
   
   # Iterate over models
@@ -1247,7 +1195,7 @@ genomewide_prediction2 <- function(x) {
   }
   
   # Return predictions
-  return(list(prediction_out = prediction_out, train_n = train_n))
+  return(list(prediction_out = prediction_out))
   
   
 }
@@ -1271,5 +1219,8 @@ impute <- function(x) {
 # Function to calculate the coefficient of variation
 cv <- function(x, na.rm = FALSE) sd(x = x, na.rm = na.rm) / mean(x = x, na.rm = na.rm)
 
+
+# First define a function to calculate bias
+bias <- function(obs, pred) mean((pred - obs) / obs)
 
 
