@@ -126,7 +126,7 @@ covariates_tomodel <- fr_var_summary %>%
 
 
 # Generate skeleton train/test sets for LOEO
-loeo_train_test <- data_to_model %>%
+lolo_train_test <- data_to_model %>%
   group_by(trait) %>%
   do({crossv_loo_grouped(data = droplevels(group_by(., loc)))}) %>%
   ungroup() %>%
@@ -141,7 +141,7 @@ loeo_train_test <- data_to_model %>%
   
 
 ## Assign cores and split
-data_train_test1 <- loeo_train_test %>% 
+data_train_test1 <- lolo_train_test %>% 
   assign_cores(df = ., n_core = n_core, split = TRUE)
 
 

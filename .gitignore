@@ -11,3 +11,4 @@ Data/*.RData
 *.e[0-9]*
 *.o[0-9]*
 Rplots.pdf
+Scripts/archive/*
