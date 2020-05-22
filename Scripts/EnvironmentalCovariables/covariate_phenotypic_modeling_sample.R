@@ -7,11 +7,11 @@
 ## 
 
 
-## Local machine
-# Repository directory
-repo_dir <- getwd()
-# Source the main project script
-source(file.path(repo_dir, "source.R"))
+# ## Local machine
+# # Repository directory
+# repo_dir <- getwd()
+# # Source the main project script
+# source(file.path(repo_dir, "source.R"))
 
 ## MSI
 # Run the source script
