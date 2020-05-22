@@ -48,6 +48,7 @@ load(file.path(result_dir, "factorial_regression_results.RData"))
 
 # L will be represented by covariates or by identity covariance matrices
 
+
 # For each model, use three sets of covariates:
 # adhoc
 # adhoc no soil
@@ -200,7 +201,7 @@ lolo_predictions_out <- data_train_test1 %>%
     ## Add results to the core_df
     mutate(core_df, out = out)
     
-  }) %>% ungroup()
+  }) %>% bind_rows()
 
 
 ## Save the results
