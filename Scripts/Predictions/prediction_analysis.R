@@ -81,6 +81,7 @@ loo_prediction_list <- map(set_names(object_list, object_list), get) %>%
   set_names(x = ., nm = str_extract(names(.), "^[a-z]{4}"))
 
 
+## Combine data.frames and mutate columns
 loo_predictions_df <- loo_prediction_list %>%
   imap(~unnest(.x, prediction) %>% mutate(type = .y) ) %>%
   map(~rename_at(.x, vars(which(names(.x) %in% c("env", "loc"))),
@@ -88,12 +89,16 @@ loo_predictions_df <- loo_prediction_list %>%
   map_df(~mutate_if(., is.character, parse_guess) %>%
            mutate_if(is.factor, ~parse_guess(as.character(.)))) %>%
   mutate(pop = ifelse(line_name %in% tp, "tp", "vp")) %>%
-  select(-which(names(.) %in% c(".id", "core", "trait1")))
+  select(-which(names(.) %in% c(".id", "core", "trait1"))) %>%
+  # Coalesce columns
+  mutate(leave_one_group = coalesce(environment, location),
+         nGroup = coalesce(nEnv, nLoc)) %>%
+  select(-which(names(.) %in% c("environment", "location", "nLoc", "nEnv", "loc1", "env1")))
 
 
-## Calculate accuracy and bias per environment, model, and population
+## Calculate accuracy and bias per train group, model, and population
 loo_predictive_ability <- loo_predictions_df %>%
-  group_by(trait, model, pop, type, environment, selection) %>%
+  group_by(trait, model, pop, type, leave_one_group, selection) %>%
   # First calculate accuracy per environment
   mutate(ability = cor(pred_complete, value), 
          bias = mean((pred_complete - value) / value)) %>% # Bias as percent deviation from observed
@@ -102,40 +107,73 @@ loo_predictive_ability <- loo_predictions_df %>%
   mutate(ability_all = cor(pred_complete, value), 
          bias_all = mean((pred_complete - value) / value)) %>% # Bias as percent deviation from observed
   # Now summarize across all
-  group_by(trait, model, pop, type, environment, selection) %>%
-  summarize_at(vars(ability, bias, ability_all, bias_all, nObs, nEnv), mean) %>%
+  group_by(trait, model, pop, type, leave_one_group, selection) %>%
+  summarize_at(vars(ability, bias, ability_all, bias_all, nObs, nGroup), mean) %>%
   ungroup()
 
 
-## Adjust ability using heritability
-loo_prediction_accuracy <- loo_predictive_ability %>%
-  left_join(., env_trait_herit) %>%
-  mutate(accuracy = ability / sqrt(heritability))
+## Crookston appears to be a leverage cluster for grain yield; calculate location prediction
+## accuracy without Crookston
+
+# With Crookston
+loo_predictions_df %>% 
+  filter(type == "lolo", trait == "GrainYield", selection == "adhoc", pop == "tp") %>% 
+  group_by(model) %>% 
+  summarize(ability = cor(pred_complete, value))
+  
+# model      ability
+# 1 model1      -0.592
+# 2 model2_cov   0.960
+# 3 model2_id   -0.229
+# 4 model3_cov   0.939
+# 5 model3_id    0.939
+  
+# Without Crookston
+loo_predictions_df %>% 
+  filter(type == "lolo", trait == "GrainYield", selection == "adhoc", pop == "tp") %>% 
+  filter(leave_one_group != "Crookston") %>%
+  group_by(model) %>% 
+  summarize(ability = cor(pred_complete, value))
+  
+# model       ability
+# 1 model1     -0.355  
+# 2 model2_cov  0.921  
+# 3 model2_id  -0.00614
+# 4 model3_cov  0.891  
+# 5 model3_id   0.891
+
+## A difference, for sure, but the prediction accuracy is still quite good
+
+
+# ## Adjust ability using heritability
+# loo_prediction_accuracy <- loo_predictive_ability %>%
+#   left_join(., env_trait_herit, by = c("leave_one_group" = "environment")) %>%
+#   mutate(accuracy = ability / sqrt(heritability))
 
 
 
-# ## Quick plot of accuracy for each trait, model, pop, type, and selection
-# loo_prediction_accuracy %>%
-#   group_by(trait, model, pop, type, selection) %>%
-#   summarize_at(vars(accuracy, bias), mean) %>%
-#   ggplot(aes(x = model, y = accuracy, fill = selection)) +
-#   geom_col(position = position_dodge(0.9)) +
-#   facet_grid(trait ~ type + pop)
-# 
-# ## Quick plot of accuracy across all data points
-# loo_prediction_accuracy %>%
-#   distinct(trait, model, pop, type, selection, ability_all, bias_all) %>%
-#   ggplot(aes(x = model, y = ability_all, fill = selection)) +
-#   geom_col(position = position_dodge(0.9)) +
-#   facet_grid(trait ~ type + pop)
-# 
-# loo_predictions_df %>%
-#   filter(trait == "TestWeight") %>%
-#   ggplot(aes(x = pred_complete, y = value, color = environment)) +
-#   geom_point() +
-#   scale_color_discrete(guide = FALSE) +
-#   facet_grid(type + selection ~ model + pop) +
-#   theme_presentation2(10)
+## Quick plot of accuracy for each trait, model, pop, type, and selection
+loo_predictive_ability %>%
+  group_by(trait, model, pop, type, selection) %>%
+  summarize_at(vars(ability, bias), mean) %>%
+  ggplot(aes(x = model, y = ability, fill = selection)) +
+  geom_col(position = position_dodge(0.9)) +
+  facet_grid(trait ~ type + pop)
+
+## Quick plot of accuracy across all data points
+loo_predictive_ability %>%
+  distinct(trait, model, pop, type, selection, ability_all, bias_all) %>%
+  ggplot(aes(x = model, y = ability_all, fill = selection)) +
+  geom_col(position = position_dodge(0.9)) +
+  facet_grid(trait ~ type + pop)
+
+loo_predictions_df %>%
+  filter(trait == "GrainYield") %>%
+  ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
+  geom_point() +
+  scale_color_discrete(guide = FALSE) +
+  facet_grid(type + selection ~ model + pop) +
+  theme_presentation2(10)
 
 
 
@@ -183,7 +221,7 @@ g_loo_prediction_list <- loo_predictions_df %>%
       df1 <- df
     }
     
-    breaks <- map(select(df1, pred_complete, value), pretty) 
+    breaks <- map(subset(df1, pred_complete > 0, c(pred_complete, value)), pretty) 
     
     
     ## Extract the appropriate accuracy annotation
@@ -196,9 +234,10 @@ g_loo_prediction_list <- loo_predictions_df %>%
     
     ## Create the plot
     g_plot <- df1 %>%
+      filter(pred_complete > 0) %>%
       # Edit the covariate selection variable
       mutate(selection = paste0("Covariates:~", f_ec_selection_replace(selection))) %>%
-      ggplot(aes(x = pred_complete, y = value, color = environment)) +
+      ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
       geom_abline(slope = 1, intercept = 0) +
       geom_point(size = 0.5, alpha = 0.5) +
       geom_text(data = r_mp_annotation, aes(x = x, y = y, label = annotation), parse = TRUE, inherit.aes = FALSE,
@@ -230,22 +269,22 @@ for (i in seq_len(nrow(g_loo_prediction_list))) {
 
 
 
-## Save realistic data
-for (i in seq_len(nrow(g_loo_prediction_list))) {
-  
-  # Edit the plot
-  g_new <- g_loo_prediction_list$plot[[i]] + 
-    facet_grid(type ~ model, switch = "y", labeller = labeller(type = f_type_replace, model = f_model_replace))
-  g_new <- g_new %>%
-    modify_at(.x = ., .at = "data", ~
-                filter(., model %in% names(model_present), pop == "tp"))
-  g_new$layers[[3]]$data <- filter(g_new$layers[[3]]$data, model %in% names(model_present), pop == "tp") 
-  
-  # Save
-  ggsave(filename = paste0("loo_model_predictions_observations_", g_loo_prediction_list$trait[[i]], "_realistic.jpg"), 
-         plot = g_new, path = fig_dir, width = 8, height = 5, dpi = 1000)
-  
-}
+# ## Save realistic data
+# for (i in seq_len(nrow(g_loo_prediction_list))) {
+#   
+#   # Edit the plot
+#   g_new <- g_loo_prediction_list$plot[[i]] + 
+#     facet_grid(type ~ model, switch = "y", labeller = labeller(type = f_type_replace, model = f_model_replace))
+#   g_new <- g_new %>%
+#     modify_at(.x = ., .at = "data", ~
+#                 filter(., model %in% names(model_present), pop == "tp"))
+#   g_new$layers[[3]]$data <- filter(g_new$layers[[3]]$data, model %in% names(model_present), pop == "tp") 
+#   
+#   # Save
+#   ggsave(filename = paste0("loo_model_predictions_observations_", g_loo_prediction_list$trait[[i]], "_realistic.jpg"), 
+#          plot = g_new, path = fig_dir, width = 8, height = 5, dpi = 1000)
+#   
+# }
 
 
 
@@ -403,28 +442,28 @@ q_funs <- c(map(q, ~partial(quantile, probs = .x, na.rm = TRUE)), partial(mean, 
 
 
 ## Summarize mean and range
-loo_prediction_accuracy_summ <- loo_prediction_accuracy %>%
+loo_prediction_accuracy_summ <- loo_predictive_ability %>%
   filter(!is.na(ability)) %>%
   mutate(type = str_extract(type, "l[a-z]{3}")) %>%
   group_by(type, trait, model, pop, selection) %>%
-  summarize_at(vars(ability, bias, accuracy), funs(!!!q_funs)) %>%
+  summarize_at(vars(ability, bias), funs(!!!q_funs)) %>%
   ungroup()
 
 ## Determine the LSD between model-selection groups
-loo_prediction_accuracy_summ1 <- loo_prediction_accuracy %>%
+loo_prediction_accuracy_summ1 <- loo_predictive_ability %>%
   filter(!is.na(ability)) %>%
   mutate(type = str_extract(type, "l[a-z]{3}")) %>%
   group_by(type, trait, pop) %>%
   do({
     dat <- .
-    fit <- lm(accuracy ~ model + selection + model:selection, data = dat)
-    n <- unique(as.numeric(xtabs(~ model + selection, dat)))
+    fit <- lm(ability ~ model + selection + model:selection, data = dat)
+    n <- max(as.numeric(xtabs(~ model + selection, dat)))
     MS_within <- sigma(fit)^2 # Within-group error (residuals)
     df <- df.residual(fit)
     LSD <- qt(p = 1 - (0.05 / 2), df = df) * sqrt(MS_within * (2 / n))
     
     # Return mean and LSD of prediction accuracy
-    aggregate(accuracy ~ model + selection, dat, mean) %>% 
+    aggregate(ability ~ model + selection, dat, mean) %>% 
       mutate(LSD = LSD)
   }) %>% ungroup()
 
@@ -440,7 +479,7 @@ g_loo_predictions_summ <- loo_prediction_accuracy_summ1 %>%
   ggplot(aes(x = selection, group = model, color = model)) +
   # geom_linerange(aes(ymin = ability_lower, ymax = ability_upper, group = model), 
   #                position = position_dodge(0.9), color = "grey85") +
-  geom_point(aes(y = accuracy), position = position_dodge(0.9)) +
+  geom_point(aes(y = ability), position = position_dodge(0.9)) +
   geom_text(data = annotation_df, aes(x = 1, y = 1, label = annotation), size = 2, hjust = 0,
             inherit.aes = FALSE) +
   geom_segment(data = annotation_df, aes(x = 3, xend = 3, y = 1, yend = 1 - LSD), inherit.aes = FALSE) +

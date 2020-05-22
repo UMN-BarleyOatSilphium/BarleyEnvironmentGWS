@@ -509,7 +509,8 @@ fact_reg <- function(base.formula = value ~ line_name, data, gen = "line_name",
   } else {
     
     # Determine the max degrees of freedom for covariates
-    J <- length(unique(data[[env]])) - 1
+    J <- length(unique(data[[env]]))
+    H <- J - 1
     
     # Fit line name plus E-covariates
     # Add 1 covariate at-a-time and measure meansq (+ p.value)
@@ -543,7 +544,9 @@ fact_reg <- function(base.formula = value ~ line_name, data, gen = "line_name",
     # Perform the same procedure
     form_list <- map(covariates, ~add_predictors(formula(fit2_fwd), reformulate(paste0(paste0(gen, ":"), .))))
     fit3_list <- fit_with(data, lm, form_list)
-    fit3_anova_list <- map(fit3_list, ~Anova(., type = "II"))
+    # fit3_anova_list <- map(fit3_list, ~Anova(., type = "II"))
+    fit3_anova_list <- map(fit3_list, anova)
+    
     
     # Get a table of mean squares for each covariate
     fit3_covariate_meansq <- map_df(fit3_anova_list, tidy) %>% 
