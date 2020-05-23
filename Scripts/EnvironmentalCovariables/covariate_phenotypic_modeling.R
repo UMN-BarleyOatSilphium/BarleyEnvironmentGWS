@@ -111,78 +111,6 @@ concurrent_fact_reg <- S2_MET_BLUEs_tomodel %>%
 
 
 
-## Load packages for running local job
-invisible(lapply(X = pkgs, library, character.only = TRUE))
-
-## Drop one environment at a time and see if the same covariates
-## are identified
-
-
-## Group by trait and nest
-concurrent_fact_reg_sample <- S2_MET_BLUEs_tomodel %>%
-  # Split by trait
-  split(.$trait) %>%
-  # LOO based on environment grouping
-  imap_dfr(~group_by(.x, environment) %>% crossv_loo_grouped(.) %>% mutate(trait = .y)) %>%
-  rename(dropped_group = environment) %>%
-  mutate(out = list(NULL))
-
-# The first null element
-first_null <- min(which(sapply(concurrent_fact_reg_sample$out, is.null)))
-
-for (i in seq(first_null, nrow(concurrent_fact_reg_sample))) {
-    
-  row <- concurrent_fact_reg_sample[i,]
-  df <- as_tibble(row$train[[1]])
-  
-  # Factorize
-  df1 <- df %>%
-    droplevels() %>%
-    left_join(., ec_tomodel_centered, by = "environment") %>%
-    mutate_at(vars(line_name, environment), ~fct_contr_sum(as.factor(.)))
-  
-  test <- as_tibble(row$test[[1]]) %>%
-    left_join(., ec_tomodel_centered, by = "environment")
-  
-  # Apriori
-  ## Add covariates - filter
-  covariates_use <- subset(apriori_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-  apriori_out <- fact_reg(data = df1, covariates = covariates_use, env = "environment", method = "apriori")
-  
-  # Ad hoc
-  ## Add covariates - filter
-  covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-  adhoc_out <- fact_reg(data = df1, covariates = covariates_use, env = "environment", method = "step")
-  
-  # Ad hoc - without soil
-  ## Add covariates - filter
-  covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T), 
-                           covariate, drop = TRUE)
-  adhoc_nosoil_out <- fact_reg(data = df1, covariates = covariates_use, env = "environment", method = "step")
-  
-  ## df of output
-  results <- tibble(model = c("base", "base_alt", "model2", "model3"),
-                    apriori = apriori_out,
-                    adhoc = adhoc_out,
-                    adhoc_nosoil = adhoc_nosoil_out)
-  
-  
-  ## Predict the test set using each model
-  ## return these results
-  concurrent_fact_reg_sample$out[[i]] <- results %>%
-    gather(selection, fit, -model) %>%
-    filter(model != "base_alt") %>%
-    mutate(test_predictions = map(fit, ~add_predictions(data = test, model = .) %>% select(line_name, value, pred)),
-           covariates = map(fit, ~str_subset(string = attr(terms(formula(.)), "term.labels"), pattern = "line_name$", negate = TRUE)),
-           rmse = map_dbl(fit, ~rmse(model = ., data = test)),
-           acc = map_dbl(test_predictions, ~cor(.$value, .$pred))) %>%
-    select(-fit)
-  
-}
-
-  
-
-
 
 
 
@@ -274,70 +202,6 @@ historical_fact_reg <- S2_MET_loc_BLUEs_tomodel %>%
     
   }) %>% ungroup()
 
-
-
-
-
-## Load packages for running local job
-invisible(lapply(X = pkgs, library, character.only = TRUE))
-
-## Drop one location at a time and see if the same covariates
-## are identified
-## Group by trait and model
-historical_fact_reg_sample <- S2_MET_loc_BLUEs_tomodel %>%
-  # Split by trait
-  split(.$trait) %>%
-  # LOO based on location grouping
-  imap_dfr(~group_by(.x, location) %>% crossv_loo_grouped(.) %>% mutate(trait = .y)) %>%
-  rename(dropped_group = location) %>%
-  group_by(trait, dropped_group) %>%
-  do({
-    
-    row <- .
-    df <- as_tibble(row$train[[1]])
-    
-    
-    # Factorize
-    df1 <- df %>%
-      droplevels() %>%
-      left_join(., historical_ec_tomodel_centered_use, by = "location") %>%
-      mutate_at(vars(line_name, location), ~fct_contr_sum(as.factor(.)))
-    
-    test <- as_tibble(row$test[[1]]) %>%
-      left_join(., historical_ec_tomodel_centered_use, by = "location")
-    
-    # Apriori
-    ## Add covariates - filter
-    covariates_use <- subset(apriori_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-    apriori_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "apriori")
-    
-    # Ad hoc
-    ## Add covariates - filter
-    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-    adhoc_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
-    
-    # Ad hoc - without soil
-    ## Add covariates - filter
-    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T), 
-                             covariate, drop = TRUE)
-    adhoc_nosoil_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
-    
-    ## df of output
-    results <- tibble(model = c("base", "base_alt", "model2", "model3"),
-                      apriori = apriori_out,
-                      adhoc = adhoc_out,
-                      adhoc_nosoil = adhoc_nosoil_out)
-    
-    
-    ## Predict the test set using each model
-    results %>%
-      gather(selection, fit, -model) %>%
-      filter(model != "base_alt") %>%
-      mutate(test_predictions = map(fit, ~add_predictions(data = test, model = .) %>% select(line_name, value, pred)),
-             rmse = map_dbl(fit, ~rmse(model = ., data = test)),
-             acc = map_dbl(test_predictions, ~cor(.$value, .$pred)))
-    
-  }) %>% ungroup()
 
 
 
@@ -665,3 +529,256 @@ ec_fr_refit_crossv %>%
 # 28   TestWeight historical        adhoc    6.0143878      5296.860374
 # 29   TestWeight historical adhoc_nosoil   14.6656554        66.636482
 # 30   TestWeight historical      apriori   29.8547520     30152.414863
+
+
+
+
+
+## Analyze results of factorial regression sampling
+## 
+## In this procedure, one environment or location was dropped, and
+## the same covariate selection procedure was used.
+## 
+
+# Load the results
+load(file.path(result_dir, "factorial_regression_results_sample.RData"))
+
+
+## Analyze concurrent covariates first ##
+
+# Subset the data
+concurrent_fact_reg_sample_rmse <- concurrent_fact_reg_sample %>%
+  filter(model == "model3") %>% # Skip the base model
+  select(-test_predictions, -covariates)
+  
+# Plot RMSE
+concurrent_fact_reg_sample_rmse %>%
+  filter(!(trait == "GrainProtein" & rmse > 300),
+         !(trait == "TestWeight" & rmse > 2000)) %>%
+  ggplot(aes(x = selection, y = rmse, color = selection)) +
+  geom_boxplot() +
+  facet_wrap(~ trait, scales = "free_y") +
+  theme_genetics(base_size = 10)
+
+# Plot accuracy
+concurrent_fact_reg_sample_rmse %>%
+  # filter(!(trait == "GrainProtein" & rmse > 300),
+  #        !(trait == "TestWeight" & rmse > 2000)) %>%
+  ggplot(aes(x = selection, y = acc, color = selection)) +
+  geom_boxplot() +
+  facet_wrap(~ trait, scales = "free_y") +
+  theme_genetics(base_size = 10)
+
+## Summarize both
+concurrent_fact_reg_sample_summary <- concurrent_fact_reg_sample_rmse %>% 
+  gather(stat, value, rmse, acc) %>% 
+  group_by(trait, model, selection, stat) %>% 
+  do({
+    x <- .$value
+    stats <- boxplot.stats(x)
+    tibble(median = median(x), lower = stats$conf[1], upper = stats$conf[2])
+  }) %>% ungroup()
+
+concurrent_fact_reg_sample_summary %>%
+  arrange(stat) %>%
+  as.data.frame()
+   
+
+
+## Compare covariates selected in each model with those selected using the 
+## full dataset
+
+# Prepare the full data results
+full_data_fact_reg <- fr_var_summary %>%
+  filter(timeframe == "concurrent", selection != "apriori") %>%
+  mutate(full_covariates = map(var_prop_summary, ~subset(., ! term %in% c("line_name", "Residuals"), term, drop = TRUE))) %>%
+  select(-var_prop_summary)
+
+
+# How often do we get the same exact model?
+# How often do we get the same full-data covariate
+# How often do we get a new covariate?
+concurrent_fact_reg_sample_covariate_check <- concurrent_fact_reg_sample %>%
+  filter(model == "model3") %>%
+  select(trait, dropped_group, selection, covariates) %>%
+  inner_join(., full_data_fact_reg) %>%
+  # Calculate the proportion of full-data covariates that were recovered
+  mutate(full_cov_recovered = map2(full_covariates, covariates, intersect),
+         prop_full_cov_recovered = map2_dbl(full_covariates, covariates, ~mean(.x %in% .y)),
+         new_covariates = map2(covariates, full_covariates, setdiff))
+
+## Calculate some averages, min, and max
+concurrent_fact_reg_sample_covariate_check %>%
+  group_by(trait, selection) %>%
+  summarize(prop_full_cov_recovered_mean = mean(prop_full_cov_recovered),
+            prop_full_cov_recovered_min = min(prop_full_cov_recovered),
+            prop_full_cov_recovered_max = max(prop_full_cov_recovered))
+
+## Calculate the frequency of recovery for full-data covariates
+concurrent_fact_reg_sample_covariate_prop <- concurrent_fact_reg_sample_covariate_check %>%
+  group_by(trait, selection) %>%
+  do({
+    df <- .
+    ## Calculate contingency table for recovered covariates
+    prop_full_cov <- table(unlist(df$full_cov_recovered)) %>% 
+      as.data.frame() %>% 
+      arrange(desc(Freq)) %>%
+      mutate(Freq = Freq / nrow(df))
+    
+    ## Calculate contingency table for new covariates
+    prop_new_cov <- table(unlist(df$new_covariates)) %>% 
+      as.data.frame() %>% 
+      arrange(desc(Freq)) %>%
+      mutate(Freq = Freq / nrow(df))
+    
+    # Return tibble
+    tibble(prop_full_cov = list(prop_full_cov), prop_new_cov = list(prop_new_cov))
+    
+  }) %>% ungroup()
+
+
+## Compare the frequency of recovering a full-data covariate with the proportion
+## of variance that it explains
+concurrent_fact_reg_sample_covariate_prop %>%
+  unnest(prop_full_cov) %>%
+  rename(term = Var1) %>%
+  inner_join(., unnest(subset(fr_var_summary, timeframe == "concurrent"))) %>%
+  ggplot(aes(x = Freq, y = prop_var_exp)) +
+  geom_point() +
+  facet_grid(selection ~ trait)
+
+
+
+
+
+## Analyze historical covariates ##
+
+# Subset the data
+historical_fact_reg_sample_rmse <- historical_fact_reg_sample %>%
+  filter(model == "model3") %>% # Skip the base model
+  select(-test_predictions, -covariates)
+
+# Plot RMSE
+g_historical_rmse <- historical_fact_reg_sample_rmse %>%
+  # filter(!(trait == "GrainProtein" & rmse > 300),
+  #        !(trait == "TestWeight" & rmse > 2000)) %>%
+  ggplot(aes(x = selection, y = rmse, color = selection)) +
+  geom_boxplot() +
+  facet_wrap(~ trait, scales = "free_y", nrow = 1) +
+  theme_genetics(base_size = 10)
+
+# Remove outliers
+g_historical_rmse1 <- g_historical_rmse %>%
+  modify_at("data", ~filter(., !(trait == "GrainProtein" & rmse > 30), !(trait == "HeadingDate" & rmse > 200),
+                            !(trait == "PlantHeight" & rmse > 10000), !(trait == "TestWeight" & rmse > 50000)))
+
+
+# Plot accuracy
+concurrent_fact_reg_sample_rmse %>%
+  # filter(!(trait == "GrainProtein" & rmse > 300),
+  #        !(trait == "TestWeight" & rmse > 2000)) %>%
+  ggplot(aes(x = selection, y = acc, color = selection)) +
+  geom_boxplot() +
+  facet_wrap(~ trait, scales = "free_y") +
+  theme_genetics(base_size = 10)
+
+## Summarize both
+concurrent_fact_reg_sample_summary <- concurrent_fact_reg_sample_rmse %>% 
+  gather(stat, value, rmse, acc) %>% 
+  group_by(trait, model, selection, stat) %>% 
+  do({
+    x <- .$value
+    stats <- boxplot.stats(x)
+    tibble(median = median(x), lower = stats$conf[1], upper = stats$conf[2])
+  }) %>% ungroup()
+
+concurrent_fact_reg_sample_summary %>%
+  arrange(stat) %>%
+  as.data.frame()
+
+
+
+## Compare covariates selected in each model with those selected using the 
+## full dataset
+
+# Prepare the full data results
+full_data_fact_reg <- fr_var_summary %>%
+  filter(timeframe == "concurrent", selection != "apriori") %>%
+  mutate(full_covariates = map(var_prop_summary, ~subset(., ! term %in% c("line_name", "Residuals"), term, drop = TRUE))) %>%
+  select(-var_prop_summary)
+
+
+# How often do we get the same exact model?
+# How often do we get the same full-data covariate
+# How often do we get a new covariate?
+concurrent_fact_reg_sample_covariate_check <- concurrent_fact_reg_sample %>%
+  filter(model == "model3") %>%
+  select(trait, dropped_group, selection, covariates) %>%
+  inner_join(., full_data_fact_reg) %>%
+  # Calculate the proportion of full-data covariates that were recovered
+  mutate(full_cov_recovered = map2(full_covariates, covariates, intersect),
+         prop_full_cov_recovered = map2_dbl(full_covariates, covariates, ~mean(.x %in% .y)),
+         new_covariates = map2(covariates, full_covariates, setdiff))
+
+## Calculate some averages, min, and max
+concurrent_fact_reg_sample_covariate_check %>%
+  group_by(trait, selection) %>%
+  summarize(prop_full_cov_recovered_mean = mean(prop_full_cov_recovered),
+            prop_full_cov_recovered_min = min(prop_full_cov_recovered),
+            prop_full_cov_recovered_max = max(prop_full_cov_recovered))
+
+## Calculate the frequency of recovery for full-data covariates
+concurrent_fact_reg_sample_covariate_prop <- concurrent_fact_reg_sample_covariate_check %>%
+  group_by(trait, selection) %>%
+  do({
+    df <- .
+    ## Calculate contingency table for recovered covariates
+    prop_full_cov <- table(unlist(df$full_cov_recovered)) %>% 
+      as.data.frame() %>% 
+      arrange(desc(Freq)) %>%
+      mutate(Freq = Freq / nrow(df))
+    
+    ## Calculate contingency table for new covariates
+    prop_new_cov <- table(unlist(df$new_covariates)) %>% 
+      as.data.frame() %>% 
+      arrange(desc(Freq)) %>%
+      mutate(Freq = Freq / nrow(df))
+    
+    # Return tibble
+    tibble(prop_full_cov = list(prop_full_cov), prop_new_cov = list(prop_new_cov))
+    
+  }) %>% ungroup()
+
+
+## Compare the frequency of recovering a full-data covariate with the proportion
+## of variance that it explains
+concurrent_fact_reg_sample_covariate_prop %>%
+  unnest(prop_full_cov) %>%
+  rename(term = Var1) %>%
+  inner_join(., unnest(subset(fr_var_summary, timeframe == "concurrent"))) %>%
+  ggplot(aes(x = Freq, y = prop_var_exp)) +
+  geom_point() +
+  facet_grid(selection ~ trait)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -197,7 +197,7 @@ historical_ec_tomodel_centered_use <- historical_ec_tomodel_centered$time_frame5
 ## Drop one location at a time and see if the same covariates
 ## are identified
 ## Group by trait and model
-historical_fact_reg_sample_data <- S2_MET_BLUEs_tomodel %>%
+historical_fact_reg_sample_data <- S2_MET_loc_BLUEs_tomodel %>%
   # Split by trait
   split(.$trait) %>%
   # LOO based on environment grouping
