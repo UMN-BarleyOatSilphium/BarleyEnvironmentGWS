@@ -83,7 +83,8 @@ data_to_model <- S2_MET_BLUEs %>%
 
 # Reorganize covariate df
 covariates_tomodel <- concurrent_fact_reg_sample %>%
-  filter(model == "model3") %>%
+  # Only subset model 3, models 2 and 3 are run; only use ad hoc covariates
+  filter(model == "model3", selection != "apriori") %>%
   select(trait, env = dropped_group, selection, term = covariates) %>%
   unnest(term) %>%
   group_by(trait, env, selection) %>%
@@ -181,16 +182,16 @@ loeo_predictions_sample_out <- data_train_test1 %>%
 ## Create a list of model formulas
 model_fixed_forms <- formulas(
   .response = ~ value,
-  model2_cov = ~ 1,
-  model3_cov = model2_cov,
+  model4_cov = ~ 1,
+  model5_cov = model4_cov,
 )
 
 ## Models for de novo fitting 
 ## Create a list of model formulas
 model_rand_forms <- formulas(
   .response = ~ value,
-  model2_cov = ~ vs(line_name, Gu = K) + vs(loc1, Gu = E),
-  model3_cov = add_predictors(model2_cov, ~ vs(line_name:loc1, Gu = GE)),
+  model4_cov = ~ vs(line_name, Gu = K) + vs(loc1, Gu = E),
+  model5_cov = add_predictors(model4_cov, ~ vs(line_name:loc1, Gu = GE)),
 ) %>% map(~ formula(delete.response(terms(.)))) # Remove response
 
 # Combine into list
@@ -218,7 +219,8 @@ data_to_model <- S2_MET_loc_BLUEs %>%
 # Reorganize covariate df
 covariates_tomodel <- historical_fact_reg_sample %>%
   mutate(model = ifelse(model == "model3", "model5", model)) %>%
-  filter(model == "model5") %>%
+  # Only subset model 5, models 4 and 5 are run; only use ad hoc covariates
+  filter(model == "model5", selection != "apriori") %>%
   select(trait, loc = dropped_group, selection, term = covariates) %>%
   unnest(term) %>%
   group_by(trait, loc, selection) %>%

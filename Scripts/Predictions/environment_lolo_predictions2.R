@@ -32,11 +32,6 @@ n_core <- 12
 # time_frame to use for the location relationship matrix
 time_frame_use <- "time_frame5"
 
-
-## Load environmental covariables
-load(file = file.path(result_dir, "ec_model_building.RData"))
-load(file = file.path(result_dir, "historical_ec_model_building.RData"))
-
 ## Load the factorial regression results
 load(file.path(result_dir, "factorial_regression_results.RData"))
 
