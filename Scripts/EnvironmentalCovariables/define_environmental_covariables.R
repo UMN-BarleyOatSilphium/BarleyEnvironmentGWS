@@ -415,23 +415,53 @@ ec_select <- ec_select %>%
 ec_names <- unique(ec_select$covariate)
 
 
-## Summarize covariates at a location over multiple time_frames
-year_time_frame <- seq(1, 30)
+## Create timeframes ##
+#
+# Create two sets of time intervals:
+# 1. Increasing number of years
+# 2. Same number of years (5, 10, and 15) in a sliding window 
+# 
 
+# Create the vector of years
+all_historical_years <- seq(max(ec_select$year) - 30 + 1, max(ec_select$year))
+
+# Create accumulating years
+year_time_frame <- accumulate(rev(all_historical_years), c)
+
+# Create the sliding windows
+year_sliding_window <- c(window5 = 5, window10 = 10, window15 = 15) %>%
+  map(~slide::slide(.x = all_historical_years, ~ ., .before = floor(.x / 2), .after = floor(.x / 2), .step = 1, .complete = TRUE)) %>%
+  map(~subset(., !sapply(., is.null)))
+
+## Use the time frames to summarize covariates
 ec_select_timeframe <- tibble(
-  time_frame = year_time_frame, 
-  end_year = max(ec_select$year), 
-  start_year = end_year - time_frame + 1) %>%
-  mutate(ec_data = map2(start_year, end_year, ~subset(ec_select, between(year, .x, .y))),
-         time_frame = paste0("time_frame", time_frame))
+  time_frame = paste0("time_frame", map_chr(year_time_frame, ~paste(length(.), min(.), max(.), sep = "_"))),
+  years = year_time_frame) %>%
+  # Subset the historical EC
+  mutate(ec_data = map(years, ~subset(ec_select, year %in% .x)))
 
-
-## Summarize
+# Summarize
 ec_select_timeframe_summary <- ec_select_timeframe %>%
-  unnest() %>%
+  unnest(ec_data) %>%
   group_by(time_frame, covariate, location) %>%
   summarize(value = mean(value)) %>%
   ungroup()
+
+## Use sliding windows to summarize covariates
+ec_select_window <- tibble(
+  time_frame = unlist(imap(year_sliding_window, function(l, name) map_chr(l, ~paste0(name, "_", min(.x), "_", max(.x))))),
+  years = unlist(year_sliding_window, recursive = FALSE)) %>%
+  # Subset the historical EC
+  mutate(ec_data = map(years, ~subset(ec_select, year %in% .x)))
+
+# Summarize
+ec_select_window_summary <- ec_select_window %>%
+  unnest(ec_data) %>%
+  group_by(time_frame, covariate, location) %>%
+  summarize(value = mean(value)) %>%
+  ungroup()
+
+
 
 
 ## Measure the relationship between covariates from different time frames
@@ -450,7 +480,7 @@ setNames(object = ec_select_timeframe_corr$cor_mat, ec_select_timeframe_corr$cov
 
 ## Spread the data
 ec_select_timeframe_summary_wide <- spread(ec_select_timeframe_summary, covariate, value)
-
+ec_select_window_summary_wide <- spread(ec_select_window_summary, covariate, value)
 
 
 ##### 
@@ -488,7 +518,7 @@ environmental_covariates <- ec_names
 
 
 ## Test for normality using ks test
-ec_tomodel_normality <- ec_select_timeframe_summary_wide %>%
+ec_tomodel_normality_timeframe <- ec_select_timeframe_summary_wide %>%
   gather(covariate, value, environmental_covariates) %>%
   group_by(time_frame, covariate) %>%
   do(ks_test = ks.test(x = .$value, y = "pnorm", mean = mean(.$value), sd = sd(.$value))) %>%
@@ -497,29 +527,64 @@ ec_tomodel_normality <- ec_select_timeframe_summary_wide %>%
   split(.$time_frame) %>%
   map_df(~mutate(., p_adj = p.adjust(p_value, method = "bonf")))
 
-(ec_sig_nonnormal <- subset(ec_tomodel_normality, p_adj < 0.10))
+(ec_sig_nonnormal_timeframe <- subset(ec_tomodel_normality_timeframe, p_adj < 0.10))
 
 # Check covariate by time_frame
 # Determine which covariates to exclude
-ec_to_remove <- group_by(ec_sig_nonnormal, covariate) %>% 
+ec_to_remove_timeframe <- group_by(ec_sig_nonnormal_timeframe, covariate) %>% 
+  summarize(n = n_distinct(time_frame)) %>% 
+  filter(n > 20) %>% 
+  pull(covariate)
+
+
+# Repeat with window
+ec_tomodel_normality_window <- ec_select_window_summary_wide %>%
+  gather(covariate, value, environmental_covariates) %>%
+  group_by(time_frame, covariate) %>%
+  do(ks_test = ks.test(x = .$value, y = "pnorm", mean = mean(.$value), sd = sd(.$value))) %>%
+  ungroup() %>%
+  mutate(p_value = map_dbl(ks_test, "p.value")) %>%
+  split(.$time_frame) %>%
+  map_df(~mutate(., p_adj = p.adjust(p_value, method = "bonf")))
+
+(ec_sig_nonnormal_window <- subset(ec_tomodel_normality_window, p_adj < 0.10))
+
+# Check covariate by time_frame
+# Determine which covariates to exclude
+ec_to_remove_window <- group_by(ec_sig_nonnormal_window, covariate) %>% 
   summarize(n = n_distinct(time_frame)) %>% 
   filter(n > 20) %>% 
   pull(covariate)
 
 
 
-
 ## Visualize
 ec_select_timeframe_summary_wide %>%
   gather(covariate, value, environmental_covariates) %>%
-  filter(covariate %in% unique(ec_sig_nonnormal$covariate)) %>%
+  filter(covariate %in% unique(ec_sig_nonnormal_timeframe$covariate)) %>%
   ggplot(aes(x = value)) +
   geom_histogram() +
   facet_grid(time_frame ~ covariate)
 
 ## Remove this covariate from the df
 ec_select_timeframe_summary_wide1 <- ec_select_timeframe_summary_wide %>%
-  select(which(! names(.) %in% ec_to_remove) ) %>%
+  select(which(! names(.) %in% ec_to_remove_timeframe) ) %>%
+  group_by(time_frame) %>%
+  # Inpute using the mean
+  mutate_at(vars(-location, -time_frame), impute) %>%
+  ungroup()
+
+## Visualize
+ec_select_window_summary_wide %>%
+  gather(covariate, value, environmental_covariates) %>%
+  filter(covariate %in% unique(ec_sig_nonnormal_window$covariate)) %>%
+  ggplot(aes(x = value)) +
+  geom_histogram() +
+  facet_grid(time_frame ~ covariate)
+
+## Remove this covariate from the df
+ec_select_window_summary_wide1 <- ec_select_window_summary_wide %>%
+  select(which(! names(.) %in% ec_to_remove_window) ) %>%
   group_by(time_frame) %>%
   # Inpute using the mean
   mutate_at(vars(-location, -time_frame), impute) %>%
@@ -528,21 +593,46 @@ ec_select_timeframe_summary_wide1 <- ec_select_timeframe_summary_wide %>%
 
 
 ## Prepare the covariates for modeling
+
+## Time frame ##
+## 
 ## Center, but do not scale. Save the mean for later
-historical_ec_tomodel_temp <- ec_select_timeframe_summary_wide1 %>%
+historical_ec_tomodel_timeframe_temp <- ec_select_timeframe_summary_wide1 %>%
   split(.$time_frame) %>%
   map(~mutate_at(.x, vars(-time_frame, -location), scale, scale = FALSE, center = TRUE))
 
-historical_ec_tomodel_centers <- historical_ec_tomodel_temp %>%
+historical_ec_tomodel_timeframe_centers <- historical_ec_tomodel_timeframe_temp %>%
   map(~summarize_at(.x, vars(-time_frame, -location), ~attr(., "scaled:center")) %>%
         gather(covariate, center) )
 
 ## Convert scaled to numeric
-historical_ec_tomodel_centered <- historical_ec_tomodel_temp %>%
+historical_ec_tomodel_timeframe_centered <- historical_ec_tomodel_timeframe_temp %>%
   map(~mutate_at(.x, vars(-time_frame, -location), as.numeric) )
 
 ## Center and scale
-historical_ec_tomodel_scaled <- ec_select_timeframe_summary_wide1 %>%
+historical_ec_tomodel_timeframe_scaled <- ec_select_timeframe_summary_wide1 %>%
+  split(.$time_frame) %>%
+  map(~mutate_at(.x, vars(-time_frame, -location), scale, scale = TRUE, center = TRUE) %>%
+        mutate_at(vars(-time_frame, -location), as.numeric) )
+
+
+## Window ##
+## 
+## Center, but do not scale. Save the mean for later
+historical_ec_tomodel_window_temp <- ec_select_window_summary_wide1 %>%
+  split(.$time_frame) %>%
+  map(~mutate_at(.x, vars(-time_frame, -location), scale, scale = FALSE, center = TRUE))
+
+historical_ec_tomodel_window_centers <- historical_ec_tomodel_window_temp %>%
+  map(~summarize_at(.x, vars(-time_frame, -location), ~attr(., "scaled:center")) %>%
+        gather(covariate, center) )
+
+## Convert scaled to numeric
+historical_ec_tomodel_window_centered <- historical_ec_tomodel_window_temp %>%
+  map(~mutate_at(.x, vars(-time_frame, -location), as.numeric) )
+
+## Center and scale
+historical_ec_tomodel_window_scaled <- ec_select_window_summary_wide1 %>%
   split(.$time_frame) %>%
   map(~mutate_at(.x, vars(-time_frame, -location), scale, scale = TRUE, center = TRUE) %>%
         mutate_at(vars(-time_frame, -location), as.numeric) )
@@ -550,10 +640,10 @@ historical_ec_tomodel_scaled <- ec_select_timeframe_summary_wide1 %>%
 
 
 
-
 ## Save these results
 save("ec_tomodel_centered", "ec_tomodel_scaled", "ec_tomodel_centers", 
-     "historical_ec_tomodel_centered", "historical_ec_tomodel_scaled", "historical_ec_tomodel_centers",
+     "historical_ec_tomodel_timeframe_centered", "historical_ec_tomodel_timeframe_scaled", "historical_ec_tomodel_timeframe_centers",
+     "historical_ec_tomodel_window_centered", "historical_ec_tomodel_window_scaled", "historical_ec_tomodel_window_centers",
      file = file.path(result_dir, "concurrent_historical_covariables.RData"))
 
 

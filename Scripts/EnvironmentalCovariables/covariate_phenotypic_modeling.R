@@ -14,7 +14,7 @@ source(file.path(repo_dir, "source.R"))
 
 
 ## Add new packages to load
-pkgs <- union(pkgs, c("modelr", "broom", "lme4", "car"))
+pkgs <- union(pkgs, c("modelr", "broom", "lme4", "car", "patchwork"))
 # Load these packages
 invisible(lapply(X = pkgs, library, character.only = TRUE))
 
@@ -138,7 +138,7 @@ S2_MET_loc_BLUEs_tomodel <- S2_MET_loc_BLUEs %>%
 
 
 # Create a data.frame of covariates per trait
-trait_covariate_df <- crossing(trait = traits, covariate = names(historical_ec_tomodel_centered$time_frame5)[-1:-2]) %>%
+trait_covariate_df <- crossing(trait = traits, covariate = names(historical_ec_tomodel_timeframe_centered$time_frame5_2010_2014)[-1:-2]) %>%
   filter(
     covariate != "awc_range",
     !(str_detect(covariate, "bulk_density")),
@@ -147,10 +147,8 @@ trait_covariate_df <- crossing(trait = traits, covariate = names(historical_ec_t
   ) 
 
 ## Select the historical covariate data
-historical_ec_tomodel_centered_use <- historical_ec_tomodel_centered$time_frame5
+historical_ec_tomodel_centered_use <- historical_ec_tomodel_timeframe_centered$time_frame5_2010_2014
   
-
-
 
 # Use the following covariates for all traits (except where timing would make
 # it inappropriate):
@@ -378,6 +376,10 @@ ec_fr_results_df <- ec_fr_results %>%
   }) %>% ungroup()
 
 
+
+
+
+
 ## Save results
 save("ec_fr_results_df", "fr_var_summary", file = file.path(result_dir, "factorial_regression_results.RData"))
 
@@ -544,7 +546,7 @@ ec_fr_refit_crossv %>%
 load(file.path(result_dir, "factorial_regression_results_sample.RData"))
 
 
-## Analyze concurrent covariates first ##
+## Analyze concurrent covariates ##
 
 # Subset the data
 concurrent_fact_reg_sample_rmse <- concurrent_fact_reg_sample %>%
@@ -614,6 +616,9 @@ concurrent_fact_reg_sample_covariate_check %>%
             prop_full_cov_recovered_min = min(prop_full_cov_recovered),
             prop_full_cov_recovered_max = max(prop_full_cov_recovered))
 
+## The proportion of times when the same covariates are recovered seems to be correlated
+## with the number of environments available for a trait
+
 ## Calculate the frequency of recovery for full-data covariates
 concurrent_fact_reg_sample_covariate_prop <- concurrent_fact_reg_sample_covariate_check %>%
   group_by(trait, selection) %>%
@@ -669,21 +674,23 @@ g_historical_rmse <- historical_fact_reg_sample_rmse %>%
 
 # Remove outliers
 g_historical_rmse1 <- g_historical_rmse %>%
-  modify_at("data", ~filter(., !(trait == "GrainProtein" & rmse > 30), !(trait == "HeadingDate" & rmse > 200),
+  modify_at("data", ~filter(., !(trait == "GrainProtein" & rmse > 30), !(trait == "GrainYield" & rmse > 20000),
+                            !(trait == "HeadingDate" & rmse > 30),
                             !(trait == "PlantHeight" & rmse > 10000), !(trait == "TestWeight" & rmse > 50000)))
+
+## Combine plots
+g_historical_rmse + g_historical_rmse1 + plot_layout(ncol = 1)
 
 
 # Plot accuracy
-concurrent_fact_reg_sample_rmse %>%
-  # filter(!(trait == "GrainProtein" & rmse > 300),
-  #        !(trait == "TestWeight" & rmse > 2000)) %>%
+historical_fact_reg_sample_rmse %>%
   ggplot(aes(x = selection, y = acc, color = selection)) +
   geom_boxplot() +
   facet_wrap(~ trait, scales = "free_y") +
   theme_genetics(base_size = 10)
 
 ## Summarize both
-concurrent_fact_reg_sample_summary <- concurrent_fact_reg_sample_rmse %>% 
+historical_fact_reg_sample_summary <- historical_fact_reg_sample_rmse %>% 
   gather(stat, value, rmse, acc) %>% 
   group_by(trait, model, selection, stat) %>% 
   do({
@@ -692,7 +699,7 @@ concurrent_fact_reg_sample_summary <- concurrent_fact_reg_sample_rmse %>%
     tibble(median = median(x), lower = stats$conf[1], upper = stats$conf[2])
   }) %>% ungroup()
 
-concurrent_fact_reg_sample_summary %>%
+historical_fact_reg_sample_summary %>%
   arrange(stat) %>%
   as.data.frame()
 
@@ -703,7 +710,7 @@ concurrent_fact_reg_sample_summary %>%
 
 # Prepare the full data results
 full_data_fact_reg <- fr_var_summary %>%
-  filter(timeframe == "concurrent", selection != "apriori") %>%
+  filter(timeframe == "historical", selection != "apriori") %>%
   mutate(full_covariates = map(var_prop_summary, ~subset(., ! term %in% c("line_name", "Residuals"), term, drop = TRUE))) %>%
   select(-var_prop_summary)
 
@@ -711,7 +718,7 @@ full_data_fact_reg <- fr_var_summary %>%
 # How often do we get the same exact model?
 # How often do we get the same full-data covariate
 # How often do we get a new covariate?
-concurrent_fact_reg_sample_covariate_check <- concurrent_fact_reg_sample %>%
+historical_fact_reg_sample_covariate_check <- historical_fact_reg_sample %>%
   filter(model == "model3") %>%
   select(trait, dropped_group, selection, covariates) %>%
   inner_join(., full_data_fact_reg) %>%
@@ -721,14 +728,14 @@ concurrent_fact_reg_sample_covariate_check <- concurrent_fact_reg_sample %>%
          new_covariates = map2(covariates, full_covariates, setdiff))
 
 ## Calculate some averages, min, and max
-concurrent_fact_reg_sample_covariate_check %>%
+historical_fact_reg_sample_covariate_check %>%
   group_by(trait, selection) %>%
   summarize(prop_full_cov_recovered_mean = mean(prop_full_cov_recovered),
             prop_full_cov_recovered_min = min(prop_full_cov_recovered),
             prop_full_cov_recovered_max = max(prop_full_cov_recovered))
 
 ## Calculate the frequency of recovery for full-data covariates
-concurrent_fact_reg_sample_covariate_prop <- concurrent_fact_reg_sample_covariate_check %>%
+historical_fact_reg_sample_covariate_prop <- historical_fact_reg_sample_covariate_check %>%
   group_by(trait, selection) %>%
   do({
     df <- .
@@ -752,7 +759,7 @@ concurrent_fact_reg_sample_covariate_prop <- concurrent_fact_reg_sample_covariat
 
 ## Compare the frequency of recovering a full-data covariate with the proportion
 ## of variance that it explains
-concurrent_fact_reg_sample_covariate_prop %>%
+historical_fact_reg_sample_covariate_prop %>%
   unnest(prop_full_cov) %>%
   rename(term = Var1) %>%
   inner_join(., unnest(subset(fr_var_summary, timeframe == "concurrent"))) %>%
@@ -764,6 +771,155 @@ concurrent_fact_reg_sample_covariate_prop %>%
 
 
 
+
+
+
+
+
+### Test different timeframes of historical covariates ###
+
+# Only use historial models
+historical_fr_results <- ec_fr_results_df %>%
+  filter(timeframe == "historical") %>%
+  unnest(calls) %>%
+  filter(model %in% c("model4", "model5"))
+
+
+## Test the historical model above with the different timeframe
+historical_ec_tomodel_timeframe_fact_reg_test <- historical_ec_tomodel_timeframe_centered %>%
+  map(~NULL)
+
+# Iterate over this list
+for (i in seq_along(historical_ec_tomodel_timeframe_fact_reg_test)) {
+  
+  # Subset the covariate data
+  covariate_data <- historical_ec_tomodel_timeframe_centered[[i]]
+  
+  # Nest the location blues with covariate data
+  model_data <- left_join(S2_MET_loc_BLUEs_tomodel, covariate_data, by = "location") %>%
+    group_by(trait) %>%
+    nest()
+  
+  # Map over the model calls and refit models
+  historical_fr_refit_i <- historical_fr_results %>%
+    # Add data
+    left_join(., model_data, by = "trait") %>%
+    # Fit models
+    mutate(fit = map2(call, data, ~lm(formula = as.formula(str_remove_all(.x, "lm\\(formula = |\\, data = data\\)")), data = .y)))
+  
+  # Return R2 and RMSE
+  historical_ec_tomodel_timeframe_fact_reg_test[[i]] <- historical_fr_refit_i %>%
+    mutate(rsquare = map_dbl(fit, ~summary(.)$r.squared),
+           adj_rsquare = map_dbl(fit, ~summary(.)$adj.r.squared),
+           AIC = map_dbl(fit, AIC),
+           rmse = map_dbl(fit, ~rmse(model = ., data = model.frame(.)))) %>%
+    select(trait, selection, model, rsquare:rmse)
+  
+}
+
+
+
+## Create a tibble to plot
+historical_timeframe_fact_reg_test_df <- historical_ec_tomodel_timeframe_fact_reg_test %>%
+  tibble(time_frame = names(.), results = .) %>%
+  unnest(results) %>%
+  # Parse the timeframe
+  mutate(time_frame_length = str_remove(time_frame, "time_frame")) %>%
+  separate(time_frame_length, c("length", "start_year", "end_year"), sep = "_") %>%
+  mutate_at(vars(length, start_year, end_year), parse_guess)
+
+
+## Plot - only model 5
+historical_timeframe_fact_reg_test_df %>%
+  # Set negative adj_rsquare to 0
+  mutate(adj_rsquare = ifelse(adj_rsquare < 0, 0, adj_rsquare)) %>%
+  filter(model == "model5") %>%
+  ggplot(aes(x = length, y = adj_rsquare, color = selection)) +
+  # geom_point() +
+  geom_line() +
+  # facet_wrap(~ trait, scales = "free_y") +
+  facet_grid( ~ trait) +
+  theme_presentation2(8)
+
+
+
+
+### Test different windows of historical covariates ###
+
+
+## Test the historical model above with the different timeframe
+historical_ec_tomodel_window_fact_reg_test <- historical_ec_tomodel_window_centered %>%
+  map(~NULL)
+
+# Iterate over this list
+for (i in seq_along(historical_ec_tomodel_window_fact_reg_test)) {
+  
+  # Subset the covariate data
+  covariate_data <- historical_ec_tomodel_window_centered[[i]]
+  
+  # Nest the location blues with covariate data
+  model_data <- left_join(S2_MET_loc_BLUEs_tomodel, covariate_data, by = "location") %>%
+    group_by(trait) %>%
+    nest()
+  
+  # Map over the model calls and refit models
+  historical_fr_refit_i <- historical_fr_results %>%
+    # Add data
+    left_join(., model_data, by = "trait") %>%
+    # Fit models
+    mutate(fit = map2(call, data, ~lm(formula = as.formula(str_remove_all(.x, "lm\\(formula = |\\, data = data\\)")), data = .y)))
+  
+  # Return R2 and RMSE
+  historical_ec_tomodel_window_fact_reg_test[[i]] <- historical_fr_refit_i %>%
+    mutate(rsquare = map_dbl(fit, ~summary(.)$r.squared),
+           adj_rsquare = map_dbl(fit, ~summary(.)$adj.r.squared),
+           AIC = map_dbl(fit, AIC),
+           rmse = map_dbl(fit, ~rmse(model = ., data = model.frame(.)))) %>%
+    select(trait, selection, model, rsquare:rmse)
+  
+}
+
+
+## Create a tibble to plot
+historical_window_fact_reg_test_df <- historical_ec_tomodel_window_fact_reg_test %>%
+  tibble(time_frame = names(.), results = .) %>%
+  unnest(results) %>%
+  # Parse the timeframe
+  mutate(time_frame_length = str_remove(time_frame, "window")) %>%
+  separate(time_frame_length, c("size", "start_year", "end_year"), sep = "_") %>%
+  mutate_at(vars(size, start_year, end_year), parse_guess)
+
+
+## Plot - only model 5
+historical_window_fact_reg_test_df %>%
+  # Set negative adj_rsquare to 0
+  mutate(adj_rsquare = ifelse(adj_rsquare < 0, 0, adj_rsquare)) %>%
+  filter(model == "model5") %>%
+  ggplot(aes(x = end_year, y = adj_rsquare, color = selection)) +
+  # geom_point() +
+  geom_line() +
+  # facet_wrap(~ trait, scales = "free_y") +
+  facet_grid(size ~ trait) +
+  theme_presentation2(8)
+
+
+
+historical_timeframe_fact_reg_test_df %>%
+  group_by(trait, selection, model) %>%
+  top_n(x = ., n = 1, wt = adj_rsquare) %>%
+  ungroup() %>%
+  arrange(trait, selection, model) %>%
+  select(trait, selection, model, time_frame, adj_rsquare) %>%
+  as.data.frame()
+
+## Find the timeline or window with the highest R square
+bind_rows(historical_timeframe_fact_reg_test_df, historical_window_fact_reg_test_df) %>%
+  group_by(trait, selection, model) %>%
+  top_n(x = ., n = 1, wt = adj_rsquare) %>%
+  ungroup() %>%
+  arrange(trait, selection, model) %>%
+  select(trait, selection, model, time_frame, adj_rsquare) %>%
+  as.data.frame()
 
 
 

@@ -120,7 +120,7 @@ covariates_tomodel <- fr_var_summary %>%
 
 
 ## 
-## Leave-one-environment-out
+## Leave-one-location-out
 ## 
 
 

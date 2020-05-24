@@ -241,7 +241,7 @@ historical_fact_reg_sample <- historical_fact_reg_sample_data %>%
       adhoc_nosoil_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
       
       ## df of output
-      results <- tibble(model = c("base", "base_alt", "model2", "model3"),
+      results <- tibble(model = c("base", "base_alt", "model4", "model5"),
                         apriori = apriori_out,
                         adhoc = adhoc_out,
                         adhoc_nosoil = adhoc_nosoil_out)
