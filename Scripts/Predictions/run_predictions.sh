@@ -34,7 +34,11 @@ module load R/3.5.2_mkl
 # # Leave-one-location-out
 # Rscript environment_lolo_predictions2.R
 
-# Leave-one-out from individual covariate selection
-Rscript environment_loo_predictions2_fr_samples.R
+# # Leave-one-out from individual covariate selection
+# Rscript environment_loo_predictions2_fr_samples.R
+
+
+# Leave-one-out and external validation
+Rscript environment_loo_predictions2.R
 
 

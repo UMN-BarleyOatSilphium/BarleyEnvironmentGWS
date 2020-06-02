@@ -5,6 +5,9 @@
 ## 
 ## Model the impact of covariates on GxE and LxE
 ## 
+## This script will look at variable selection to determine optimal models that use
+## covariates
+## 
 
 # Repository directory
 repo_dir <- getwd()
@@ -14,7 +17,7 @@ source(file.path(repo_dir, "source.R"))
 
 
 ## Add new packages to load
-pkgs <- union(pkgs, c("modelr", "broom", "lme4", "car", "patchwork"))
+pkgs <- union(pkgs, c("modelr", "broom", "lme4", "car", "patchwork", "caret"))
 # Load these packages
 invisible(lapply(X = pkgs, library, character.only = TRUE))
 
@@ -26,12 +29,14 @@ alpha <- 0.05
 # Load data ---------------------------------------------------------------
 
 # Load covariates for environments and historical covariates
-load(file.path(result_dir, "concurrent_historical_covariables.RData"))
+load(file.path(result_dir, "concurrent_historical_covariables_nasapower.RData"))
+# load(file.path(result_dir, "concurrent_historical_covariables_daymet.RData"))
 
 
 ## Filter BLUEs for modeling
 S2_MET_BLUEs_tomodel <- S2_MET_BLUEs %>%
-  filter(line_name %in% tp) %>%
+  filter(line_name %in% tp,
+         environment %in% train_test_env) %>% # only model train/test environments
   mutate_at(vars(line_name, environment), as.factor)
 
 
@@ -59,61 +64,119 @@ trait_covariate_df <- crossing(trait = traits, covariate = names(ec_tomodel_cent
 # water stress during flowering
 # grain fill water stress
 # grain fill tmax
+# 
 
 
 ## A priori covariates - quite minimal; each should have a citation 
+## 
+## HeadingDate - everything before flowering
+## 
+## PlantHeight - everything before grain fill
+##  
+## Grain yield, grain protein, and test weight
+## - Everything for plant height plus...
+## - Elevated temperature during grain fill (Passarella et al 2005)
+## - Drought during grain fill - (Savin and Nicholas  1996)
+## 
+## 
+## 
+
 apriori_covariate_df <- trait_covariate_df %>%
-  filter(covariate %in% c("early_vegetative.gdd_sum", "late_vegetative.gdd_sum", "flowering.mint_mean",
-                          "grain_fill.maxt_mean", "grain_fill.water_balance_sum"))
+  filter(str_detect(covariate, "soil", negate = TRUE)) %>%
+  {bind_rows(
+    filter(., trait %in% c("HeadingDate", "PlantHeight")),
+    filter(., trait %in% c("GrainProtein", "GrainYield", "TestWeight"),
+           covariate %in% c(subset(., trait == "PlantHeight", covariate, drop = TRUE), 
+                            "grain_fill.tmean_mean", "grain_fill.water_balance_sum"))
+  )}
 
 
+# ## Factorial regression with AIC stepwise selection ##
+# 
+# ## Group by trait and model
+# concurrent_fact_reg <- S2_MET_BLUEs_tomodel %>%
+#   group_by(trait) %>%
+#   do({
+#     
+#     df <- .
+#     # Factorize
+#     df1 <- df %>%
+#       # filter(location != "Aberdeen") %>%
+#       droplevels() %>%
+#       left_join(., ec_tomodel_centered, by = "environment") %>%
+#       mutate_at(vars(line_name, environment), ~fct_contr_sum(as.factor(.)))
+#     
+#     
+#     # Ad hoc
+#     ## Add covariates - filter
+#     covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+#     adhoc_out <- fact_reg(data = df1, covariates = covariates_use, env = "environment", method = "step", criterion = "BIC")
+#     
+#     
+#     # Ad hoc - without soil
+#     ## Add covariates - filter
+#     covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T), 
+#                              covariate, drop = TRUE)
+#     adhoc_nosoil_out <- fact_reg(data = df1, covariates = covariates_use, env = "environment", method = "step")
+#   
+#     
+#     ## Return results
+#     tibble(model = c("base", "base_alt", "model2", "model3"),
+#            adhoc = adhoc_out,
+#            adhoc_nosoil = adhoc_nosoil_out)
+#     
+#   }) %>% ungroup()
 
 
-# # Load packages for local job
-# invisible(lapply(X = pkgs, library, character.only = TRUE))
- 
+# Feature selection ############################################################
 
-## Group by trait and model
-concurrent_fact_reg <- S2_MET_BLUEs_tomodel %>%
+## Use some feature selection procedures to identify covariates
+## 
+## Wrap the feature selection within cross-validation to avoid selection
+## bias
+## 
+## Use lm with CV - implemented through recursive feature elimination
+## 
+
+concurrent_feature_selection_list <- S2_MET_BLUEs_tomodel %>%
   group_by(trait) %>%
-  do({
+  nest() %>%
+  mutate(out = list(NULL))
+
+for (i in seq_len(nrow(concurrent_feature_selection_list))) {
     
-    df <- .
+    df <- concurrent_feature_selection_list$data[[i]] %>%
+      mutate(trait = concurrent_feature_selection_list$trait[i])
     # Factorize
     df1 <- df %>%
+      # filter(location != "Aberdeen") %>%
       droplevels() %>%
       left_join(., ec_tomodel_centered, by = "environment") %>%
       mutate_at(vars(line_name, environment), ~fct_contr_sum(as.factor(.)))
     
-    # Apriori
-    ## Add covariates - filter
-    covariates_use <- subset(apriori_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-    apriori_out <- fact_reg(data = df1, covariates = covariates_use, env = "environment", method = "apriori")
+
+    loo_indices <- df1 %>%
+      group_by(environment) %>%
+      crossv_loo_grouped() %>%
+      pull(train) %>%
+      map("idx")
     
-    # Ad hoc
-    ## Add covariates - filter
-    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-    adhoc_out <- fact_reg(data = df1, covariates = covariates_use, env = "environment", method = "step")
+    ## Recursive feature addition
+    rfa_out_df <- rfa_proc()
+
     
-    # Ad hoc - without soil
-    ## Add covariates - filter
-    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T), 
-                             covariate, drop = TRUE)
-    adhoc_nosoil_out <- fact_reg(data = df1, covariates = covariates_use, env = "environment", method = "step")
+    ## Recursive feature elimination using PLS
     
-    ## Return results
-    tibble(model = c("base", "base_alt", "model2", "model3"),
-           apriori = apriori_out,
-           adhoc = adhoc_out,
-           adhoc_nosoil = adhoc_nosoil_out)
+    # 1. Estimate environmental means
+    # main_fit <- lm(value ~ line_name + environment, data = df1, weights = 1 / (std_error^2))
+    main_fit <- lm(value ~ line_name + environment, data = df1)
+    rfs_out_df <- rfe_proc(main_fit = main_fit, env.col = "environment")
     
-  }) %>% ungroup()
+    concurrent_feature_selection_list$out[[i]] <- bind_rows(rfa_out_df, rfs_out_df)
+    
+}
 
-
-
-
-
-
+concurrent_feature_selection <- unnest(concurrent_feature_selection_list, out)
 
 
 
@@ -129,6 +192,8 @@ concurrent_fact_reg <- S2_MET_BLUEs_tomodel %>%
 
 ## Calculate location means
 S2_MET_loc_BLUEs <- S2_MET_BLUEs %>%
+  # Remove irrigated trials - these will eventually be included
+  filter(!str_detect(environment, "HTM|BZI|AID")) %>%
   group_by(trait, line_name, location) %>%
   summarize(value = mean(value)) %>%
   ungroup()
@@ -163,54 +228,143 @@ historical_ec_tomodel_centered_use <- historical_ec_tomodel_timeframe_centered$t
 # # Load packages
 # invisible(lapply(X = pkgs, library, character.only = TRUE))
 
-## Group by trait and model
-historical_fact_reg <- S2_MET_loc_BLUEs_tomodel %>%
+# historical_fact_reg <- S2_MET_loc_BLUEs_tomodel %>%
+#   group_by(trait) %>%
+#   nest() %>%
+#   mutate(out = list(NULL))
+# 
+# for (i in seq_len(nrow(historical_fact_reg))) {
+#   
+#     df <- historical_fact_reg$data[[i]]
+#     df$trait <- historical_fact_reg$trait[i]
+#     # Factorize
+#     df1 <- df %>%
+#       droplevels() %>%
+#       left_join(., historical_ec_tomodel_centered_use, by = "location") %>%
+#       mutate_at(vars(line_name, location), ~fct_contr_sum(as.factor(.)))
+#     
+#     # Apriori
+#     ## Add covariates - filter
+#     covariates_use <- subset(apriori_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+#     apriori_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "apriori")
+#     
+#     # Ad hoc
+#     ## Add covariates - filter
+#     covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+#     adhoc_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
+#     
+#     # Ad hoc - without soil
+#     ## Add covariates - filter
+#     covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T), 
+#                              covariate, drop = TRUE)
+#     adhoc_nosoil_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
+#     
+#     
+#     ## Step1 ##
+#     # Ad hoc
+#     ## Add covariates - filter
+#     covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+#     adhoc_out_step1 <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step1")
+#     
+#     # Ad hoc - without soil
+#     ## Add covariates - filter
+#     covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T), 
+#                              covariate, drop = TRUE)
+#     adhoc_nosoil_out_step1 <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step1")
+#     
+#     
+#     
+#     
+#     ## Return results
+#     historical_fact_reg$out[[i]] <- tibble(model = c("base", "base_alt", "model4", "model5"),
+#            apriori = apriori_out,
+#            adhoc = adhoc_out,
+#            adhoc_nosoil = adhoc_nosoil_out,
+#            adhoc_step1 = adhoc_out_step1,
+#            adhoc_nosoil_step1 = adhoc_nosoil_out_step1)
+#     
+# }
+# 
+# 
+# historical_fact_reg <- unnest(historical_fact_reg, out)
+
+
+
+# Feature selection ############################################################
+
+historical_feature_selection_list <- S2_MET_loc_BLUEs_tomodel %>%
   group_by(trait) %>%
-  do({
-    
-    df <- .
+  nest() %>%
+  mutate(out = list(NULL))
+
+for (i in seq_len(nrow(historical_feature_selection_list))) {
+
+    df <- historical_feature_selection_list$data[[i]] %>% 
+      mutate(trait = historical_feature_selection_list$trait[i])
     # Factorize
     df1 <- df %>%
+      arrange(location, line_name) %>%
+      # filter(location != "Aberdeen") %>%
       droplevels() %>%
       left_join(., historical_ec_tomodel_centered_use, by = "location") %>%
       mutate_at(vars(line_name, location), ~fct_contr_sum(as.factor(.)))
     
-    # Apriori
-    ## Add covariates - filter
-    covariates_use <- subset(apriori_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-    apriori_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "apriori")
+    loo_indices <- df1 %>%
+      group_by(location) %>%
+      crossv_loo_grouped() %>%
+      pull(train) %>%
+      map("idx")
     
-    # Ad hoc
-    ## Add covariates - filter
-    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-    adhoc_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
-    
-    # Ad hoc - without soil
-    ## Add covariates - filter
-    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T), 
-                             covariate, drop = TRUE)
-    adhoc_nosoil_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
+    ## Recursive feature addition
+    rfa_out_df <- rfa_proc(env.col = "location")
     
     
-    ## Return results
-    tibble(model = c("base", "base_alt", "model4", "model5"),
-           apriori = apriori_out,
-           adhoc = adhoc_out,
-           adhoc_nosoil = adhoc_nosoil_out)
+    ## Recursive feature elimination using PLS
     
-  }) %>% ungroup()
+    # 1. Estimate environmental means
+    main_fit <- lm(value ~ line_name + location, data = df1)
+    rfs_out_df <- rfe_proc(main_fit = main_fit, env.col = "location")
+    
+    historical_feature_selection_list$out[[i]] <- bind_rows(rfa_out_df, rfs_out_df)
+    
+}
+
+historical_feature_selection <- unnest(historical_feature_selection_list, out)
 
 
-
-
-
-
+save("concurrent_feature_selection", "historical_feature_selection", 
+     file = file.path(result_dir, "feature_selection_results_nasapower.RData"))
 
 
 
 
 
 # Analyze results ---------------------------------------------------------
+
+
+# Plot prediction/observation
+tr <- "PlantHeight"
+# form <- concurrent_feature_selection %>%
+form <- historical_feature_selection %>%
+  filter(trait == tr, feat_sel_type == "rfa_cv", model == "model3") %>%
+  pull(adhoc) %>%
+  map(1) %>%
+  unlist() %>%
+  reformulate(termlabels = ., response = "value")
+# dat <- subset(S2_MET_BLUEs_tomodel, trait == tr) %>%
+dat <- subset(S2_MET_loc_BLUEs_tomodel, trait == tr) %>%
+  droplevels() %>%
+  # left_join(., ec_tomodel_centered, by = "environment") %>%
+  left_join(., historical_ec_tomodel_centered_use, by = "location") %>%
+  mutate_at(vars(matches("line_name|environment|location")), ~fct_contr_sum(as.factor(.)))
+loo_indices <- dat %>%
+  group_by_at(vars(matches("environment|location"))) %>%
+  crossv_loo_grouped() %>%
+  pull(train) %>%
+  map("idx")
+train_list <- map(loo_indices, ~lm(form, dat[.x,]))
+test_pred <- map2_df(loo_indices, train_list, ~add_predictions(data = dat[-.x,], model = .y))
+plot(value ~ pred, test_pred); with(test_pred, cor(value, pred))
 
 
 
@@ -381,7 +535,8 @@ ec_fr_results_df <- ec_fr_results %>%
 
 
 ## Save results
-save("ec_fr_results_df", "fr_var_summary", file = file.path(result_dir, "factorial_regression_results.RData"))
+save("ec_fr_results_df", "fr_var_summary", file = file.path(result_dir, "factorial_regression_results_nasapower.RData"))
+# save("ec_fr_results_df", "fr_var_summary", file = file.path(result_dir, "factorial_regression_results_daymet.RData"))
 
 
 
@@ -389,7 +544,7 @@ save("ec_fr_results_df", "fr_var_summary", file = file.path(result_dir, "factori
 ## Double-check models for overfitting
 
 # Load the results
-load(file.path(result_dir, "factorial_regression_results.RData"))
+load(file.path(result_dir, "factorial_regression_results_keep.RData"))
 
 
 ## Refit models
@@ -435,7 +590,8 @@ for (i in seq_len(nrow(ec_fr_refit))) {
 ## Cross-validation
 # Demonstrate with grain yield
 # Leave one location out
-fit_example <- subset(ec_fr_refit, trait == "GrainYield" & timeframe == "historical" & selection == "adhoc", fit, drop = TRUE)[[1]]
+fit_example <- subset(ec_fr_refit, trait == "GrainYield" & timeframe == "concurrent" & selection == "adhoc", fit, drop = TRUE)[[1]]
+
 
 ## Get the data, assign locations
 mf <- model.frame(fit_example)
@@ -450,21 +606,212 @@ crossv_data <- mf1 %>%
   crossv_loo_grouped()
 
 
-## Fit models
+## The original
 crossv_fit <- map(crossv_data$train, ~update(fit_example, data = .))
-crossv_predict <- map2(crossv_fit, crossv_data$test, predict)
-# Predict, measure RMSE
-crossv_rmse <- map2_dbl(crossv_fit, crossv_data$test, rmse)
-rmse(fit_example, mf1)
+crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
+# Plot
+plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
+mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
 
-## Average error in CV is not different that error from full model!!
+# RMSE ~ 500
+
+
+## Testing ##
+# Remove some soil variables
+# 1. base saturation
+fit_test1 <- terms(fit_example) %>% 
+  drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% "topsoil_base_saturation"), keep.response = TRUE) %>% 
+  formula() %>%
+  update(object = fit_example, formula = ., data = mf1)
+
+## Fit models
+crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
+crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
+# Plot
+plot(value ~ pred, crossv_predict)
+mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
+
+# RMSE ~ 1000
+
+
+# 2. subsoil_teb
+fit_test1 <- terms(fit_example) %>% 
+  drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% "subsoil_teb"), keep.response = TRUE) %>% 
+  formula() %>%
+  update(object = fit_example, formula = ., data = mf1)
+
+## Fit models
+crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
+crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
+# Plot
+plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
+mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
+
+# RMSE ~ 730
+
+
+# 3. subsoil_calcium_carbonate
+fit_test1 <- terms(fit_example) %>% 
+  drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% "subsoil_calcium_carbonate"), keep.response = TRUE) %>% 
+  formula() %>%
+  update(object = fit_example, formula = ., data = mf1)
+
+## Fit models
+crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
+crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
+# Plot
+plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
+mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
+
+# RMSE ~ 1016
+
+# 4. pH
+fit_test1 <- terms(fit_example) %>% 
+  drop.terms(termobj = ., dropx = which( str_detect(string = attr(., "term.labels"), pattern = "pH")), keep.response = TRUE) %>% 
+  formula() %>%
+  update(object = fit_example, formula = ., data = mf1)
+
+## Fit models
+crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
+crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
+# Plot
+plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
+mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
+
+# 4. pH
+fit_test1 <- terms(fit_example) %>% 
+  drop.terms(termobj = ., dropx = which( str_detect(string = attr(., "term.labels"), pattern = "topsoil_pH_h2o")), keep.response = TRUE) %>% 
+  formula() %>%
+  update(object = fit_example, formula = ., data = mf1)
+
+## Fit models
+crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
+crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
+# Plot
+plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
+mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
+
+
+
+## Weather
+# 4. mean temperatures
+fit_test1 <- terms(fit_example) %>% 
+  drop.terms(termobj = ., dropx = which( str_detect(string = attr(., "term.labels"), pattern = "tmean")), keep.response = TRUE) %>% 
+  formula() %>%
+  update(object = fit_example, formula = ., data = mf1)
+
+## Fit models
+crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
+crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
+# Plot
+plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
+mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
+
+
+# 5. Choose min, max, or mean temperature for a growth stage
+# Choose the min, max, or mean with highest SS
+to_remove <- c("late_vegetative.mint_mean", "late_vegetative.mint_mean", "grain_fill.maxt_mean")
+fit_test1 <- terms(fit_example) %>% 
+  drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% to_remove), keep.response = TRUE) %>% 
+  formula() %>%
+  update(object = fit_example, formula = ., data = mf1)
+
+## Fit models
+crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
+crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
+# Plot
+plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
+mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
+
+
+# Test a reduced model using the tests from above
+## Choose the min, max, or mean with highest SS
+to_remove <- c("early_vegetative.maxt_mean", "late_vegetative.maxt_mean", "subsoil_teb")
+fit_test1 <- terms(fit_example) %>% 
+  drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% to_remove), keep.response = TRUE) %>% 
+  formula() %>%
+  update(object = fit_example, formula = ., data = mf1)
+
+## Fit models
+crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
+crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
+# Plot
+plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
+mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
+
+
+
+## Effect plots
+all_effects <- allEffects(fit_test1)
+plot(all_effects[str_detect(names(all_effects), "line_name", negate = TRUE)])
+
+
+
+
+## Try another example
+
+## Cross-validation
+# Demonstrate with grain yield
+# Leave one location out
+fit_example <- subset(ec_fr_refit, trait == "HeadingDate" & timeframe == "concurrent" & selection == "adhoc_nosoil", fit, drop = TRUE)[[1]]
+
+
+## Get the data, assign locations
+mf <- model.frame(fit_example)
+cov_use <- which.max(sapply(mf[,-1:-2], n_distinct))
+mf1 <- mf %>%
+  as_tibble() %>%
+  mutate_at(vars(2 + cov_use), list(location = ~paste0("loc", as.numeric(as.factor(.)))))
+
+## Leave-one-location-out
+crossv_data <- mf1 %>%
+  group_by(location) %>%
+  crossv_loo_grouped()
+
+
+## The original
+crossv_fit <- map(crossv_data$train, ~update(fit_example, data = .))
+crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
+# Plot
+plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
+mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
+
+# RMSE ~ 500
+
+
+## Testing ##
+## Choose the min, max, or mean with highest SS
+to_remove <- c("early_vegetative.maxt_mean", "late_vegetative.tmean_mean")
+fit_test1 <- terms(fit_example) %>% 
+  drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% to_remove), keep.response = TRUE) %>% 
+  formula() %>%
+  update(object = fit_example, formula = ., data = mf1)
+
+## Fit models
+crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
+crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
+# Plot
+plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
+mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
+
+## Effect plots
+all_effects <- allEffects(fit_test1)
+plot(all_effects[str_detect(names(all_effects), "line_name", negate = TRUE)])
+
+
+
+
+
+
+
 
 
 
 ## Run for all traits
 ec_fr_refit_crossv <- ec_fr_refit %>%
   mutate(full_rmse = as.numeric(NA),
-         crossv_rmse = list(NULL))
+         crossv_rmse = list(NULL),
+         predictions = list(NULL))
 
 for (i in seq_len(nrow(ec_fr_refit_crossv))) {
   
@@ -489,6 +836,10 @@ for (i in seq_len(nrow(ec_fr_refit_crossv))) {
   # Predict, measure RMSE
   ec_fr_refit_crossv$crossv_rmse[[i]] <- map2_dbl(crossv_fit, crossv_data$test, rmse)
   ec_fr_refit_crossv$full_rmse[i] <- rmse(fit_example, mf1)
+  ec_fr_refit_crossv$predictions[[i]] <- crossv_data %>% 
+    mutate(prediction = map2(test, crossv_fit, ~add_predictions(as.data.frame(.x), .y))) %>% 
+    unnest(prediction)
+  
   
 }
 

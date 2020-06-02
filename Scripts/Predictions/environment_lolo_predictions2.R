@@ -30,10 +30,14 @@ library(parallel)
 n_core <- 12
 
 # time_frame to use for the location relationship matrix
-time_frame_use <- "time_frame5"
+time_frame_use <- "time_frame5_2010_2014"
+
+## Load covariate data
+load(file.path(result_dir, "concurrent_historical_covariables_nasapower.RData"))
 
 ## Load the factorial regression results
-load(file.path(result_dir, "factorial_regression_results.RData"))
+# load(file.path(result_dir, "factorial_regression_results.RData"))
+load(file.path(result_dir, "feature_selection_results_nasapower.RData"))
 
 
 # For each environment, fit 3 models:
@@ -63,11 +67,11 @@ model_fixed_forms <- formulas(
   .response = ~ value,
   model1 = ~ 1,
   # model2_fr = reformulate(covariate_list$main),
-  model2_cov = model1,
-  model2_id = model2_cov,
+  model4_cov = model1,
+  model4_id = model4_cov,
   # model3_fr = model2_fr,
-  model3_cov = model1,
-  model3_id = model3_cov
+  model5_cov = model1,
+  model5_id = model5_cov
 )
 
 ## Models for de novo fitting 
@@ -76,11 +80,11 @@ model_rand_forms <- formulas(
   .response = ~ value,
   model1 = ~ vs(line_name, Gu = K),
   # model2_fr = model1,
-  model2_cov = add_predictors(model1, ~ vs(loc1, Gu = E)),
-  model2_id = add_predictors(model1, ~ vs(loc1, Gu = I)),
+  model4_cov = add_predictors(model1, ~ vs(loc1, Gu = E)),
+  model4_id = add_predictors(model1, ~ vs(loc1, Gu = I)),
   # model3_fr = model3_fr_rand,
-  model3_cov = add_predictors(model2_cov, ~ vs(line_name:loc1, Gu = GE)),
-  model3_id = add_predictors(model2_cov, ~ vs(line_name:loc1, Gu = GI))
+  model5_cov = add_predictors(model4_cov, ~ vs(line_name:loc1, Gu = GE)),
+  model5_id = add_predictors(model4_cov, ~ vs(line_name:loc1, Gu = GI))
 ) %>% map(~ formula(delete.response(terms(.)))) # Remove response
 
 # Combine into list
@@ -90,6 +94,8 @@ model.list <- list(fixed = model_fixed_forms, random = model_rand_forms)
 
 # Data to use - location means
 S2_MET_loc_BLUEs <- S2_MET_BLUEs %>%
+  # Remove irrigated trials - these will eventually be included
+  filter(!str_detect(environment, "HTM|BZI|AID")) %>%
   group_by(trait, line_name, location) %>%
   summarize(value = mean(value)) %>%
   ungroup()
@@ -139,6 +145,10 @@ lolo_train_test <- data_to_model %>%
 data_train_test1 <- lolo_train_test %>% 
   assign_cores(df = ., n_core = n_core, split = TRUE)
 
+## Only use models 2 and 3 with covariates; save the others for a separate run, 
+## since they will be the same
+model.list1 <- lapply(X = model.list, "[", c("model4_cov", "model5_cov"))
+
 
 ## Parallelize
 lolo_predictions_out <- data_train_test1 %>%
@@ -162,7 +172,7 @@ lolo_predictions_out <- data_train_test1 %>%
         map("covariate")
       
       # Create a matrix of scaled and centered covariates
-      covariate_mat <- historical_ec_tomodel_scaled[[time_frame_use]] %>%
+      covariate_mat <- historical_ec_tomodel_timeframe_scaled[[time_frame_use]] %>%
         filter(location %in% levels(row$train[[1]]$loc1)) %>%
         select(., location, unique(unlist(covariate_list))) %>%
         as.data.frame() %>%
@@ -178,7 +188,7 @@ lolo_predictions_out <- data_train_test1 %>%
       }
       
       # The genomewide prediction function is in the source_functions.R script
-      prediction_out <- genomewide_prediction2(x = row, model.list = model.list, K = K, E = Emain, KE = Eint)
+      prediction_out <- genomewide_prediction2(x = row, model.list = model.list1, K = K, E = Emain, KE = Eint)
       
       ###################
       

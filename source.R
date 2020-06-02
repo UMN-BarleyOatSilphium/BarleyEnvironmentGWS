@@ -43,7 +43,7 @@ load(file.path(pheno_dir, "S2_tidy_BLUE.RData"))
 
 # Load the trial metadata
 trial_info <- read_csv(file = file.path(meta_dir, "trial_metadata.csv")) %>%
-  filter(population %in% c("s2tp", "s2c1", "s2met"), type == "spy") %>%
+  filter(population %in% c("s2tp", "s2c1", "s2c1r", "s2met"), type == "spy") %>%
   ## Replace Ithaca1 and Ithaca2 with Ithaca
   mutate(location = str_replace_all(location, "Ithaca1|Ithaca2", "Ithaca"))
 
@@ -67,7 +67,7 @@ traits <- c("GrainYield", "HeadingDate", "PlantHeight", "TestWeight", "GrainProt
 trials <- subset(trial_info, project2 == "S2MET", trial, drop = TRUE)
 
 
-# Find the tp and vp that are genotypes
+# Find the tp and vp that are genotyped with markers
 tp_geno <- intersect(tp, row.names(s2_imputed_mat))
 vp_geno <- intersect(vp, row.names(s2_imputed_mat))
 
@@ -82,23 +82,15 @@ K <- A.mat(X = s2_imputed_mat_use, min.MAF = 0, max.missing = 1)
 
 
 ## Rank the environments according to heritability
-env_herit_rank <- s2_metadata %>% 
+env_trait_herit <- s2_metadata %>% 
   select(trial, trait, heritability) %>% 
-  left_join(., distinct(s2_tidy_BLUE, trial, environment)) %>%
+  left_join(., distinct(s2_tidy_BLUE, trial, environment), by = "trial") %>%
   filter(!str_detect(trial, "S2C1"),
          trial %in% trials) %>%
   select(trait, environment, heritability) %>%
   # filter for relevant traits
   filter(trait %in% traits) %>%
-  split(.$trait) %>%
-  map(~arrange(., desc(heritability)) %>%
-        mutate(environment = factor(environment, levels = .$environment)))
-
-## Remove environments with low heritability
-## This will be the df for correcting for heritability when calculating prediction accuracy
-env_trait_herit <- env_herit_rank %>%
-  map(mutate, environment = as.character(environment)) %>% 
-  map_df(~filter(., heritability >= 0.10))
+  filter(., heritability >= 0.10)
 
 
 ## Filter the S2 tidy blues for S2MET
@@ -111,8 +103,8 @@ S2_MET_BLUEs <- s2_tidy_BLUE %>%
   # Add full location name
   select(-location) %>%
   left_join(., distinct(trial_info, environment, location)) %>%
-  # Remove irrigated trials
-  filter(!str_detect(environment, "HTM|BZI|AID")) %>%
+  # Remove irrigated trials - these will eventually be included
+  filter(!str_detect(environment, "HTM")) %>%
   # Remove environments deemed failures (i.e. HNY16 for grain yield)
   filter(!(environment == "HNY16" & trait == "GrainYield"),
          !(environment == "EON17" & trait == "HeadingDate"),
@@ -121,51 +113,24 @@ S2_MET_BLUEs <- s2_tidy_BLUE %>%
   select(trial, environment, location, year, trait, line_name, value, std_error = std.error)
 
 
-
-# Find environments in which just data on both the TP and VP is available
-tp_vp_env <- S2_MET_BLUEs %>% 
+## Separate environments into those for training/testing and those for external validation
+train_test_env <- S2_MET_BLUEs %>% 
   group_by(environment) %>%
   filter(sum(line_name %in% tp_geno) > 1, sum(line_name %in% vp_geno) > 1) %>% 
   distinct(environment) %>% 
-  pull()
+  pull() %>%
+  sort()
 
-# Find environments in which just data on the TP is available
-tp_only_env <- S2_MET_BLUEs %>% 
-  group_by(environment) %>%
-  filter(sum(line_name %in% tp_geno) > 1, sum(line_name %in% vp_geno) == 0) %>% 
-  distinct(environment) %>% 
-  pull()
-
-# Find environments in which just data on the VP is available
-vp_only_env <- S2_MET_BLUEs %>% 
+validation_env <- S2_MET_BLUEs %>% 
   group_by(environment) %>%
   filter(sum(line_name %in% tp_geno) == 0, sum(line_name %in% vp_geno) > 1) %>% 
   distinct(environment) %>% 
   pull()
-
-## Split these vectors based on traits
-tp_vp_env_trait <- S2_MET_BLUEs %>% 
-  group_by(environment, trait) %>%
-  filter(sum(line_name %in% tp_geno) > 1, sum(line_name %in% vp_geno) > 1) %>% 
-  split(.$trait) %>% 
-  map(~unique(.$environment))
-  
-tp_only_env_trait <- S2_MET_BLUEs %>% 
-  group_by(environment) %>%
-  filter(sum(line_name %in% tp_geno) > 1, sum(line_name %in% vp_geno) == 0) %>%
-  split(.$trait) %>% 
-  map(~unique(.$environment))
-  
-vp_only_env_trait <- S2_MET_BLUEs %>% 
-  group_by(environment) %>%
-  filter(sum(line_name %in% tp_geno) == 0, sum(line_name %in% vp_geno) > 1) %>% 
-  split(.$trait) %>% 
-  map(~unique(.$environment))
 
 
 
 ## Final filter of BLUEs
-S2_MET_BLUEs <- filter(S2_MET_BLUEs, environment %in% tp_vp_env) %>%
+S2_MET_BLUEs <- filter(S2_MET_BLUEs, environment %in% c(train_test_env, validation_env)) %>%
   ## Replace Ithaca1 and Ithaca2 with Ithaca
   mutate(location = str_replace_all(location, "Ithaca1|Ithaca2", "Ithaca")) %>%
   arrange(trait, environment)

@@ -22,18 +22,22 @@ invisible(lapply(X = pkgs, library, character.only = TRUE))
 # Significance level
 alpha <- 0.05
 
+# Correlations cutoff
+max_cor <- 0.90
+
 ## Environments to use with corresponding trials
 env_trials <- S2_MET_BLUEs %>% 
   distinct(trial, environment) %>%
-  filter(environment %in% tp_vp_env,
+  filter(environment %in% c(train_test_env, validation_env),
          str_detect(trial, "S2C1", negate = TRUE))
 
 
 
 
-############################
-### Assess accuracy of heading date predictions from multi-cultivar crop models
-############################
+
+# Assess accuracy of heading date predictions from multi-cultivar  --------
+
+
 
 load(file.path(enviro_dir, "GrowthStaging/apsim_s2met_model_cultivar_test_results.RData"))
 
@@ -68,14 +72,14 @@ cgm_predicted_heading <- apsim_s2met_cultivar_out1 %>%
   # Remove S2C1 trials
   filter(str_detect(trial, "S2C1", negate = TRUE))
 
-# Get the environmental means of heading date from the AMMI model
-env_mean_heading <- ammi_fit %>% 
-  filter(trait == "HeadingDate") %>% 
-  mutate(env_mean = map(fit_ammi, ~.x$mu + .x$Eeffect),
-         env_mean = map(env_mean, ~tibble(environment = names(.), 
-                                          obs_HD = .))) %>% 
-  unnest(env_mean) %>%
-  filter(environment != "EON17")
+# # Get the environmental means of heading date from the AMMI model
+# env_mean_heading <- ammi_fit %>% 
+#   filter(trait == "HeadingDate") %>% 
+#   mutate(env_mean = map(fit_ammi, ~.x$mu + .x$Eeffect),
+#          env_mean = map(env_mean, ~tibble(environment = names(.), 
+#                                           obs_HD = .))) %>% 
+#   unnest(env_mean) %>%
+#   filter(environment != "EON17")
 
 
 ## Combine
@@ -121,9 +125,40 @@ ggsave(filename = "cgm_pred_obs_HD_cultivars.jpg", plot = g_cgm_cultivar_summary
 
 
 
-############################
-### Assess accuracy of heading date predictions from the chosen crop model
-############################
+
+# Assess accuracy of heading date predictions from the chosen crop --------
+
+
+## Load the environmental covariates
+# load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates_daymet.RData"))
+load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates_nasapower.RData"))
+
+
+## Fit models to calculate environmental means
+env_means <- S2_MET_BLUEs %>%
+  filter(line_name %in% c(tp, vp)) %>%
+  group_by(trait) %>%
+  do({
+    df <- .
+    
+    ## Factorize
+    df1 <- mutate_at(df, vars(line_name, environment), ~fct_contr_sum(as.factor(.))) %>%
+      mutate(weight = std_error^2)
+    
+    # Fit the model
+    fit <- lmer(value ~ (1|line_name) + environment, data = df1, weights = weight)
+    
+    ## Return a df of environmental effects
+    fixef(fit) %>% 
+      tibble(environment = names(.), effect = .) %>% 
+      filter(environment != "(Intercept)") %>% 
+      mutate(environment = str_remove(environment, "environment"),
+             mu = fixef(fit)[1]) %>% 
+      add_row(environment = last(levels(df1$environment)), effect = -sum(.$effect), 
+              mu = .$mu[1])
+    
+  }) %>% ungroup()
+
 
 
 # Calculate avereage DAP of heading date predictions from CGM
@@ -137,12 +172,9 @@ cgm_predicted_heading <- growth_stage_weather %>%
   filter(str_detect(trial, "S2C1", negate = TRUE))
 
 # Get the environmental means of heading date from the AMMI model
-env_mean_heading <- ammi_fit %>% 
+env_mean_heading <- env_means %>% 
   filter(trait == "HeadingDate") %>% 
-  mutate(env_mean = map(fit_ammi, ~.x$mu + .x$Eeffect),
-         env_mean = map(env_mean, ~tibble(environment = names(.), 
-                                          obs_HD = .))) %>% 
-  unnest(env_mean) %>%
+  mutate(obs_HD = mu + effect) %>%
   filter(environment != "EON17")
 
 
@@ -176,6 +208,9 @@ plotly::ggplotly(g_hd)
 cgm_pred_HD_summary_annotate <- cgm_pred_HD_summary %>%
   mutate(pred_HD_mean_cor = paste0("r==", round(pred_HD_mean_cor, 3)),
          pred_HD_mean_rmse = paste0("RMSE==", round(pred_HD_mean_rmse, 3)))
+# fit
+fit <- lm(obs_HD ~ pred_HD_mean, data = pred_obs_heading, subset = stage == "flowering")
+
 g_cgm_summary <- pred_obs_heading %>%
   filter(stage == "flowering") %>%
   ggplot(aes(x = obs_HD, y = pred_HD_mean)) +
@@ -196,13 +231,13 @@ ggsave(filename = "cgm_pred_obs_HD.jpg", plot = g_cgm_summary, path = fig_dir,
 
 
 
-############################
-### Prepare environment-concurrent covariates
-############################
+# Prepare environment-concurrent covariates -------------------------------
+
+
 
 ## Load the environmental covariates
-load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates.RData"))
-
+# load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates_daymet.RData"))
+load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates_nasapower.RData"))
 
 ## Create the ECs and select the relevant ones for modeling
 growth_stage_covariates1 <- growth_stage_covariates %>%
@@ -235,62 +270,16 @@ ec_select_summ <- ec_select %>%
                na.rm = T)
 
 ## Remove covariates with low CV
-ec_select <- select(ec_select, environment, subset(ec_select_summ, !is.na(cv), covariate, drop = TRUE))
+ec_select1 <- select(ec_select, environment, subset(ec_select_summ, !is.na(cv), covariate, drop = TRUE))
 
 
-##### 
-# Look at correlations between covariates
-##### 
+### Covariate diagnostics ###
 
-
-## Calculate pairwise correlations
-ec_pairwise_cor <- cor(ec_select[,-1], use = "pairwise.complete.obs") %>% 
-  as.dist() %>%
-  tidy() %>%
-  rename(covariate1 = item1, covariate2 = item2, correlation = distance) %>%
-  # Sort by descending absolution cor coef
-  arrange(desc(abs(correlation)))
-
-
-## Are there covariates that tend to be highly correlated with others?
-ec_pairwise_cor %>% 
-  group_by(covariate1) %>% 
-  summarize(correlation = mean(correlation)) %>% 
-  arrange(desc(abs(correlation)))
-
-
-
-## Separate covariates into stage and measurement
-ec_pairwise_cor1 <- ec_pairwise_cor %>%
-  separate(covariate1, c("stage1", "measurement1"), sep = "\\.") %>%
-  separate(covariate2, c("stage2", "measurement2"), sep = "\\.")
-
-
-## Are there measurements that tend to be highly correlated with others?
-ec_pairwise_cor1 %>% 
-  group_by(measurement1, measurement2) %>% 
-  summarize(correlation = mean(correlation)) %>%
-  arrange(desc(abs(correlation)))
-
-
-
-## Which covariates are enriched beyond some threshold?
-cor_threshold <- 0.6
-ec_pairwise_cor %>% 
-  filter(correlation >= cor_threshold) %>%
-  group_by(covariate2) %>%
-  summarize(n = n()) %>%
-  arrange(desc(n))
-
-
-
-## Filter out some covariates
-to_remove <- c("radn_mean", "tmean_mean")
-
-
+# Remove mean temperature, which is a linear combination of two other variables
+ec_select2 <- ec_select1 # %>% select(-matches("tmean"))
 
 ## Test for normality using ks test
-ec_tomodel_normality <- ec_select %>%
+ec_tomodel_normality <- ec_select2 %>%
   gather(covariate, value, -environment) %>%
   group_by(covariate) %>%
   do(ks_test = ks.test(x = .$value, y = "pnorm", mean = mean(.$value, na.rm = T), sd = sd(.$value, na.rm = T))) %>%
@@ -298,6 +287,7 @@ ec_tomodel_normality <- ec_select %>%
   mutate(p_value = map_dbl(ks_test, "p.value"),
          p_adj = p.adjust(p = p_value, method = "bonf"))
 
+## Which covariates fail?
 subset(ec_tomodel_normality, p_adj < 0.1)
 
 ## Which ECs should be kept
@@ -306,15 +296,49 @@ ec_to_keep <- subset(ec_tomodel_normality, p_adj >= 0.10, covariate, drop = TRUE
 
 
 # Remove some covariate and impute with the mean
-ec_select1 <- ec_select %>%
+ec_select3 <- ec_select2 %>%
   select(c("environment", ec_to_keep)) %>%
   # Inpute using the mean
   mutate_at(vars(-environment), impute)
 
 
+## Calculate pairwise correlations
+ec_tidy_cor <- ec_select3 %>%
+  select(-environment) %>%
+  cor() %>%
+  as.dist() %>%
+  tidy() %>%
+  rename_all(~c("covariate1", "covariate2", "correlation")) %>%
+  mutate_at(vars(-correlation), as.character)
+
+## Find those pairs of covariates with inflated correlations, above 0.9
+(ec_inflated_cor <- ec_tidy_cor %>% 
+  filter(abs(correlation) > max_cor))
+
+# covariate1                covariate2                correlation
+# 1 subsoil_pH_h2o            subsoil_base_saturation         0.939
+# 2 topsoil_calcium_carbonate subsoil_calcium_carbonate       0.990
+# 3 subsoil_teb               subsoil_cec_soil                0.911
+# 4 subsoil_teb               subsoil_pH_h2o                  0.935
+# 5 topsoil_ref_bulk_density  subsoil_ref_bulk_density        0.934
+# 6 topsoil_teb               subsoil_teb                     0.945
+# 7 topsoil_pH_h2o            topsoil_base_saturation         0.911
+
+## Remove the following:
+## 
+## base_saturation, since it is nearly linearly correlated with pH (HWSD docs)
+## subsoil_teb, for high correlations with others
+## subsoil_calcium_carbonate
+## subsoil_ref_bulk_density
+## 
+
+ec_select4 <- ec_select3 # %>% select(-subsoil_teb, -subsoil_ref_bulk_density)
+
+
+
 ## Prepare the covariates for modeling
 ## Center, but do not scale. Save the mean for later
-ec_tomodel_temp <- ec_select1 %>%
+ec_tomodel_temp <- ec_select4 %>%
   mutate_at(vars(-environment), scale, scale = FALSE, center = TRUE)
 
 ec_tomodel_centers <- ec_tomodel_temp %>%
@@ -326,7 +350,7 @@ ec_tomodel_centered <- ec_tomodel_temp %>%
   mutate_at(vars(-environment), as.numeric)
 
 ## Center and scale
-ec_tomodel_scaled <- ec_select1 %>%
+ec_tomodel_scaled <- ec_select4 %>%
   mutate_at(vars(-environment), scale, scale = TRUE, center = TRUE) %>%
   mutate_at(vars(-environment), as.numeric)
 
@@ -336,25 +360,28 @@ environmental_covariates <- names(ec_tomodel_centered)[-1]
 
 
 ## Visualize histogram
-ec_select %>%
+ec_select4 %>%
   gather(covariate, value, -environment) %>%
   ggplot(aes(x = value)) +
   geom_histogram() +
-  facet_wrap(~ covariate, scales = "free_x") +
+  facet_wrap(~ covariate, scales = "free") +
   theme_presentation2(10)
 
 
 
-############################
-### Prepare historical covariates
-############################
+
+# Prepare historical covariates -------------------------------------------
+
+
 
 # Load the covariate data
 load(file.path(enviro_dir, "EnvironmentalCovariates/historical_environmental_covariates.RData"))
 
 ## Environments to use with corresponding trials
 loc_trials <- S2_MET_BLUEs %>% 
-  filter(environment %in% tp_vp_env,
+  # Remove irrigated trials - these will eventually be included
+  filter(!str_detect(environment, "HTM")) %>%
+  filter(environment %in% c(train_test_env, validation_env),
          str_detect(trial, "S2C1", negate = TRUE)) %>%
   distinct(trial, location)
 
@@ -377,9 +404,7 @@ growth_stage_covariates1 <- growth_stage_covariates %>%
   # Filter for years before those observed in the S2MET project
   filter(year < min(S2_MET_BLUEs$year)) %>%
   gather(covariate, value, -trial, -stage, -location, -year) %>%
-  unite(covariate, stage, covariate, sep = ".") %>%
-  ## Remove "radn_mean" 
-  filter(str_detect(covariate, "radn_mean", negate = TRUE))
+  unite(covariate, stage, covariate, sep = ".")
 
 soil_covariates1 <- soil_covariates %>%
   mutate(location = str_replace_all(location, "Ithaca1|Ithaca2", "Ithaca"),
@@ -391,29 +416,9 @@ soil_covariates1 <- soil_covariates %>%
   left_join(distinct(growth_stage_covariates1, year, trial, location), .)
 
 ## Combine
-ec_select <- bind_rows(growth_stage_covariates1, soil_covariates1)
-
-
-## Summarize min/max/var for each covariate
-ec_select_summ <- ec_select %>%
-  group_by(covariate, year) %>%
-  summarize_at(vars(value), list(min = min, max = max, sd = sd, cv = cv), 
-               na.rm = T) %>%
-  ungroup()
-
-ec_year_tokeep <- ec_select_summ %>% 
-  filter(!is.na(cv)) %>%
-  select(covariate, year)
-
-## Remove covariates with low CV
-ec_select <- ec_select %>%
-  inner_join(ec_year_tokeep, .)
-
-
-
-# Vector of covariate names
-ec_names <- unique(ec_select$covariate)
-
+hist_ec_select <- bind_rows(growth_stage_covariates1, soil_covariates1) %>%
+  # Select only those covariates used for individual environments
+  filter(covariate %in% names(ec_select4))
 
 ## Create timeframes ##
 #
@@ -423,7 +428,7 @@ ec_names <- unique(ec_select$covariate)
 # 
 
 # Create the vector of years
-all_historical_years <- seq(max(ec_select$year) - 30 + 1, max(ec_select$year))
+all_historical_years <- seq(max(hist_ec_select$year) - 30 + 1, max(hist_ec_select$year))
 
 # Create accumulating years
 year_time_frame <- accumulate(rev(all_historical_years), c)
@@ -438,9 +443,9 @@ ec_select_timeframe <- tibble(
   time_frame = paste0("time_frame", map_chr(year_time_frame, ~paste(length(.), min(.), max(.), sep = "_"))),
   years = year_time_frame) %>%
   # Subset the historical EC
-  mutate(ec_data = map(years, ~subset(ec_select, year %in% .x)))
+  mutate(ec_data = map(years, ~subset(hist_ec_select, year %in% .x)))
 
-# Summarize
+# Summarize - calculate the mean covariate for each location across years
 ec_select_timeframe_summary <- ec_select_timeframe %>%
   unnest(ec_data) %>%
   group_by(time_frame, covariate, location) %>%
@@ -452,7 +457,7 @@ ec_select_window <- tibble(
   time_frame = unlist(imap(year_sliding_window, function(l, name) map_chr(l, ~paste0(name, "_", min(.x), "_", max(.x))))),
   years = unlist(year_sliding_window, recursive = FALSE)) %>%
   # Subset the historical EC
-  mutate(ec_data = map(years, ~subset(ec_select, year %in% .x)))
+  mutate(ec_data = map(years, ~subset(hist_ec_select, year %in% .x)))
 
 # Summarize
 ec_select_window_summary <- ec_select_window %>%
@@ -463,132 +468,95 @@ ec_select_window_summary <- ec_select_window %>%
 
 
 
-
-## Measure the relationship between covariates from different time frames
-ec_select_timeframe_corr <- ec_select_timeframe_summary %>% 
-  group_by(covariate) %>%
-  do(cor_mat = {
-    df <- .
-    select(df, -covariate) %>% 
-      spread(time_frame, value) %>% 
-      as.data.frame() %>% 
-      column_to_rownames("location") %>% 
-      cor()
-  })
-
-setNames(object = ec_select_timeframe_corr$cor_mat, ec_select_timeframe_corr$covariate)
-
 ## Spread the data
 ec_select_timeframe_summary_wide <- spread(ec_select_timeframe_summary, covariate, value)
 ec_select_window_summary_wide <- spread(ec_select_window_summary, covariate, value)
 
 
-##### 
-# Look at correlations between covariates
-##### 
 
 
-## Calculate pairwise correlations
-ec_pairwise_cor <- ec_select_timeframe_summary_wide %>% 
-  split(.$time_frame) %>% 
-  map(~cor(.[,-1:-2]) %>%
-        as.dist() %>%
-        tidy() %>%
-        rename(covariate1 = item1, covariate2 = item2, correlation = distance) %>%
-        # Sort by descending absolution cor coef
-        arrange(desc(abs(correlation))) )
-
-## Are there covariates that tend to be highly correlated with others?
-ec_pairwise_cor %>% 
-  map(~group_by(., covariate1) %>% 
-        summarize(correlation = mean(correlation)) %>% 
-        arrange(desc(abs(correlation))) )
-
-## Which covariates are enriched in correlations beyond some threshold?
-cor_threshold <- 0.6
-ec_pairwise_cor %>% 
-  map(~filter(., correlation >= cor_threshold) %>%
-        group_by(covariate2) %>%
-        summarize(n = n()) %>%
-        arrange(desc(n)) )
+### Covariate diagnostics ###
 
 
-# Vector of covariates
-environmental_covariates <- ec_names
-
+# Number of distinct covariates (number of independent tests)
+nTests <- n_distinct(ec_select_timeframe_summary$covariate)
 
 ## Test for normality using ks test
-ec_tomodel_normality_timeframe <- ec_select_timeframe_summary_wide %>%
-  gather(covariate, value, environmental_covariates) %>%
-  group_by(time_frame, covariate) %>%
-  do(ks_test = ks.test(x = .$value, y = "pnorm", mean = mean(.$value), sd = sd(.$value))) %>%
+ec_timeframe_normality <- ec_select_timeframe_summary %>%
+  group_by(covariate, time_frame) %>%
+  do(ks_test = ks.test(x = .$value, y = "pnorm", mean = mean(.$value, na.rm = T), sd = sd(.$value, na.rm = T))) %>%
   ungroup() %>%
-  mutate(p_value = map_dbl(ks_test, "p.value")) %>%
-  split(.$time_frame) %>%
-  map_df(~mutate(., p_adj = p.adjust(p_value, method = "bonf")))
+  mutate(p_value = map_dbl(ks_test, "p.value"),
+         p_adj = p.adjust(p = p_value, method = "bonf"))
 
-(ec_sig_nonnormal_timeframe <- subset(ec_tomodel_normality_timeframe, p_adj < 0.10))
+# Find covariates that failed
+subset(ec_timeframe_normality, p_value < (0.1 / nTests))
 
-# Check covariate by time_frame
-# Determine which covariates to exclude
-ec_to_remove_timeframe <- group_by(ec_sig_nonnormal_timeframe, covariate) %>% 
-  summarize(n = n_distinct(time_frame)) %>% 
-  filter(n > 20) %>% 
-  pull(covariate)
+## None to remove
 
 
-# Repeat with window
-ec_tomodel_normality_window <- ec_select_window_summary_wide %>%
-  gather(covariate, value, environmental_covariates) %>%
-  group_by(time_frame, covariate) %>%
-  do(ks_test = ks.test(x = .$value, y = "pnorm", mean = mean(.$value), sd = sd(.$value))) %>%
+# Repeat for window
+## Test for normality using ks test
+ec_window_normality <- ec_select_window_summary %>%
+  group_by(covariate, time_frame) %>%
+  do(ks_test = ks.test(x = .$value, y = "pnorm", mean = mean(.$value, na.rm = T), sd = sd(.$value, na.rm = T))) %>%
   ungroup() %>%
-  mutate(p_value = map_dbl(ks_test, "p.value")) %>%
-  split(.$time_frame) %>%
-  map_df(~mutate(., p_adj = p.adjust(p_value, method = "bonf")))
+  mutate(p_value = map_dbl(ks_test, "p.value"),
+         p_adj = p.adjust(p = p_value, method = "bonf"))
 
-(ec_sig_nonnormal_window <- subset(ec_tomodel_normality_window, p_adj < 0.10))
+# Find covariates that failed
+subset(ec_window_normality, p_value < (0.1 / nTests))
 
-# Check covariate by time_frame
-# Determine which covariates to exclude
-ec_to_remove_window <- group_by(ec_sig_nonnormal_window, covariate) %>% 
-  summarize(n = n_distinct(time_frame)) %>% 
-  filter(n > 20) %>% 
-  pull(covariate)
+# None to remove
 
 
-
-## Visualize
-ec_select_timeframe_summary_wide %>%
-  gather(covariate, value, environmental_covariates) %>%
-  filter(covariate %in% unique(ec_sig_nonnormal_timeframe$covariate)) %>%
-  ggplot(aes(x = value)) +
-  geom_histogram() +
-  facet_grid(time_frame ~ covariate)
-
-## Remove this covariate from the df
+# Impute with the mean
 ec_select_timeframe_summary_wide1 <- ec_select_timeframe_summary_wide %>%
-  select(which(! names(.) %in% ec_to_remove_timeframe) ) %>%
-  group_by(time_frame) %>%
   # Inpute using the mean
-  mutate_at(vars(-location, -time_frame), impute) %>%
-  ungroup()
+  mutate_at(vars(-time_frame, -location), impute)
 
-## Visualize
-ec_select_window_summary_wide %>%
-  gather(covariate, value, environmental_covariates) %>%
-  filter(covariate %in% unique(ec_sig_nonnormal_window$covariate)) %>%
-  ggplot(aes(x = value)) +
-  geom_histogram() +
-  facet_grid(time_frame ~ covariate)
-
-## Remove this covariate from the df
 ec_select_window_summary_wide1 <- ec_select_window_summary_wide %>%
-  select(which(! names(.) %in% ec_to_remove_window) ) %>%
-  group_by(time_frame) %>%
   # Inpute using the mean
-  mutate_at(vars(-location, -time_frame), impute) %>%
-  ungroup()
+  mutate_at(vars(-time_frame, -location), impute)
+
+
+## Calculate pairwise correlations ##
+# Timeframe
+ec_timeframe_tidy_cor <- ec_select_timeframe_summary_wide1 %>%
+  select(-location) %>%
+  split(.$time_frame) %>%
+  imap_dfr(~cor(.x[,-1]) %>% as.dist() %>% tidy() %>% 
+         rename_all(~c("covariate1", "covariate2", "correlation")) %>%
+         mutate_at(vars(-correlation), as.character) %>%
+         mutate(time_frame = .y))
+
+## Find those pairs of covariates with inflated correlations, above 0.9
+ec_timeframe_inflated_cor <- ec_timeframe_tidy_cor %>% 
+  filter(abs(correlation) > max_cor)
+
+
+
+## Many of the correlated covariates are the same covariate between growth stages,
+## which suggests that the boundaries between growth stages are being blurred
+## 
+
+# Window
+ec_window_tidy_cor <- ec_select_window_summary_wide1 %>%
+  select(-location) %>%
+  split(.$time_frame) %>%
+  imap_dfr(~cor(.x[,-1]) %>% as.dist() %>% tidy() %>% 
+             rename_all(~c("covariate1", "covariate2", "correlation")) %>%
+             mutate_at(vars(-correlation), as.character) %>%
+             mutate(time_frame = .y))
+
+## Find those pairs of covariates with inflated correlations, above 0.9
+ec_window_inflated_cor<- ec_window_tidy_cor %>% 
+  filter(abs(correlation) > max_cor)
+# ec_window_inflated_cor %>%
+#   split(.$time_frame)
+
+# Same problem
+
 
 
 
@@ -644,6 +612,12 @@ historical_ec_tomodel_window_scaled <- ec_select_window_summary_wide1 %>%
 save("ec_tomodel_centered", "ec_tomodel_scaled", "ec_tomodel_centers", 
      "historical_ec_tomodel_timeframe_centered", "historical_ec_tomodel_timeframe_scaled", "historical_ec_tomodel_timeframe_centers",
      "historical_ec_tomodel_window_centered", "historical_ec_tomodel_window_scaled", "historical_ec_tomodel_window_centers",
-     file = file.path(result_dir, "concurrent_historical_covariables.RData"))
+     file = file.path(result_dir, "concurrent_historical_covariables_nasapower.RData"))
+     
+# ## Save these results
+# save("ec_tomodel_centered", "ec_tomodel_scaled", "ec_tomodel_centers", 
+#      "historical_ec_tomodel_timeframe_centered", "historical_ec_tomodel_timeframe_scaled", "historical_ec_tomodel_timeframe_centers",
+#      "historical_ec_tomodel_window_centered", "historical_ec_tomodel_window_scaled", "historical_ec_tomodel_window_centers",
+#      file = file.path(result_dir, "concurrent_historical_covariables_daymet.RData"))
 
 

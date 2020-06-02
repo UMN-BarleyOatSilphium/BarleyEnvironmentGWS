@@ -474,6 +474,95 @@ herit2.merMod <- function(object, gen.var = "line_name", type = c("cullis", "pie
 }
 
 
+## A function to add or remove covariates based on AIC and vif
+step_vif <- function(object, data, scope, direction, vif.threshold) {
+  
+  ## Get the terms to keep
+  terms_keep <- terms_hold <- attr(terms(scope$lower), "term.labels")
+  
+  # Forward
+  if (direction == "forward") {
+    
+    # Vector of all terms to add
+    all_terms_add <- setdiff(attr(terms(scope$upper), "term.labels"), attr(terms(scope$lower), "term.labels"))
+    terms_add <- all_terms_add
+    
+    ## Base formula AIC (no terms added)
+    base_model <- object
+    base_model_AIC <- AIC(base_model)
+    
+    # List of model formulas
+    formula_list <- map(terms_add, ~reformulate(termlabels = c(terms_hold, .), response = "value")) %>%
+      setNames(., terms_add)
+    
+    ## Fit models one-at-a-time
+    fit_list <- map(formula_list, lm, data = data)
+    
+    # Get AIC and vif
+    tidy_diag <- imap_dfr(fit_list, ~{
+      vif_x <- vif(.x)
+      colnames(vif_x) <- c("gvif", "df", "adj.gvif")
+      as.data.frame(cbind(vif_x[.y,, drop = FALSE], AIC = AIC(.x)))
+    }) %>% mutate(term = names(fit_list))
+    
+    ## Should the term be added?
+    # Filter on suitable vif and AIC; then find lowest AIC
+    tidy_diag1 <- subset(tidy_diag, AIC < base_model_AIC & gvif < vif.threshold)
+    
+    # Which term
+    term_retain <- tidy_diag1$term[which.min(tidy_diag1$AIC)]
+    # Which model to keep
+    model_keep_which <- which(names(fit_list) == term_retain)
+    
+    
+    ## While loop
+    while (length(model_keep_which) > 0) {
+      
+      ## Set the new base model
+      base_model <- fit_list[[model_keep_which]]
+      base_model_AIC <- AIC(base_model)
+      
+      ## Remove the 'term_retain' from the list of terms to add
+      terms_add <- setdiff(terms_add, term_retain)
+      terms_hold <- c(terms_hold, term_retain)
+      
+      # List of model formulas
+      formula_list <- map(terms_add, ~reformulate(termlabels = c(terms_hold, .), response = "value")) %>%
+        setNames(., terms_add)
+      
+      ## Fit models one-at-a-time
+      fit_list <- map(formula_list, lm, data = data)
+      
+      # Get AIC and vif
+      tidy_diag <- imap_dfr(fit_list, ~{
+        vif_x <- vif(.x)
+        colnames(vif_x) <- c("gvif", "df", "adj.gvif")
+        as.data.frame(cbind(vif_x[.y,, drop = FALSE], AIC = AIC(.x)))
+      }) %>% mutate(term = names(fit_list))
+      
+      ## Should the term be added?
+      # Filter on suitable vif and AIC; then find lowest AIC
+      tidy_diag1 <- subset(tidy_diag, AIC < base_model_AIC & gvif < vif.threshold)
+      
+      # Which term
+      term_retain <- tidy_diag1$term[which.min(tidy_diag1$AIC)]
+      # Which model to keep
+      model_keep_which <- which(names(fit_list) == term_retain)
+      
+    }
+    
+    # Model to return
+    model_return <- base_model
+    
+  } # IF statement
+  
+  # Return the model
+  return(model_return)
+  
+}
+
+
+
 
 
 ## Function to perform factorial regression analysis to identify covariates
@@ -484,12 +573,20 @@ herit2.merMod <- function(object, gen.var = "line_name", type = c("cullis", "pie
 ## It uses stepwise elimination or aprior expectations to determine which
 ## covariates to keep
 ## 
+## step.vif used variance inflation factors to remove covariates
+## 
+## step1 removes related covariates (i.e. tmean, tmin, tmax) based on 
+## the first pass of mean squares
+## 
 ## 
 fact_reg <- function(base.formula = value ~ line_name, data, gen = "line_name", 
-                     env = "environment", covariates, method = c("apriori", "step")) {
+                     env = "environment", covariates, method = c("apriori", "step", "step1"),
+                     criterion = c("AIC", "BIC")) {
   
   # Match args
   method <- match.arg(method)
+  criterion <- match.arg(criterion)
+  k <- ifelse(criterion == "AIC", 2, log(nrow(data)))
   
   # Fit the base models
   fit1 <- lm(formula = base.formula, data = data)
@@ -506,7 +603,7 @@ fact_reg <- function(base.formula = value ~ line_name, data, gen = "line_name",
     form3 <- add_predictors(form2, reformulate(paste0(paste0(gen, ":"), covariates)))
     fit3 <- update(object = fit2, formula = form3)
 
-  } else {
+  } else if (method %in% c("step", "step1")) {
     
     # Determine the max degrees of freedom for covariates
     J <- length(unique(data[[env]]))
@@ -527,6 +624,25 @@ fact_reg <- function(base.formula = value ~ line_name, data, gen = "line_name",
       mutate(p.adj = p.adjust(p = p.value, method = "bonf")) %>%
       filter(p.adj < alpha)
     
+    ## If step1, select covariates individually per growth stage
+    if (method == "step1") {
+      fit2_covariate_meansq_base <- fit2_covariate_meansq
+      
+      fit2_covariate_meansq_temp <- fit2_covariate_meansq_base %>% 
+        filter(str_detect(term, "mint|maxt|tmean")) %>% 
+        mutate(stage = str_extract(term, "flowering|grain_fill|early_vegetative|late_vegetative")) %>% 
+        group_by(stage) %>% 
+        top_n(x = ., n = 1, wt = meansq)
+      
+      fit2_covariate_meansq <- bind_rows(
+        filter(fit2_covariate_meansq_base, str_detect(term, "mint|maxt|tmean", negate = TRUE)),
+        fit2_covariate_meansq_temp
+      ) 
+      
+    }
+    
+    
+    
     # If there are no significant covariates, then assign fit2_fwd as fit1
     if (nrow(fit2_covariate_meansq) == 0) {
       fit2_fwd <- fit1
@@ -538,6 +654,33 @@ fact_reg <- function(base.formula = value ~ line_name, data, gen = "line_name",
       # fit2_fwd_anova <- Anova(fit2_fwd, type = "II")
       
     }
+    
+    
+    ## Did the model exhaust the number of possible covariates?
+    ECs <- setdiff(attr(terms(fit2_fwd), "term.labels"), "line_name")
+    # If so, drop the last one
+    if (length(ECs) > H) {
+      
+      # Determine the interaction terms in this model
+      drop_scope <- reformulate(ECs)
+      
+      fit2_drop <- drop1(fit2_fwd, scope = drop_scope)
+      # Find the term to drop
+      term_drop <- tidy(fit2_drop) %>%
+        filter(is.finite(AIC)) %>%
+        arrange(AIC) %>%
+        slice(1) %>%
+        pull(term)
+      
+      fit2_drop_form <- terms(fit2_fwd) %>%
+        drop.terms(termobj = ., dropx = which(attr(., "term.labels") == term_drop), keep.response = TRUE) %>% 
+        formula()
+      
+      # Refit
+      fit2_fwd <- update(object = fit2_fwd, formula = fit2_drop_form)
+      
+    } 
+    
     
     
     # Fit line name + E-covariate + GE-covariates
@@ -558,6 +701,27 @@ fact_reg <- function(base.formula = value ~ line_name, data, gen = "line_name",
       # Sort by meansq
       arrange(desc(meansq))
     
+    
+    
+    ## If step1, select covariates individually per growth stage
+    if (method == "step1") {
+      fit3_covariate_meansq_base <- fit3_covariate_meansq
+      
+      fit3_covariate_meansq_temp <- fit3_covariate_meansq_base %>% 
+        filter(str_detect(term, "mint|maxt|tmean")) %>% 
+        mutate(stage = str_extract(term, "flowering|grain_fill|early_vegetative|late_vegetative")) %>% 
+        group_by(stage) %>% 
+        top_n(x = ., n = 1, wt = meansq)
+      
+      fit3_covariate_meansq <- bind_rows(
+        filter(fit3_covariate_meansq_base, str_detect(term, "mint|maxt|tmean", negate = TRUE)),
+        fit3_covariate_meansq_temp
+      ) 
+      
+    }
+    
+    
+    
     # If there are no significant covariates, then assign fit2_fwd as fit1
     if (nrow(fit3_covariate_meansq) == 0) {
       fit3_fwd <- fit2_fwd
@@ -572,15 +736,14 @@ fact_reg <- function(base.formula = value ~ line_name, data, gen = "line_name",
     }
     
     
-    ## If there are no more degrees of freedom, remove the last term
-    if (df.residual(fit3_fwd) == 0) {
+    ## Did the model exhaust the number of possible covariates?
+    ECs <- attr(terms(fit3_fwd), "term.labels") %>%
+      str_subset(., ":")
+    # If so, drop the last one
+    if (length(ECs) > H) {
       
       # Determine the interaction terms in this model
-      drop_scope <- formula(fit3_fwd) %>% 
-        terms() %>% 
-        attr(., "term.labels") %>% 
-        str_subset(., ":") %>%
-        reformulate()
+      drop_scope <- reformulate(ECs)
       
       fit3_drop <- drop1(fit3_fwd, scope = drop_scope)
       # Find the term to drop
@@ -590,22 +753,22 @@ fact_reg <- function(base.formula = value ~ line_name, data, gen = "line_name",
         slice(1) %>%
         pull(term)
       
-      fit3_drop_form <- formula(fit3_fwd) %>% 
-        terms() %>%
+      fit3_drop_form <- terms(fit3_fwd) %>%
         drop.terms(termobj = ., dropx = which(attr(., "term.labels") == term_drop), keep.response = TRUE) %>% 
         formula()
       
       # Refit
-      fit3_fwd <- update(object = fit2_fwd, formula = fit3_drop_form)
+      fit3_fwd <- update(object = fit3_fwd, formula = fit3_drop_form)
       
-    }
+    } 
+    
     
     
     # Rename
     fit2 <- fit2_fwd
     fit3 <- fit3_fwd
     
-  }
+  } 
 
   # Return a list of model fits
   list(fit1 = fit1, fit1_alt = fit1_alt, fit2 = fit2, fit3 = fit3)
@@ -616,7 +779,618 @@ fact_reg <- function(base.formula = value ~ line_name, data, gen = "line_name",
 
 
 
+# rapid_cv <- function(object, index, rapid = TRUE) {
+# 
+#   # Get the model frame
+#   mf <- model.frame(object)
+#   # Model matrix and crossprod inverse
+#   X <- model.matrix(object)
+#   XtX_inv <- solve(crossprod(X))
+#   # Response
+#   y <- model.response(mf)
+#   # Coefficients
+#   beta_hat <- coef(object)
+#   
+#   ## Turn index into the holdout set
+#   all_index <- seq_along(y)
+#   holdout_index <- lapply(index, setdiff, x = all_index)
+# 
+#   if (rapid) {
+# 
+#     # Iterate over indices
+#     cv_out <- lapply(X = index, FUN = function(modelInd) {
+#       # Subset X for the d testing datapoints
+#       X_d <- X[-modelInd,,drop = FALSE]
+#       d <- nrow(X_d)
+#       # H matrix
+#       H_d <- tcrossprod(X_d %*% XtX_inv, X_d)
+#       H_d_inv <- ginv(diag(d) - H_d)
+#       # Residuals
+#       e_d <- y[-modelInd] - X_d %*% beta_hat
+# 
+#       # New betas
+#       beta_hat_holdout <- beta_hat - (tcrossprod(XtX_inv, X_d) %*% H_d_inv %*% e_d)
+# 
+#       # yhat
+#       y_hat <- X_d %*% beta_hat_holdout
+#       # return
+#       y_hat
+# 
+#     })
+# 
+#   } else {
+# 
+#     # Iterate over indices
+#     cv_out <- lapply(X = index, FUN = function(modelInd) {
+#       # Subset X for the training and testing
+#       Xtrain <- X[modelInd,,drop = FALSE]
+#       Xtest <-X[-modelInd,,drop = FALSE]
+#       ytrain <- y[modelInd]
+# 
+#       # Refit
+#       beta_hat <- lm.fit(x = Xtrain, y = ytrain)$coefficients
+#       isNAbeta <- which(!is.na(beta_hat))
+#       # Predict
+#       ytest <- Xtest[,isNAbeta,drop = FALSE] %*% beta_hat[isNAbeta]
+#       # Return
+#       ytest
+# 
+#     })
+# 
+# 
+#   }
+# 
+#   ## Pull out y
+#   y_hat_all <- unlist(cv_out)
+# 
+#   # Calculate metrics and return
+#   R2 <- cor(y_hat_all, y)^2
+#   mse <- mean((y - y_hat_all)^2)
+# 
+#   c(R2 = R2, MSE = mse, RMSE = sqrt(mse))
+# 
+# }
 
+
+
+## A function to implement a recursive feature addition algorithm that includes
+## featurs on the basis of the RMSE of LOO cross-validation
+## 
+## params:
+## x - a matrix of features
+## y - a response
+## 
+## 
+## 
+rfa_loo <- function(object, data, scope, metric = c("RMSE", "R2"), index, env.col = "environment") {
+  
+  # Match arguments
+  metric <- match.arg(metric)
+  maximize <- ifelse(metric == "RMSE", FALSE, TRUE)
+  
+  # Assuming environments are here, find the maximum number of covariates that could be used
+  J <- n_distinct(data[[env.col]])
+  H <- J - 2
+  
+  ## Define the model frame for the upper scope
+  mf <- model.frame(scope$upper, data = data)
+  
+  ## Perform the base cv
+  base_fit <- object
+  base_resample_pred <- rapid_cv(object = object, index = index)
+  
+  ## Start the algorithm
+  # Define the available covariates and the used covariates
+  cov_available <- setdiff(attr(terms(scope$upper), "term.labels"), attr(terms(scope$lower), "term.labels"))
+  cov_used <- intersect(attr(terms(scope$upper), "term.labels"), attr(terms(scope$lower), "term.labels"))
+  
+  # Define a flag to stop the algorithm
+  optMetric <- FALSE
+  allCovUsed <- length(cov_available) == 0
+  
+  # A list to store output
+  step_out <- list()
+  i = 1
+  
+  # While loop
+  while (!optMetric & !allCovUsed) {
+    
+    # Iterate over cov_available and build models
+    cov_addition_objects <- map(cov_available, ~update(object = base_fit, formula = reformulate(c(cov_used, .), response = "value")))
+    # Remove NAs
+    object_is_na <- map_lgl(cov_addition_objects, ~any(is.na(coef(.x))))
+    cov_addition_objects1 <- setNames(object = cov_addition_objects[!object_is_na], cov_available[!object_is_na])
+    
+    # Run cv - rapid if no interactions
+    has_interactions <- map_lgl(cov_addition_objects1, ~any(str_detect(attr(terms(.x), "term.labels"), ":")))
+    # cov_addition_pred <- map2(cov_addition_objects1, has_interactions, ~rapid_cv(object = .x, index = index, rapid = !.y))
+    cov_addition_pred <- map(cov_addition_objects1, ~rapid_cv(object = .x, index = index))
+    
+
+    # Analyze the metrics
+    cov_addition_metrics <- t(do.call("rbind", cov_addition_pred))
+    cov_addition_metrics <- t(cbind(cov_addition_metrics, `(none)` = base_resample_pred))
+    cov_addition_metrics <- cov_addition_metrics[order(cov_addition_metrics[,metric], decreasing = maximize),, drop = FALSE]
+    
+    # Select the covariate to add
+    cov_retain <- row.names(cov_addition_metrics)[1]
+    
+    # If "none", stop
+    if (cov_retain == "(none)") {
+      optMetric <- TRUE
+      
+    } else {
+      # Edit cov_available and cov_used
+      cov_used <- union(cov_used, cov_retain)
+      cov_available <- setdiff(cov_available, cov_used)
+      
+      allCovUsed <- length(cov_available) == 0 | length(cov_used) - 1 == H
+      
+      # Edit the metrics to compare
+      base_resample_pred <- cov_addition_metrics[1,]
+    }
+    
+    step_out[[i]] <- cov_addition_metrics
+    i <- i + 1
+    
+  } # End the while loop
+  
+  # Return a list
+  list(optVariables = cov_used, finalResults = step_out[[length(step_out)]][1,], stepTestResults = step_out)
+  
+}
+
+
+
+
+
+
+
+
+## Function for recursive feature elimination using PLS
+rfs_loo <- function(X, Y, comp = 3, metric = c("RMSE", "R2"), direction = c("forward", "backward"), index) {
+  
+  require(pls)
+  
+  # Match arguments
+  metric <- match.arg(metric)
+  direction <- match.arg(direction)
+  
+  stopifnot(is.matrix(Y))
+  stopifnot(is.matrix(X))
+  
+  yall <- scale(Y)
+  # Impute missing with 0
+  yall[is.na(yall)] <- 0
+  Xall <- scale(X)
+  
+  # Determine if Y is multivariate
+  is.multivariate <- ncol(yall) > 1
+  
+  # Split on direction
+  if (direction == "forward") {
+    
+    # Split based on multivariate-ness
+    if (!is.multivariate) {
+      
+      X1 <- matrix(1, ncol = 1, nrow = nrow(Xall))
+      ## Find the RMSE of the model with all variables
+      base_fit <- plsr(yall ~ X1, validation = "LOO", scale = FALSE, center = FALSE)
+      rmse <- rmseBase <- RMSEP(object = base_fit)$val[,,1]["CV"]
+      r2 <- r2Base <- R2(base_fit)$val[,,1]
+      
+    } else {
+      
+      # Perform the resampling
+      base_resample_pred <- lapply(X = index, FUN = function(modelInd) {
+        X1 <- Xall[modelInd,,drop = FALSE]
+        y1 <- yall[modelInd,,drop = FALSE]
+        xTest <- Xall[-modelInd,,drop = FALSE]
+        yTest <- yall[-modelInd,,drop = FALSE]
+        fit <- plsr(y1 ~ X1)
+        # Predict and return
+        t(rbind(yTest, predict(object = fit, newdata = xTest, comp = seq_len(comp))))
+      })
+      
+      # Row bind
+      out <- do.call("rbind", base_resample_pred)
+      # Calculate the metrics
+      res <- out[,1] - out[,2]
+      rmse <- rmseBase <- sqrt(mean(res^2, na.rm = TRUE))
+      r2 <- r2Base <- cor(out)[1,2]^2
+      
+    }
+    
+    
+    ## Start the algorithm
+    
+    # Set Xbase
+    Xbase <- Xall[,NULL]
+    # Define the available covariates and the used covariates
+    cov_available <- colnames(Xall)
+    cov_used <- character()
+    
+    # Define a flag to stop the algorithm
+    optMetric <- FALSE
+    allCovUsed <- length(cov_available) == 0
+    
+    # A list to store output
+    step_out <- list()
+    i = 1
+    
+    # While loop
+    while (!optMetric & !allCovUsed) {
+      
+      # Iterate over cov_todrop and build models
+      cov_pred <- sapply(X = cov_available, FUN = function(cov_add) {
+        
+        Xcov <- cbind(Xbase, Xall[,cov_add, drop = FALSE])
+        
+        # Split based on multivariate-ness
+        if (!is.multivariate) {
+          
+          ## Find the RMSE of the model with all variables
+          cov_fit <- plsr(yall ~ Xcov, validation = "LOO", scale = FALSE, center = FALSE)
+          rmseCov <- RMSEP(object = cov_fit)$val[,,min(comp+1, ncol(Xcov)+1)]["CV"]
+          r2Cov <- R2(cov_fit)$val[,,min(comp+1, ncol(Xcov)+1)]
+          
+        } else {
+          
+          # Resampling
+          cov_resample_pred <- lapply(X = index, FUN = function(modelInd) {
+            X1 <- Xcov[modelInd,,drop = FALSE]
+            y1 <- yall[modelInd,,drop = FALSE]
+            xTest <- Xcov[-modelInd,,drop = FALSE]
+            yTest <- yall[-modelInd,,drop = FALSE]
+            fit <- plsr(y1 ~ X1)
+            # Predict and return
+            t(rbind(yTest, predict(object = fit, newdata = xTest, comp = seq_len(min(comp, ncol(X1))))))
+          })
+          
+          # Row bind
+          out <- do.call("rbind", cov_resample_pred)
+          # Calculate the metrics
+          resCov <- out[,1] - out[,2]
+          rmseCov <- sqrt(mean(resCov^2, na.rm = TRUE))
+          r2Cov <- cor(out)[1,2]^2
+          
+        }
+        
+        # Return a matrix
+        c(RMSE = unname(rmseCov), R2 = r2Cov)
+        
+      })
+      
+      # Analyze the metrics
+      cov_metrics <- t(cbind(cov_pred, `(none)` = c(rmseBase, r2Base)))
+      cov_metrics <- cov_metrics[order(cov_metrics[,metric], decreasing = FALSE),, drop = FALSE]
+      
+      # Select the covariate to add
+      cov_retain <- row.names(cov_metrics)[1]
+      
+      # If "none", stop
+      if (cov_retain == "(none)") {
+        optMetric <- TRUE
+        
+      } else {
+        # Edit cov_available and cov_used
+        cov_used <- union(cov_used, cov_retain)
+        cov_available <- setdiff(cov_available, cov_used)
+        
+        allCovUsed <- length(cov_available) == 0
+        
+        # Edit the metrics to compare
+        rmseBase <- cov_metrics[1, "RMSE"]
+        r2Base <- cov_metrics[1, "R2"]
+        
+        # Edit the model matrix
+        Xbase <- cbind(Xbase, Xall[,cov_retain, drop = FALSE])
+        
+      }
+      
+      step_out[[i]] <- cov_metrics
+      i <- i + 1
+      
+    } # End the while loop
+    
+    # Return a list
+    out <- list(optVariables = cov_used, finalResults = step_out[[length(step_out)]][1,], stepTestResults = step_out)
+    
+    
+  } else if (direction == "backward") {
+    
+    
+    # Split based on multivariate-ness
+    if (!is.multivariate) {
+      
+      ## Find the RMSE of the model with all variables
+      base_fit <- plsr(yall ~ Xall, validation = "LOO", scale = FALSE, center = FALSE)
+      rmse <- rmseBase <- RMSEP(object = base_fit)$val[,,comp+1]["CV"]
+      r2 <- r2Base <- R2(base_fit)$val[,,comp+1]
+      
+    } else {
+      
+      # Perform the resampling
+      base_resample_pred <- lapply(X = index, FUN = function(modelInd) {
+        X1 <- Xall[modelInd,,drop = FALSE]
+        y1 <- yall[modelInd,,drop = FALSE]
+        xTest <- Xall[-modelInd,,drop = FALSE]
+        yTest <- yall[-modelInd,,drop = FALSE]
+        fit <- plsr(y1 ~ X1)
+        # Predict and return
+        t(rbind(yTest, predict(object = fit, newdata = xTest, comp = seq_len(comp))))
+      })
+      
+      # Row bind
+      out <- do.call("rbind", base_resample_pred)
+      # Calculate the metrics
+      res <- out[,1] - out[,2]
+      rmse <- rmseBase <- sqrt(mean(res^2, na.rm = TRUE))
+      r2 <- r2Base <- cor(out)[1,2]^2
+      
+    }
+    
+    
+    ## Start the algorithm
+    
+    # Set Xbase
+    Xbase <- Xall
+    # Define the covariates that may be dropped
+    cov_todrop <- colnames(Xbase)
+    # Define the covariates that have been dropped
+    cov_dropped <- character()
+    # convert to named vector of column numbers
+    col_todrop <- setNames(object = seq_len(ncol(Xbase)), cov_todrop)
+    
+    # Define a flag to stop the algorithm
+    optMetric <- FALSE
+    allCovUsed <- length(cov_todrop) == 0
+    
+    
+    # A list to store output
+    step_out <- list()
+    i = 1
+    
+    # While loop
+    while (!optMetric & !allCovUsed) {
+      
+      # Iterate over cov_todrop and build models
+      cov_removal_pred <- sapply(X = col_todrop, FUN = function(col_drop) {
+        
+        Xcov <- Xbase[,-col_drop, drop = FALSE]
+        
+        # Split based on multivariate-ness
+        if (!is.multivariate) {
+          
+          ## Find the RMSE of the model with all variables
+          cov_fit <- plsr(yall ~ Xcov, validation = "LOO", scale = FALSE, center = FALSE)
+          rmseCov <- RMSEP(object = cov_fit)$val[,,comp+1]["CV"]
+          r2Cov <- R2(cov_fit)$val[,,comp+1]
+          
+        } else {
+          
+          # Resampling
+          cov_resample_pred <- lapply(X = index, FUN = function(modelInd) {
+            X1 <- Xcov[modelInd,,drop = FALSE]
+            y1 <- yall[modelInd,,drop = FALSE]
+            xTest <- Xcov[-modelInd,,drop = FALSE]
+            yTest <- yall[-modelInd,,drop = FALSE]
+            fit <- plsr(y1 ~ X1)
+            # Predict and return
+            t(rbind(yTest, predict(object = fit, newdata = xTest, comp = seq_len(min(comp, ncol(X1))))))
+          })
+          
+          # Row bind
+          out <- do.call("rbind", cov_resample_pred)
+          # Calculate the metrics
+          resCov <- out[,1] - out[,2]
+          rmseCov <- sqrt(mean(resCov^2, na.rm = TRUE))
+          r2Cov <- cor(out)[1,2]^2
+          
+        }
+        
+        # Return a matrix
+        c(RMSE = unname(rmseCov), R2 = r2Cov)
+        
+      })
+      
+      # Analyze the metrics
+      cov_removal_metrics <- t(cbind(cov_removal_pred, `(none)` = c(rmseBase, r2Base)))
+      cov_removal_metrics <- cov_removal_metrics[order(cov_removal_metrics[,metric], decreasing = FALSE),, drop = FALSE]
+      
+      # Select the covariate to add
+      cov_remove <- row.names(cov_removal_metrics)[1]
+      
+      # If "none", stop
+      if (cov_remove == "(none)") {
+        optMetric <- TRUE
+        
+      } else {
+        # Edit cov_available and cov_used
+        cov_dropped <- union(cov_dropped, cov_remove)
+        cov_todrop <- setdiff(cov_todrop, cov_dropped)
+        
+        allCovUsed <- length(cov_todrop) == 0
+        
+        # Edit the metrics to compare
+        rmseBase <- cov_removal_metrics[1, "RMSE"]
+        r2Base <- cov_removal_metrics[1, "R2"]
+        
+        # Edit the model matrix
+        Xbase <- Xbase[,colnames(Xbase) != cov_remove, drop = FALSE]
+        col_todrop <- setNames(object = seq_len(ncol(Xbase)), cov_todrop)
+        
+      }
+      
+      step_out[[i]] <- cov_removal_metrics
+      i <- i + 1
+      
+    } # End the while loop
+    
+    out <- list(optVariables = cov_todrop, finalResults = step_out[[length(step_out)]][1,], stepTestResults = step_out)
+    
+  } # End if statement
+  
+  # Return results
+  return(out)
+  
+}
+
+
+
+## A function for the recursive feature addition procedure
+rfa_proc <- function(env.col = "environment") {
+  
+  covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+  
+  ## Recursive feature addition ##
+  ## Main effect
+  # 1. Fit a base model
+  base_fit <- lm(value ~ 1 + line_name, data = df1)
+  # 2. Define the scope
+  scope <- list(lower = formula(base_fit), upper = reformulate(c("line_name", covariates_use), response = "value"))
+  # Run rfa
+  rfa_out <- rfa_loo(object = base_fit, data = df1, scope = scope, metric = "RMSE", index = loo_indices, env.col = env.col)
+  
+  ## Interactions
+  # 1. Fit a base model
+  base_fit_int <- update(base_fit, formula = reformulate(rfa_out$optVariables, response = "value"))
+  # 2. Define the scope
+  scope <- list(lower = formula(base_fit_int), 
+                upper = reformulate(c(rfa_out$optVariables, paste0("line_name:", covariates_use)), response = "value"))
+  # Run rfa
+  rfa_out_int <- rfa_loo(object = base_fit_int, data = df1, scope = scope, metric = "RMSE", index = loo_indices, env.col = env.col)
+  
+  
+  ##  no soil
+  covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T), 
+                           covariate, drop = TRUE) 
+  ## Main effect
+  # 1. Fit a base model
+  base_fit <- lm(value ~ 1 + line_name, data = df1)
+  # 2. Define the scope
+  scope <- list(lower = formula(base_fit), upper = reformulate(c("line_name", covariates_use), response = "value"))
+  # Run rfa
+  rfa_out_nosoil <- rfa_loo(object = base_fit, data = df1, scope = scope, metric = "RMSE", index = loo_indices, env.col = env.col)
+  
+  ## Interactions
+  # 1. Fit a base model
+  base_fit_int <- update(base_fit, formula = reformulate(rfa_out_nosoil$optVariables, response = "value"))
+  # 2. Define the scope
+  scope <- list(lower = formula(base_fit_int), 
+                upper = reformulate(c(rfa_out_nosoil$optVariables, paste0("line_name:", covariates_use)), response = "value"))
+  # Run rfa
+  rfa_out_int_nosoil <- rfa_loo(object = base_fit_int, data = df1, scope = scope, metric = "RMSE", index = loo_indices, env.col = env.col)
+  
+  
+  ## Create a tibble
+  tibble(
+    feat_sel_type = "rfa_cv",
+    model = c("model2", "model3"),
+    adhoc = list(rfa_out, rfa_out_int),
+    adhoc_nosoil = list(rfa_out_nosoil, rfa_out_int_nosoil)
+  )
+  
+}
+
+
+
+## A function for recursive feature elimination
+rfe_proc <- function(main_fit, env.col = "environment") {
+  
+  df_env_eff <- coef(main_fit) %>% 
+    tibble(term = names(.), effect = .) %>% 
+    filter(str_detect(term, env.col)) %>% 
+    mutate(term = str_remove(term, env.col)) %>% 
+    add_row(term = last(levels(df1[[env.col]])), effect = -sum(.$effect))
+  
+  # LOO indices
+  loo_indices <- df_env_eff %>%
+    group_by(term) %>%
+    crossv_loo_grouped() %>%
+    pull(train) %>%
+    map("idx")
+  
+  # run RFE
+  Y <- as.data.frame(df_env_eff) %>% 
+    column_to_rownames("term") %>%
+    as.matrix()
+  
+  ## RFS - adhoc
+  covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+  X <- distinct(select(df1, env.col, covariates_use)) %>% 
+    as.data.frame(df_env_eff) %>% 
+    column_to_rownames(env.col) %>% 
+    as.matrix()
+  # Execute
+  rfs_main_adhoc <- rfs_loo(X = X, Y = Y, metric = "RMSE", direction = "forward", index = loo_indices)
+  rfs_main_adhoc_back <- rfs_loo(X = X, Y = Y, metric = "RMSE", direction = "backward", index = loo_indices)
+  
+  ## RFS - adhoc no soil
+  covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T), 
+                           covariate, drop = TRUE)    
+  X <- distinct(select(df1, env.col, covariates_use)) %>% 
+    as.data.frame(df_env_eff) %>% 
+    column_to_rownames(env.col) %>% 
+    as.matrix()
+  
+  # Run RFS
+  rfs_main_adhoc_nosoil <- rfs_loo(X = X, Y = Y, metric = "RMSE", direction = "forward", index = loo_indices)
+  rfs_main_adhoc_nosoil_back <- rfs_loo(X = X, Y = Y, metric = "RMSE", direction = "backward", index = loo_indices)
+  
+  
+  ## Model interactions ##
+  
+  ## Return a df of residuals (GxE)
+  df_gxe_eff <- add_residuals(df1, main_fit, var = "int_effect") %>%
+    select(line_name, term = env.col, covariates_use, int_effect)
+  
+  # LOO indices
+  loo_indices <- df_env_eff %>%
+    group_by(term) %>%
+    crossv_loo_grouped() %>%
+    pull(train) %>%
+    map("idx")
+  
+  # run RFE
+  Y <- df_gxe_eff %>% select(line_name, term, int_effect) %>% 
+    spread(term, int_effect) %>% 
+    as.data.frame() %>% 
+    column_to_rownames("line_name") %>%
+    as.matrix() %>%
+    t()
+  
+  # Adhoc
+  covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+  X <- distinct(select(df1, env.col, covariates_use)) %>% 
+    as.data.frame(df_env_eff) %>% 
+    column_to_rownames(env.col) %>% 
+    as.matrix()
+  # Execute
+  rfs_int_adhoc <- rfs_loo(X = X, Y = Y, metric = "RMSE", direction = "forward", index = loo_indices)
+  rfs_int_adhoc_back <- rfs_loo(X = X, Y = Y, metric = "RMSE", direction = "back", index = loo_indices)
+  
+  # Adhoc - no soil
+  covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T), 
+                           covariate, drop = TRUE)  
+  X <- distinct(select(df1, env.col, covariates_use)) %>% 
+    as.data.frame(df_env_eff) %>% 
+    column_to_rownames(env.col) %>% 
+    as.matrix()
+  # Execute
+  rfs_int_adhoc_nosoil <- rfs_loo(X = X, Y = Y, metric = "RMSE", direction = "forward", index = loo_indices)
+  rfs_int_adhoc_nosoil_back <- rfs_loo(X = X, Y = Y, metric = "RMSE", direction = "backward", index = loo_indices)
+  
+  
+  ## Return results
+  tibble(
+    feat_sel_type = "rfs_pls",
+    direction = rep(c("forward", "backward"), each = 2),
+    model = rep(c("model2", "model3"), 2),
+    adhoc = list(rfs_main_adhoc, rfs_int_adhoc, rfs_main_adhoc_back, rfs_int_adhoc_back),
+    adhoc_nosoil = list(rfs_main_adhoc_nosoil, rfs_int_adhoc_nosoil, rfs_main_adhoc_nosoil_back, rfs_int_adhoc_nosoil_back))
+  
+}
 
 
 
@@ -1015,12 +1789,13 @@ genomewide_prediction2 <- function(x, model.list, K, E, KE) {
   # Identity matrix for environments
   I <- diag(ncol(E)); dimnames(I) <- dimnames(E)
   GE <- kronecker(X = K, Y = KE, make.dimnames = TRUE)
+  GxE <- kronecker(X = K, Y = E, make.dimnames = TRUE) # This is crossproduct of K and E covariates
   GI <- kronecker(X = K, Y = I, make.dimnames = TRUE)
   
   ## Define an expression that fits the model
   fit_mmer_exp <- expression({
     model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
-                      data = train, date.warning = FALSE, verbose = TRUE)
+                      data = train, date.warning = FALSE, verbose = TRUE, getPEV = TRUE)
   })
   
   
@@ -1034,7 +1809,7 @@ genomewide_prediction2 <- function(x, model.list, K, E, KE) {
   
   # Test df to merge
   test_merge <- test %>%
-    select(which(names(.) %in% c("line_name", "env", "loc", "year", "value"))) %>%
+    select(which(names(.) %in% c("line_name", "env", "loc", "site", "year", "value"))) %>%
     mutate_if(is.factor, as.character)
   
   # Iterate over models
@@ -1057,14 +1832,18 @@ genomewide_prediction2 <- function(x, model.list, K, E, KE) {
     # Use rrBLUP to fit model1 or model2_fr
     if (mod == "model1") {
       
-      model_fit <- kin.blup(data = as.data.frame(train), geno = "line_name", pheno = "value", K = K)
+      mf <- model.frame(value ~ line_name, train)
+      y <- model.response(mf)
+      Z <- model.matrix(~ -1 + line_name, mf)
+      
+      model_fit <- mixed.solve(y = y, Z = Z, K = K, SE = TRUE)
       
       # Fixed effects
-      fixed_eff <- matrix(data = (model_fit$pred - model_fit$g)[1], nrow = 1, ncol = 1,
-                          dimnames = list("(Intercept)", "estimate"))
+      fixed_eff <- cbind(estimate = model_fit$beta, std_error = model_fit$beta.SE)
+      row.names(fixed_eff) <- "(Intercept)"
       
       ## Random effects
-      rand_eff <- list(`u:line_name` = c(model_fit$g))
+      rand_eff <- list(`u:line_name` = cbind(u = model_fit$u, pev = model_fit$u.SE^2))
       
     } else if (mod == "model2_fr") {
       
@@ -1114,20 +1893,26 @@ genomewide_prediction2 <- function(x, model.list, K, E, KE) {
       
       # If the model is still empty, create empty fixed and random effects
       if (is_empty(model_fit)) {
-        fixed_eff <- matrix(as.numeric(NA), nrow = 1, ncol = 1, dimnames = list("(Intercept)", "estimate"))
+        fixed_eff <- matrix(as.numeric(NA), nrow = 1, ncol = 2, dimnames = list("(Intercept)", c("estimate", "std_error")))
         
-        rand_eff <- list("u:line_name" = set_names(x = rep(NA, nlevels(test$line_name)), nm = levels(test$line_name)))
+        rand_eff <- list("u:line_name" = cbind(u = set_names(x = rep(NA, nlevels(test$line_name)), nm = levels(test$line_name)),
+                                               pev = NA))
         
       } else {
         
         ## Fixed effects
         fixed_eff <- coef(model_fit) %>%
           select(term = Effect, estimate = Estimate) %>%
+          mutate(std_error = sqrt(c(model_fit$VarBeta))) %>%
           column_to_rownames("term") %>%
           as.matrix()
         
         ## Random effects
         rand_eff <- map(randef(model_fit), "value")
+        # PEV
+        pev <- map(model_fit$PevU, "value") %>% map(diag)
+        # combine
+        rand_eff <- map2(rand_eff, pev, ~cbind(u = .x, pev = .y))
         
       }
       
@@ -1145,8 +1930,8 @@ genomewide_prediction2 <- function(x, model.list, K, E, KE) {
     ## Create an X matrix for test
     Xtest <- model.matrix(fixed_form, test)[,row.names(fixed_eff), drop = FALSE] # This seems to work
     # Calculate fixed effects by the formula Xb
-    fixed_pred <- Xtest %*% fixed_eff
-    
+    fixed_pred <- Xtest %*% fixed_eff[,1]
+    fixed_pred_se <-  Xtest %*% fixed_eff[,2] ## This will not work with quantitative elements of X
     
     ## If model3_fr, calculate random effects
     if (mod == "model3_fr") {
@@ -1175,16 +1960,29 @@ genomewide_prediction2 <- function(x, model.list, K, E, KE) {
     
     } else {
       
+      # ## Convert to a complete data.frame
+      # rand_eff_df <- rand_eff %>% 
+      #   map(~tibble(term = names(.), pred = .x)) %>% 
+      #   imap(~`names<-`(.x, c(str_remove_all(.y, "u:|[0-9]"), paste0("pred", .y)))) %>% 
+      #   modify_if(~str_detect(names(.x)[1], ":"), 
+      #             ~separate(.x, col = 1, into = separation_col_names, sep = ":")) %>% 
+      #   .[order(map_dbl(., ncol), decreasing = T)] %>% 
+      #   map(~left_join(test_merge, .x)) %>%
+      #   reduce(full_join) %>% 
+      #   mutate(pred_incomplete = rowSums(select(., contains("pred")))) %>% 
+      #   select(-contains(":"))
+      
       ## Convert to a complete data.frame
       rand_eff_df <- rand_eff %>% 
-        map(~tibble(term = names(.), pred = .x)) %>% 
-        imap(~`names<-`(.x, c(str_remove_all(.y, "u:|[0-9]"), paste0("pred", .y)))) %>% 
+        map(~rownames_to_column(as.data.frame(.), "term")) %>%
+        map(~rename(., pred = u)) %>%
+        imap(~`names<-`(.x, c(str_remove_all(.y, "u:|[0-9]"), paste0("pred", .y), paste0("pev", .y)))) %>% 
         modify_if(~str_detect(names(.x)[1], ":"), 
                   ~separate(.x, col = 1, into = separation_col_names, sep = ":")) %>% 
         .[order(map_dbl(., ncol), decreasing = T)] %>% 
         map(~left_join(test_merge, .x)) %>%
         reduce(full_join) %>% 
-        mutate(pred_incomplete = rowSums(select(., contains("pred")))) %>% 
+        mutate(pred_incomplete = rowSums(select(., contains("pred"))), pred_incomplete_pev = rowSums(select(., contains("pev")))) %>% 
         select(-contains(":"))
       
     }
@@ -1193,7 +1991,8 @@ genomewide_prediction2 <- function(x, model.list, K, E, KE) {
 
     
     # Add predictions to the list
-    prediction_out$prediction[[m]] <- mutate(rand_eff_df, pred_complete = pred_incomplete + c(fixed_pred))
+    prediction_out$prediction[[m]] <- mutate(rand_eff_df, pred_complete = pred_incomplete + c(fixed_pred),
+                                             pred_complete_pev = pred_incomplete_pev + c(fixed_pred_se^2))
     
   }
   

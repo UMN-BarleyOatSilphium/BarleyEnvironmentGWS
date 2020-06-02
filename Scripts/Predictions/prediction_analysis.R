@@ -551,6 +551,128 @@ write_csv(x = pov_loo_prediction_accuracy_table, path = file.path(fig_dir, "pov_
 
 
 
+# Analyze output of factorial regression samples --------------------------
+
+## Predictions from this exercise were genuinely leave-one-out.
+## A location or environment was removed, covariates were selected, and
+## predictions were made. These results should be compared to the previous
+## leave-one-out strategy
+
+# Load the data
+load(file.path(result_dir, "loo_predictions_fact_reg_samples.RData"))
+
+# Combine the data into list
+## Grab the prediction outputs
+loo_samples_prediction_list <- ls(pattern = "sample_out") %>%
+  setNames(., .) %>%
+  map(get) %>%
+  # Bind rows if necessary
+  modify_if(is.list, bind_rows) %>%
+  subset(., map_lgl(., ~nrow(.) > 1)) %>%
+  map(~unnest(., out)) %>%
+  set_names(x = ., nm = str_extract(names(.), "^[a-z]{4}"))
+
+
+## Combine data.frames and mutate columns
+loo_samples_prediction_df <- loo_samples_prediction_list %>%
+  imap(~unnest(.x, prediction) %>% mutate(type = .y) ) %>%
+  map(~rename_at(.x, vars(which(names(.x) %in% c("env", "loc"))),
+                 ~str_replace_all(., c("loc" = "location", "env" = "environment")))) %>%
+  map_df(~mutate_if(., is.character, parse_guess) %>%
+           mutate_if(is.factor, ~parse_guess(as.character(.)))) %>%
+  mutate(pop = ifelse(line_name %in% tp, "tp", "vp")) %>%
+  select(-which(names(.) %in% c(".id", "core", "trait1"))) %>%
+  # Coalesce columns
+  mutate(leave_one_group = coalesce(environment, location),
+         nGroup = coalesce(nEnv, nLoc)) %>%
+  select(-which(names(.) %in% c("environment", "location", "nLoc", "nEnv", "loc1", "env1")))
+
+
+## Calculate accuracy and bias per train group, model, and population
+loo_samples_predictive_ability <- loo_samples_prediction_df %>%
+  group_by(trait, model, pop, type, leave_one_group, selection) %>%
+  # First calculate accuracy per environment
+  mutate(ability = cor(pred_complete, value), 
+         bias = mean((pred_complete - value) / value)) %>% # Bias as percent deviation from observed
+  group_by(trait, model, pop, type, selection) %>%
+  # Next calculate accuracy across all environments
+  mutate(ability_all = cor(pred_complete, value), 
+         bias_all = mean((pred_complete - value) / value)) %>% # Bias as percent deviation from observed
+  # Now summarize across all
+  group_by(trait, model, pop, type, leave_one_group, selection) %>%
+  summarize_at(vars(ability, bias, ability_all, bias_all, nObs, nGroup), mean) %>%
+  ungroup()
+
+## Annotation df
+loo_samples_predictive_ability_annotation <- loo_samples_predictive_ability %>%
+  distinct(trait, model, pop, type, selection, ability_all) %>%
+  mutate(annotation = paste0("r[MP]==", round(ability_all,  2)))
+
+
+## Plot predicted versus observed phenotypes
+g_loo_samples_prediction <- loo_samples_prediction_df %>%
+  # Split by type and pop
+  group_by(type, pop) %>%
+  do(plot = {
+    df <- .
+    
+    # Group by trait
+    trait_plots <- df %>%
+      group_by(trait) %>%
+      do(plot = {
+        df1 <- .
+        
+        ## Subset the annotation df
+        df1_annotation <- left_join(x = distinct(df1, trait, selection, model, type, pop), loo_samples_predictive_ability_annotation)
+        
+        # Plot
+        ggplot(data = df1, aes(x = pred_complete, y = value, color = leave_one_group)) +
+          geom_point(size = 0.5) +
+          geom_text(data = df1_annotation, aes(x = Inf, y = -Inf, label = annotation), 
+                    parse = TRUE, inherit.aes = FALSE, vjust = -1.2, hjust = 1, size = 2) +
+          facet_grid(trait ~ model + selection, switch = "y") +
+          scale_color_discrete(guide = FALSE) +
+          scale_x_continuous(breaks = pretty) +
+          scale_y_continuous(breaks = pretty) +
+          theme_genetics(10)
+        
+      }) %>% ungroup()
+    
+    # Combine the plots
+    plot_grid(plotlist = trait_plots$plot, ncol = 1, align = "hv")
+    
+  })
+
+
+## Visualize
+# LOEO - TP
+g_loo_samples_prediction$plot[[1]]
+
+# LOEO - VP
+g_loo_samples_prediction$plot[[2]]
+
+# LOLO - TP
+g_loo_samples_prediction$plot[[3]]
+
+# LOLO - VP
+g_loo_samples_prediction$plot[[4]]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 ## Practical exercises ##

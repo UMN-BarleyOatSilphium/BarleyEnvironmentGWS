@@ -57,8 +57,10 @@ north_america <- bind_rows(usa_state, usa_county, canada)
 
 ## Now create labels for each location (as a combination of all environments)
 use_loc_info_toplot <-  trial_info %>% 
+  # Add trial designator
+  mutate(set = ifelse(environment %in% train_test_env, "Train/test trials", "Validation trials")) %>%
   filter(environment %in% unique(S2_MET_BLUEs$environment)) %>%
-  group_by(location, latitude, longitude) %>%
+  group_by(location, set, latitude, longitude) %>%
   summarize(n_years = n_distinct(year)) %>%
   ungroup() %>%
   mutate(n_years = factor(n_years, levels = sort(unique(n_years))),
@@ -76,7 +78,7 @@ use_loc_info_toplot1 <- use_loc_info_toplot %>%
 
 
 # Coordinate limits
-long_limit <- c(-111, -72)
+long_limit <- c(-117, -63)
 lat_limit <- c(39, 49)
 
 ## Different version of the map - grey
@@ -84,22 +86,24 @@ g_map_alt <- ggplot(data = north_america, aes(x = long, y = lat, group = group))
   geom_polygon(fill = "grey85") +
   geom_polygon(data = canada, fill = NA, color = "white", lwd = 0.3) + # Add canada
   geom_polygon(data = usa_state, aes(x = long, y = lat, group = group), fill = NA, color = "white", lwd = 0.3) +
-  geom_point(data = use_loc_info_toplot1, aes(x = longitude, y = latitude, group = location), size = 3.5) +
+  geom_point(data = use_loc_info_toplot1, aes(x = longitude, y = latitude, group = location, shape = set), size = 3.5) +
   geom_text_repel(data = use_loc_info_toplot1, aes(x = longitude, y = latitude, group = location, label = location),
                   size = 2, hjust = 0.5, nudge_x = ifelse(use_loc_info_toplot1$location == "Bozeman", 3, -1), segment.size = 0.2, 
                   point.padding = unit(2, "pt"), min.segment.length = 1) +
   geom_text(data = use_loc_info_toplot1, aes(x = longitude, y = latitude, group = location, label = nExperiments), size = 2, 
             color = ifelse(use_loc_info_toplot1$location == "Arlington", "black", "white")) +
   coord_fixed(ratio = 1.5, xlim = long_limit, ylim = lat_limit) +
+  scale_shape_manual(name = NULL, values = c(16, 15)) +
   scale_x_continuous(breaks = NULL, name = NULL, labels = NULL) + 
   scale_y_continuous(breaks = NULL, name = NULL, labels = NULL) +
-  theme_classic() +
+  theme_classic(base_size = 8) +
   theme(panel.background = element_blank(), panel.grid = element_blank(), 
-        panel.border = element_rect(colour = "black", fill = alpha("white", 0)), axis.line = element_blank())
+        panel.border = element_rect(colour = "black", fill = alpha("white", 0)), axis.line = element_blank(),
+        legend.position = "bottom")
 
 # Save the map
 ggsave(filename = "map_of_experiments.jpg", plot = g_map_alt, path = fig_dir,
-       height = 3, width = 4, dpi = 500)
+       height = 3, width = 4.5, dpi = 500)
 
 # ## Add an adjacent table
 # g_map_alt1 <- g_map_alt +
