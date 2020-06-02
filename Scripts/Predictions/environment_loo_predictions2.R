@@ -248,12 +248,12 @@ data_to_model <- S2_MET_BLUEs %>%
   mutate(env = environment, loc = location)
 
 
-# Generate skeleton train/test sets for LOEO
+# Generate skeleton train/test sets for validation
 env_external_train_val <- data_to_model %>%
   group_by(trait) %>%
   mutate(site = env) %>%
-  do({ tibble(train = list(resample(data = ., idx = which(.$site %in% train_test_env))),
-              test = list(resample(data = ., idx = which(.$site %in% validation_env)))) }) %>%
+  do({ tibble(train = list(resample(data = droplevels(.), idx = which(.$site %in% train_test_env))),
+              test = list(resample(data = droplevels(.), idx = which(.$site %in% validation_env)))) }) %>%
   ungroup() %>%
   mutate(train = map(train, ~filter(as.data.frame(.), line_name %in% tp_geno) %>% 
                        mutate_at(vars(site), fct_contr_sum) %>%
