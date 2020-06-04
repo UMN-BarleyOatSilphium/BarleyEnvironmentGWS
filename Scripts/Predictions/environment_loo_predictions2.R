@@ -102,6 +102,7 @@ covariates_tomodel <- concurrent_feature_selection %>%
   filter(covariates != "line_name") %>%
   group_by(trait, feature_selection, model, direction) %>%
   nest(.key = "covariates") %>%
+  ungroup() %>%
   # Use only recursive feature analysis
   filter(feature_selection == "rfa_cv") %>%
   # Add all covariates
@@ -413,6 +414,7 @@ covariates_tomodel <- historical_feature_selection %>%
   filter(covariates != "line_name") %>%
   group_by(trait, feature_selection, model, direction) %>%
   nest(.key = "covariates") %>%
+  ungroup() %>%
   # Use only recursive feature analysis
   filter(feature_selection == "rfa_cv") %>%
   # Add all covariates
