@@ -127,6 +127,10 @@ validation_env <- S2_MET_BLUEs %>%
   distinct(environment) %>% 
   pull()
 
+# Translate these to locations
+train_test_loc <- sort(unique(subset(trial_info, environment %in% train_test_env, location, drop = TRUE)))
+validation_loc <- sort(unique(subset(trial_info, environment %in% validation_env, location, drop = TRUE)))
+
 
 
 ## Final filter of BLUEs
