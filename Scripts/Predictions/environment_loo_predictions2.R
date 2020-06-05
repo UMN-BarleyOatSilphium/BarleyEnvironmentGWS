@@ -90,12 +90,26 @@ data_to_model <- S2_MET_BLUEs %>%
   mutate_at(vars(environment, location, year), as.factor) %>%
   mutate(env = environment, loc = location)
 
+## Adjust feature selection df
+concurrent_fact_reg_feature_selection <- concurrent_fact_reg_feature_selection %>%
+  gather(selection_type, covariates, apriori, adhoc, adhoc_nosoil) %>% 
+  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>% 
+  mutate(feat_sel_type = ifelse(str_detect(feat_sel_type, "apriori"), "apriori", feat_sel_type))
+
+concurrent_feature_selection <- concurrent_feature_selection %>%
+  gather(selection_type, covariates, adhoc, adhoc_nosoil) %>% 
+  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_")
+
+
+# Combine feature selection df
+feature_selection_df <- bind_rows(concurrent_fact_reg_feature_selection, concurrent_feature_selection)
+
 
 # Reorganize covariate df
-covariates_tomodel <- concurrent_feature_selection %>%
+covariates_tomodel <- feature_selection_df %>%
   mutate(timeframe = "concurrent") %>%
   # Only use adhoc (not adhoc no soil)
-  select(trait, feature_selection = feat_sel_type, direction, model, covariates = adhoc) %>%
+  select(trait, feature_selection = feat_sel_type, direction, model, covariates) %>%
   mutate(covariates = map(covariates, "optVariables"),
          direction = ifelse(is.na(direction), "forward", direction)) %>%
   unnest() %>%
@@ -103,11 +117,11 @@ covariates_tomodel <- concurrent_feature_selection %>%
   group_by(trait, feature_selection, model, direction) %>%
   nest(.key = "covariates") %>%
   ungroup() %>%
-  # Use only recursive feature analysis
-  filter(feature_selection == "rfa_cv") %>%
+  # Do not use the no soil selections or pls
+  filter(str_detect(feature_selection, "nosoil|pls", negate = TRUE)) %>%
   # Add all covariates
-  add_row(trait = .$trait, feature_selection = "all", model = .$model, 
-          covariates = list(tibble(covariates = names(ec_tomodel_centered)[-1]))) %>%
+  bind_rows(., crossing(trait = unique(.$trait), feature_selection = "all", model = unique(.$model), 
+                        covariates = list(tibble(covariates = names(ec_tomodel_centered)[-1])))) %>%
   # Collapse covariates
   mutate(covariates = map(covariates, "covariates")) %>%
   # nest
@@ -401,6 +415,48 @@ data_to_model <- S2_MET_loc_BLUEs %>%
   mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno))) %>%
   mutate_at(vars(location), as.factor) %>%
   mutate(loc = location)
+
+
+
+## Adjust feature selection df
+historical_fact_reg_feature_selection <- historical_fact_reg_feature_selection %>%
+  gather(selection_type, covariates, apriori, adhoc, adhoc_nosoil) %>% 
+  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>% 
+  mutate(feat_sel_type = ifelse(str_detect(feat_sel_type, "apriori"), "apriori", feat_sel_type))
+
+historical_feature_selection <- historical_feature_selection %>%
+  gather(selection_type, covariates, adhoc, adhoc_nosoil) %>% 
+  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>%
+  mutate(model = case_when(model == "model2" ~ "model4", model == "model3" ~ "model5"))
+
+
+# Combine feature selection df
+feature_selection_df <- bind_rows(historical_fact_reg_feature_selection, historical_feature_selection)
+
+
+# Reorganize covariate df
+covariates_tomodel <- feature_selection_df %>%
+  mutate(timeframe = "historical") %>%
+  # Only use adhoc (not adhoc no soil)
+  select(trait, feature_selection = feat_sel_type, direction, model, covariates) %>%
+  mutate(covariates = map(covariates, "optVariables"),
+         covariates = modify_if(covariates, is.null, ~character(0)),
+         direction = ifelse(is.na(direction), "forward", direction)) %>%
+  unnest() %>%
+  filter(covariates != "line_name") %>%
+  group_by(trait, feature_selection, model, direction) %>%
+  nest(.key = "covariates") %>%
+  ungroup() %>%
+  # Do not use the no soil selections or pls
+  filter(str_detect(feature_selection, "nosoil|pls", negate = TRUE)) %>%
+  # Add all covariates
+  bind_rows(., crossing(trait = unique(.$trait), feature_selection = "all", model = unique(.$model), 
+                        covariates = list(tibble(covariates = names(loc_ec_tomodel_scaled)[-1])))) %>%
+  # Collapse covariates
+  mutate(covariates = map(covariates, "covariates")) %>%
+  # nest
+  group_by(trait) %>% 
+  nest(.key = "model_covariates")
 
 
 # Reorganize covariate df

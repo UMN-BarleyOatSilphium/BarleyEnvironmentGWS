@@ -91,41 +91,76 @@ apriori_covariate_df <- trait_covariate_df %>%
   )}
 
 
-# ## Factorial regression with AIC stepwise selection ##
-# 
-# ## Group by trait and model
-# concurrent_fact_reg <- S2_MET_BLUEs_tomodel %>%
-#   group_by(trait) %>%
-#   do({
-#     
-#     df <- .
-#     # Factorize
-#     df1 <- df %>%
-#       # filter(location != "Aberdeen") %>%
-#       droplevels() %>%
-#       left_join(., ec_tomodel_centered, by = "environment") %>%
-#       mutate_at(vars(line_name, environment), ~fct_contr_sum(as.factor(.)))
-#     
-#     
-#     # Ad hoc
-#     ## Add covariates - filter
-#     covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-#     adhoc_out <- fact_reg(data = df1, covariates = covariates_use, env = "environment", method = "step", criterion = "BIC")
-#     
-#     
-#     # Ad hoc - without soil
-#     ## Add covariates - filter
-#     covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T), 
-#                              covariate, drop = TRUE)
-#     adhoc_nosoil_out <- fact_reg(data = df1, covariates = covariates_use, env = "environment", method = "step")
-#   
-#     
-#     ## Return results
-#     tibble(model = c("base", "base_alt", "model2", "model3"),
-#            adhoc = adhoc_out,
-#            adhoc_nosoil = adhoc_nosoil_out)
-#     
-#   }) %>% ungroup()
+## Factorial regression with AIC stepwise selection ##
+
+## Group by trait and model
+concurrent_fact_reg <- S2_MET_BLUEs_tomodel %>%
+  group_by(trait) %>%
+  do({
+
+    df <- .
+    # Factorize
+    df1 <- df %>%
+      # filter(location != "Aberdeen") %>%
+      droplevels() %>%
+      left_join(., ec_tomodel_centered, by = "environment") %>%
+      mutate_at(vars(line_name, environment), ~fct_contr_sum(as.factor(.)))
+    
+    # Apriori
+    ## Add covariates - filter
+    covariates_use <- subset(apriori_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+    apriori_out <- fact_reg(data = df1, covariates = covariates_use, method = "apriori")
+    
+
+
+    # Ad hoc
+    ## Add covariates - filter
+    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+    adhoc_out <- fact_reg(data = df1, covariates = covariates_use, env = "environment", method = "step", criterion = "BIC")
+
+
+    # Ad hoc - without soil
+    ## Add covariates - filter
+    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T),
+                             covariate, drop = TRUE)
+    adhoc_nosoil_out <- fact_reg(data = df1, covariates = covariates_use, env = "environment", method = "step")
+
+
+    ## Return results
+    tibble(model = c("base", "base_alt", "model2", "model3"),
+           apriori = apriori_out,
+           adhoc = adhoc_out,
+           adhoc_nosoil = adhoc_nosoil_out)
+
+  }) %>% ungroup()
+
+
+## Assess via LOO cv
+concurrent_fact_reg_loo_test <- S2_MET_BLUEs_tomodel %>%
+  left_join(., ec_tomodel_centered) %>%
+  group_by(trait) %>%
+  do(crossv_loo_grouped(group_by(., environment))) %>%
+  ungroup() %>%
+  left_join(., concurrent_fact_reg) %>%
+  filter(str_detect(model, "base", negate = TRUE)) %>%
+  filter(trait == "TestWeight") %>%
+  mutate(train_fit = map2(.x = train, .y = adhoc, ~update(.y, data = .x)),
+         test_pred = map2(.x = test, .y = train_fit, ~add_predictions(as.data.frame(.x), .y)))
+
+concurrent_fact_reg_loo_test %>% 
+  unnest(test_pred) %>%
+  qplot(x = pred, y = value, color = environment, data = ., facets = ~model)
+
+
+## Prepare results for saving
+concurrent_fact_reg_feature_selection <- concurrent_fact_reg %>%
+  mutate(feat_sel_type = "stepAIC", direction = "forward") %>%
+  filter(str_detect(model, "base", negate = TRUE)) %>%
+  mutate_at(vars(apriori, adhoc, adhoc_nosoil), ~map(., ~list(optVariables = attr(terms(.x), "term.labels"))))
+  
+  
+
+
 
 
 # Feature selection ############################################################
@@ -228,65 +263,76 @@ historical_ec_tomodel_centered_use <- historical_ec_tomodel_timeframe_centered$t
 # # Load packages
 # invisible(lapply(X = pkgs, library, character.only = TRUE))
 
-# historical_fact_reg <- S2_MET_loc_BLUEs_tomodel %>%
-#   group_by(trait) %>%
-#   nest() %>%
-#   mutate(out = list(NULL))
-# 
-# for (i in seq_len(nrow(historical_fact_reg))) {
-#   
-#     df <- historical_fact_reg$data[[i]]
-#     df$trait <- historical_fact_reg$trait[i]
-#     # Factorize
-#     df1 <- df %>%
-#       droplevels() %>%
-#       left_join(., historical_ec_tomodel_centered_use, by = "location") %>%
-#       mutate_at(vars(line_name, location), ~fct_contr_sum(as.factor(.)))
-#     
-#     # Apriori
-#     ## Add covariates - filter
-#     covariates_use <- subset(apriori_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-#     apriori_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "apriori")
-#     
-#     # Ad hoc
-#     ## Add covariates - filter
-#     covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-#     adhoc_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
-#     
-#     # Ad hoc - without soil
-#     ## Add covariates - filter
-#     covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T), 
-#                              covariate, drop = TRUE)
-#     adhoc_nosoil_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
-#     
-#     
-#     ## Step1 ##
-#     # Ad hoc
-#     ## Add covariates - filter
-#     covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-#     adhoc_out_step1 <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step1")
-#     
-#     # Ad hoc - without soil
-#     ## Add covariates - filter
-#     covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T), 
-#                              covariate, drop = TRUE)
-#     adhoc_nosoil_out_step1 <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step1")
-#     
-#     
-#     
-#     
-#     ## Return results
-#     historical_fact_reg$out[[i]] <- tibble(model = c("base", "base_alt", "model4", "model5"),
-#            apriori = apriori_out,
-#            adhoc = adhoc_out,
-#            adhoc_nosoil = adhoc_nosoil_out,
-#            adhoc_step1 = adhoc_out_step1,
-#            adhoc_nosoil_step1 = adhoc_nosoil_out_step1)
-#     
-# }
-# 
-# 
-# historical_fact_reg <- unnest(historical_fact_reg, out)
+historical_fact_reg <- S2_MET_loc_BLUEs_tomodel %>%
+  group_by(trait) %>%
+  nest() %>%
+  mutate(out = list(NULL))
+
+for (i in seq_len(nrow(historical_fact_reg))) {
+
+    df <- historical_fact_reg$data[[i]]
+    df$trait <- historical_fact_reg$trait[i]
+    # Factorize
+    df1 <- df %>%
+      droplevels() %>%
+      left_join(., historical_ec_tomodel_centered_use, by = "location") %>%
+      mutate_at(vars(line_name, location), ~fct_contr_sum(as.factor(.)))
+
+    # Apriori
+    ## Add covariates - filter
+    covariates_use <- subset(apriori_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+    apriori_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "apriori")
+
+    # Ad hoc
+    ## Add covariates - filter
+    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+    adhoc_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
+
+    # Ad hoc - without soil
+    ## Add covariates - filter
+    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T),
+                             covariate, drop = TRUE)
+    adhoc_nosoil_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
+
+
+    ## Return results
+    historical_fact_reg$out[[i]] <- tibble(model = c("base", "base_alt", "model4", "model5"),
+           apriori = apriori_out,
+           adhoc = adhoc_out,
+           adhoc_nosoil = adhoc_nosoil_out)
+
+}
+
+
+historical_fact_reg <- unnest(historical_fact_reg, out)
+
+
+## Assess via LOO cv
+historical_fact_reg_loo_test <- S2_MET_loc_BLUEs_tomodel %>%
+  left_join(., historical_ec_tomodel_centered_use) %>%
+  group_by(trait) %>%
+  do(crossv_loo_grouped(group_by(., location))) %>%
+  ungroup() %>%
+  left_join(., historical_fact_reg) %>%
+  filter(str_detect(model, "base", negate = TRUE)) %>%
+  filter(trait == "TestWeight") %>%
+  mutate(train_fit = map2(.x = train, .y = adhoc_nosoil, ~update(.y, data = .x)),
+         test_pred = map2(.x = test, .y = train_fit, ~add_predictions(as.data.frame(.x), .y)))
+
+historical_fact_reg_loo_test %>% 
+  unnest(test_pred) %>%
+  qplot(x = pred, y = value, color = location, data = .) +
+  facet_wrap(~ model, scales = "free")
+
+
+## Prepare results for saving
+historical_fact_reg_feature_selection <- historical_fact_reg %>%
+  mutate(feat_sel_type = "stepAIC", direction = "forward") %>%
+  filter(str_detect(model, "base", negate = TRUE)) %>%
+  mutate_at(vars(apriori, adhoc, adhoc_nosoil), ~map(., ~list(optVariables = attr(terms(.x), "term.labels"))))
+
+
+
 
 
 
@@ -333,6 +379,7 @@ historical_feature_selection <- unnest(historical_feature_selection_list, out)
 
 
 save("concurrent_feature_selection", "historical_feature_selection", 
+     "concurrent_fact_reg_feature_selection", "historical_fact_reg_feature_selection",
      file = file.path(result_dir, "feature_selection_results_nasapower.RData"))
 
 
