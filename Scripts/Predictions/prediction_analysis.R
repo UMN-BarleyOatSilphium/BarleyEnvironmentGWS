@@ -66,10 +66,8 @@ f_ec_selection_replace <- function(x)
     "all" = "All")[x]
 
 # Color scheme for models
-model_colors <- c(neyhart_palette("umn1")[1], neyhart_palette("umn3")[3], neyhart_palette("umn1")[3],
-                  neyhart_palette("umn3")[4], neyhart_palette("umn1")[4])
-# names(model_colors) <- grep(pattern = "_", x = names(model_replace), value = TRUE, invert = TRUE)
-names(model_colors) <- names(model_replace)
+model_colors <- paletteer_d(package = "ggsci", palette = "default_nejm", n = length(model_replace)) %>%
+  setNames(., names(model_replace))
 
 
 
@@ -82,7 +80,7 @@ names(model_colors) <- names(model_replace)
 
 ## Grab the prediction outputs - cross-validation
 loo_prediction_list <- map(set_names(object_list, object_list), get) %>%
-  subset(., str_detect(names(.), "^lo")) %>%
+  subset(., str_detect(names(.), "^lo[a-z]o")) %>%
   # Bind rows if necessary
   modify_if(is.list, bind_rows) %>%
   subset(., map_lgl(., ~nrow(.) > 1)) %>%
@@ -187,7 +185,7 @@ loo_predictive_ability %>%
   facet_grid(trait ~ type + pop)
 
 loo_predictions_df %>%
-  filter(trait == "TestWeight") %>%
+  filter(trait == "TestWeight", type == "lolo") %>%
   ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
   geom_point() +
   scale_color_discrete(guide = FALSE) +
@@ -547,15 +545,6 @@ external_predictive_ability <- external_predictions_df %>%
   ungroup()
 
 
-
-## Quick plot of accuracy for each trait, model, pop, type, and selection
-external_predictive_ability %>%
-  group_by(trait, model, pop, type, selection) %>%
-  summarize_at(vars(ability, bias), mean) %>%
-  ggplot(aes(x = model, y = ability, fill = selection)) +
-  geom_col(position = position_dodge(0.9)) +
-  facet_grid(trait ~ type + pop)
-
 ## Quick plot of accuracy across all data points
 external_predictive_ability %>%
   distinct(trait, model, pop, type, selection, ability_all, bias_all) %>%
@@ -564,7 +553,7 @@ external_predictive_ability %>%
   facet_grid(trait ~ type + pop)
 
 external_predictions_df %>%
-  filter(trait == "GrainYield") %>%
+  filter(trait == "PlantHeight") %>%
   ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
   geom_point() +
   # scale_color_discrete(guide = FALSE) +
