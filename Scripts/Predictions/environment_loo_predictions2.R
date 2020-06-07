@@ -459,29 +459,6 @@ covariates_tomodel <- feature_selection_df %>%
   nest(.key = "model_covariates")
 
 
-# Reorganize covariate df
-covariates_tomodel <- historical_feature_selection %>%
-  mutate(timeframe = "historical") %>%
-  # Only use adhoc (not adhoc no soil)
-  select(trait, feature_selection = feat_sel_type, direction, model, covariates = adhoc) %>%
-  mutate(covariates = map(covariates, "optVariables"),
-         direction = ifelse(is.na(direction), "forward", direction)) %>%
-  unnest() %>%
-  filter(covariates != "line_name") %>%
-  group_by(trait, feature_selection, model, direction) %>%
-  nest(.key = "covariates") %>%
-  ungroup() %>%
-  # Use only recursive feature analysis
-  filter(feature_selection == "rfa_cv") %>%
-  # Add all covariates
-  add_row(trait = .$trait, feature_selection = "all", model = .$model, 
-          covariates = list(tibble(covariates = names(ec_tomodel_centered)[-1]))) %>%
-  # Collapse covariates
-  mutate(covariates = map(covariates, "covariates")) %>%
-  # nest
-  group_by(trait) %>% 
-  nest(.key = "model_covariates")
-
 
 # Generate skeleton train/test sets for LOEO
 lolo_train_test <- data_to_model %>%
