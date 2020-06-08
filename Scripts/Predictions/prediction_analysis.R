@@ -61,9 +61,8 @@ f_pop_replace <- function(x) str_replace_all(x, c("tp" = "CV0", "vp" = "POV00"))
 # Replace type
 f_type_replace <- function(x) c("loeo" = "New environment", "lolo" = "New location", "loyo" = "New year")[x]
 # Replace ec selection
-f_ec_selection_replace <- function(x) 
-  c("adhoc" = "italic(ad~hoc)", "adhoc_nosoil" = "italic(ad~hoc)~(no~soil)", "apriori" = "italic(a~priori)", 
-    "all" = "All")[x]
+f_ec_selection_replace <- function(x)  c("rfa_cv_adhoc" = "stepCV", "stepAIC_adhoc" = "stepAIC", "apriori" = "italic(a~priori)", 
+                                         "all" = "All")[x]
 
 # Color scheme for models
 model_colors <- paletteer_d(package = "ggsci", palette = "default_nejm", n = length(model_replace)) %>%
@@ -97,20 +96,12 @@ loo_predictions_df <- loo_prediction_list %>%
            mutate_if(is.factor, ~parse_guess(as.character(.)))) %>%
   rename(selection = feature_selection) %>%
   mutate(selection = ifelse(is.na(selection), "none", selection),
-         selection = ifelse(selection == "rfa_cv", "adhoc", selection),
          pop = ifelse(line_name %in% tp, "tp", "vp")) %>%
   select(-which(names(.) %in% c(".id", "core", "trait1"))) %>%
   # Coalesce columns
   mutate(leave_one_group = site1, nGroup = nSite) %>%
   select(-which(names(.) %in% c("environment", "location", "nLoc", "nEnv", "loc1", "env1", "nSite", "site1")))
 
-## Coalesce models with no covariates into the other selection method
-loo_predictions_df <- bind_rows(
-  filter(loo_predictions_df, selection != "none"),
-  filter(loo_predictions_df, selection == "none") %>% select(-selection) %>% 
-    crossing(., selection = str_subset(unique(loo_predictions_df$selection), "none", negate = TRUE)))
-  
-  
 
 
 ## Calculate accuracy and bias per train group, model, and population
@@ -129,53 +120,12 @@ loo_predictive_ability <- loo_predictions_df %>%
   ungroup()
 
 
-## Crookston appears to be a leverage cluster for grain yield; calculate location prediction
-## accuracy without Crookston
-
-# With Crookston
-loo_predictions_df %>% 
-  filter(type == "lolo", trait == "GrainYield", selection == "adhoc", pop == "tp") %>% 
-  group_by(model) %>% 
-  summarize(ability = cor(pred_complete, value))
-  
-# model      ability
-# 1 model1      -0.592
-# 2 model2_cov   0.960
-# 3 model2_id   -0.229
-# 4 model3_cov   0.939
-# 5 model3_id    0.939
-  
-# Without Crookston
-loo_predictions_df %>% 
-  filter(type == "lolo", trait == "GrainYield", selection == "adhoc", pop == "tp") %>% 
-  filter(leave_one_group != "Crookston") %>%
-  group_by(model) %>% 
-  summarize(ability = cor(pred_complete, value))
-  
-# model       ability
-# 1 model1     -0.355  
-# 2 model2_cov  0.921  
-# 3 model2_id  -0.00614
-# 4 model3_cov  0.891  
-# 5 model3_id   0.891
-
-## A difference, for sure, but the prediction accuracy is still quite good
-
-
 # ## Adjust ability using heritability
 # loo_prediction_accuracy <- loo_predictive_ability %>%
 #   left_join(., env_trait_herit, by = c("leave_one_group" = "environment")) %>%
 #   mutate(accuracy = ability / sqrt(heritability))
 
 
-
-## Quick plot of accuracy for each trait, model, pop, type, and selection
-loo_predictive_ability %>%
-  group_by(trait, model, pop, type, selection) %>%
-  summarize_at(vars(ability, bias), mean) %>%
-  ggplot(aes(x = model, y = ability, fill = selection)) +
-  geom_col(position = position_dodge(0.9)) +
-  facet_grid(trait ~ type + pop)
 
 ## Quick plot of accuracy across all data points
 loo_predictive_ability %>%
@@ -185,13 +135,21 @@ loo_predictive_ability %>%
   facet_grid(trait ~ type + pop)
 
 loo_predictions_df %>%
-  filter(trait == "TestWeight", type == "lolo") %>%
+  filter(trait == "GrainProtein", type == "lolo", selection != "none") %>%
   ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
   geom_point() +
   scale_color_discrete(guide = FALSE) +
   facet_grid(type + selection ~ model + pop) +
   theme_presentation2(10)
 
+
+loo_predictions_df %>%
+  filter(trait == "GrainYield", type == "lolo", selection == "rfa_cv_adhoc") %>%
+  ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
+  geom_point() +
+  scale_color_discrete(guide = FALSE) +
+  facet_grid(type + selection ~ model + pop) +
+  theme_presentation2(10)
 
 
 

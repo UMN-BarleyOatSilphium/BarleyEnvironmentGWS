@@ -408,7 +408,8 @@ loc_external_predictions_out <- loc_external_train_val1 %>%
   }) %>% bind_rows()
 
 ## Save the results
-save("lolo_predictions_out", file = file.path(result_dir, "lolo_predictions_fact_reg.RData"))
+save("lolo_predictions_out", "loc_external_predictions_out",
+     file = file.path(result_dir, "lolo_predictions_fact_reg.RData"))
 
 
 
