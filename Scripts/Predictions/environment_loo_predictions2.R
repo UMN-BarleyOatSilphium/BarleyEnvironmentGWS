@@ -5,7 +5,6 @@
 ## Individual site and environment prediction will be conducted.
 ## 
 ## Author: Jeff Neyhart
-## Last modified: 8 January 2020
 ## 
 
 
