@@ -143,7 +143,7 @@ covariates_tomodel <- feature_selection_df %>%
   filter(str_detect(feature_selection, "nosoil|pls", negate = TRUE)) %>%
   # Add all covariates
   bind_rows(., crossing(trait = unique(.$trait), feature_selection = "all", model = unique(.$model), 
-                        covariates = list(tibble(covariates = names(loc_ec_tomodel_scaled)[-1])))) %>%
+                        covariates = list(tibble(covariates = names(loc_ec_tomodel_scaled)[-1:-2])))) %>%
   # Collapse covariates
   mutate(covariates = map(covariates, "covariates")) %>%
   # nest
