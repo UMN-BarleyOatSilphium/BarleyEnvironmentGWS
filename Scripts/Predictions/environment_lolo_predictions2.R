@@ -220,7 +220,7 @@ lolo_predictions_out <- data_train_test1 %>%
       for (r in seq_len(nrow(covariates_use))) {
         
         # List of covariates
-        covariate_list <- tibble(term = unique(unlist(covariates_use[r, c("model2", "model3")]))) %>% 
+        covariate_list <- tibble(term = unique(unlist(covariates_use[r, c("model4", "model5")]))) %>% 
           mutate(class = ifelse(str_detect(term, ":"), "interaction", "main"),
                  covariate = str_remove(term, "line_name:")) %>%
           split(.$class) %>% 
@@ -355,7 +355,7 @@ loc_external_predictions_out <- loc_external_train_val1 %>%
       for (r in seq_len(nrow(covariates_use))) {
         
         # List of covariates
-        covariate_list <- tibble(term = unique(unlist(covariates_use[r, c("model2", "model3")]))) %>% 
+        covariate_list <- tibble(term = unique(unlist(covariates_use[r, c("model4", "model5")]))) %>% 
           mutate(class = ifelse(str_detect(term, ":"), "interaction", "main"),
                  covariate = str_remove(term, "line_name:")) %>%
           split(.$class) %>% 
