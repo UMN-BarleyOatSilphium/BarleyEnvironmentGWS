@@ -1870,26 +1870,26 @@ genomewide_prediction2 <- function(x, model.list, K, E, KE) {
       
       ## Try to fit the model; capture the output
       model_stdout <- capture.output( eval(fit_mmer_exp) )
-
       
-      # If model fit is empty, try using a smaller number of iterations; for instance find
-      # the maximum logLik and use those iterations
-      itry <- 1
-      while (is_empty(model_fit) & itry == 1) {
-        
-        # Find the number of iterations that maximized the logLik
-        best_iter <- model_stdout %>% 
-          subset(., str_detect(., "singular", negate = T)) %>% 
-          read_table(.) %>%
-          subset(., LogLik == max(LogLik), iteration, drop = TRUE)
-        
-        # Refit
-        eval(fit_mmer_exp)
-        
-        # Increase the counter
-        itry = itry + 1
-        
-      }
+      
+      # # If model fit is empty, try using a smaller number of iterations; for instance find
+      # # the maximum logLik and use those iterations
+      # itry <- 1
+      # while (is_empty(model_fit) & itry == 1) {
+      #   
+      #   # Find the number of iterations that maximized the logLik
+      #   best_iter <- model_stdout %>% 
+      #     subset(., str_detect(., "singular", negate = T)) %>% 
+      #     read_table(.) %>%
+      #     subset(., LogLik == max(LogLik), iteration, drop = TRUE)
+      #   
+      #   # Refit
+      #   eval(fit_mmer_exp)
+      #   
+      #   # Increase the counter
+      #   itry = itry + 1
+      #   
+      # }
       
       # If the model is still empty, create empty fixed and random effects
       if (is_empty(model_fit)) {
@@ -1899,6 +1899,16 @@ genomewide_prediction2 <- function(x, model.list, K, E, KE) {
                                                pev = NA))
         
       } else {
+        
+        # Check to make sure the loglikihood was maximized
+        maxed_LL <- which.max(model_fit$monitor[1,]) == ncol(model_fit$monitor)
+        
+        if (!maxed_LL) {
+          # Refit the model using the iterations that maximized the LL
+          model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
+                            data = train, date.warning = FALSE, verbose = TRUE, getPEV = TRUE,
+                            iters = which.max(model_fit$monitor[1,]))
+        }
         
         ## Fixed effects
         fixed_eff <- coef(model_fit) %>%

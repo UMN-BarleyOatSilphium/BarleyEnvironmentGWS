@@ -62,7 +62,7 @@ f_pop_replace <- function(x) str_replace_all(x, c("tp" = "CV0", "vp" = "POV00"))
 f_type_replace <- function(x) c("loeo" = "New environment", "lolo" = "New location", "loyo" = "New year")[x]
 # Replace ec selection
 f_ec_selection_replace <- function(x)  c("rfa_cv_adhoc" = "stepCV", "stepAIC_adhoc" = "stepAIC", "apriori" = "italic(a~priori)", 
-                                         "all" = "All")[x]
+                                         "all" = "All", "none" = "None")[x]
 
 # Color scheme for models
 model_colors <- paletteer_d(package = "ggsci", palette = "default_nejm", n = length(model_replace)) %>%
@@ -135,21 +135,14 @@ loo_predictive_ability %>%
   facet_grid(trait ~ type + pop)
 
 loo_predictions_df %>%
-  filter(trait == "GrainProtein", type == "lolo", selection != "none") %>%
+  filter(trait == "GrainProtein", type == "loeo", selection != "none") %>%
   ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
+  geom_abline(slope = 1, intercept = 0) +
   geom_point() +
   scale_color_discrete(guide = FALSE) +
   facet_grid(type + selection ~ model + pop) +
   theme_presentation2(10)
 
-
-loo_predictions_df %>%
-  filter(trait == "GrainYield", type == "lolo", selection == "rfa_cv_adhoc") %>%
-  ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
-  geom_point() +
-  scale_color_discrete(guide = FALSE) +
-  facet_grid(type + selection ~ model + pop) +
-  theme_presentation2(10)
 
 
 
@@ -206,16 +199,16 @@ g_loo_prediction_list <- loo_predictions_df %>%
              # Edit the covariate selection variable
              selection = paste0("Covariates:~", f_ec_selection_replace(selection)))
     
-    ## Create the plot
-    g_plot <- df1 %>%
-      filter(pred_complete > 0) %>%
+    ## First plot selection == none (identity covariance for environments and gxe)
+    g_plot_none <- df1 %>%
+      filter(selection == "none") %>%
       # Edit the covariate selection variable
       mutate(selection = paste0("Covariates:~", f_ec_selection_replace(selection))) %>%
       ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
       geom_abline(slope = 1, intercept = 0) +
       geom_point(size = 0.5, alpha = 0.5) +
-      geom_text(data = r_mp_annotation, aes(x = x, y = y, label = annotation), parse = TRUE, inherit.aes = FALSE,
-                hjust = 0, size = 2) +
+      geom_text(data = filter(r_mp_annotation, str_detect(selection, "None")), 
+                aes(x = x, y = y, label = annotation), parse = TRUE, inherit.aes = FALSE, hjust = 0, size = 2) +
       scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
       scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
       scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
@@ -224,8 +217,27 @@ g_loo_prediction_list <- loo_predictions_df %>%
       labs(subtitle = paste0(toupper(unique(df1$type)), ": ", str_add_space(unique(df1$trait)))) +
       theme_presentation2(10)
     
-    ## Return the plot
-    g_plot
+    ## Create the plot
+    g_plot <- df1 %>%
+      filter(selection != "none") %>%
+      # Edit the covariate selection variable
+      mutate(selection = paste0("Covariates:~", f_ec_selection_replace(selection))) %>%
+      ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
+      geom_abline(slope = 1, intercept = 0) +
+      geom_point(size = 0.5, alpha = 0.5) +
+      geom_text(data = filter(r_mp_annotation, str_detect(selection, "None", negate = TRUE)), 
+                aes(x = x, y = y, label = annotation), parse = TRUE, inherit.aes = FALSE, hjust = 0, size = 2) +
+      scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
+      scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
+      scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
+      facet_grid(selection + pop ~ model, switch = "y", 
+                 labeller = labeller(selection = label_parsed, pop = f_pop_replace, model = f_model_replace)) +
+      labs(subtitle = paste0(toupper(unique(df1$type)), ": ", str_add_space(unique(df1$trait)))) +
+      theme_presentation2(10)
+    
+    ## Combine plots and return
+    plot_grid(g_plot_none, g_plot, ncol = 1, rel_heights = c(1/3, 1))
+    
     
     }) %>% ungroup()
 
@@ -237,7 +249,7 @@ for (i in seq_len(nrow(g_loo_prediction_list))) {
                      paste0(map_chr(select(g_loo_prediction_list, -plot), i), collapse = "_"), 
                      ".jpg")
   ggsave(filename = filename, plot = g_loo_prediction_list$plot[[i]], 
-         path = fig_dir, width = 12, height = 10, dpi = 1000)
+         path = fig_dir, width = 6, height = 16, dpi = 1000)
   
 }
 
@@ -246,7 +258,8 @@ for (i in seq_len(nrow(g_loo_prediction_list))) {
 
 ## Barplot of overall prediction accuracy
 g_loo_predictions_all_summ <- loo_accuracy_bias_all %>%
-  mutate(selection = f_ec_selection_replace(selection)) %>%
+  mutate(selection = f_ec_selection_replace(selection),
+         selection = fct_relevel(selection, "None")) %>% # Put "None" first
   filter(measure == "ability") %>%
   ggplot(aes(x = selection, group = model)) +
   geom_hline(yintercept = 0, color = "grey85") +
@@ -269,81 +282,6 @@ ggsave(filename = "loo_model_predictions_all_accuracy.jpg", plot = g_loo_predict
        path = fig_dir, width = 14, height = 6, dpi = 1000)
 
 
-## Plot bias versus accuracy
-# Transform
-loo_accuracy_bias_all1 <- loo_accuracy_bias_all %>% 
-  select(trait, type, model, pop, measure, base, ci_upper, ci_lower) %>%
-  gather(x, y, base, ci_upper, ci_lower) %>% 
-  unite(x, measure, x) %>% 
-  spread(x, y)
-
-
-## Plot bar plot of accuracy with points for bias
-g_loo_predictions_all_summ1_alt <- loo_accuracy_bias_all1 %>%
-  filter(., model %in% names(model_present), pop == "tp") %>%
-  mutate(trait = str_add_space(trait) %>% str_replace(., " ", "\n")) %>%
-  ggplot(aes(x = trait, group = model)) +
-  geom_hline(yintercept = 0, color = "grey85") +
-  geom_col(aes(y = ability_base, fill = model), position = position_dodge(0.75), color = "black", width = 0.75) + 
-  geom_errorbar(aes(ymin = ability_ci_lower, ymax = ability_ci_upper), position = position_dodge(0.75),
-                width = 0.5, color = "black") + 
-  geom_point(aes(y = bias_base * 10, shape = "Bias"), position = position_dodge(0.75)) +
-  scale_fill_manual(name = "Model", labels = f_model_replace, values = model_colors) +
-  scale_y_continuous(name = expression("Predictive ability"~(italic(r[MP]))), breaks = pretty,
-                     sec.axis = sec_axis(trans = ~ . * 10, name = "Bias (%)", breaks = pretty)) +
-  scale_x_discrete(name = "Trait", labels = f_pop_replace) +
-  scale_shape_discrete(name = NULL) +
-  facet_grid(type ~ ., labeller = labeller(type = f_type_replace), switch = "y") +
-  theme_presentation2(10) +
-  theme(strip.placement = "outside")
-  
-# Save
-ggsave(filename = "loo_model_predictions_all_accuracy_bias_realistic.jpg", plot = g_loo_predictions_all_summ1_alt,
-       path = fig_dir, width = 5, height = 6, dpi = 1000)
-
-
-
-
-g_loo_ability_bias_all <- loo_accuracy_bias_all1 %>%
-  ggplot(aes(x = bias_base, y = ability_base, shape = pop, color = model)) +
-  geom_vline(xintercept = 0) +
-  geom_segment(aes(x = bias_ci_lower, xend = bias_ci_upper, y = ability_base, yend = ability_base), 
-               color = "grey85", lwd = 0.5) +
-  geom_segment(aes(x = bias_base, xend = bias_base, y = ability_ci_lower, yend = ability_ci_upper), 
-               color = "grey85", lwd = 0.5) +
-  geom_point(size = 2) +
-  scale_color_paletteer_d(package = "dutchmasters", palette = "milkmaid",
-                         name = "Model", labels = f_model_replace) +
-  scale_shape_discrete(name = "Validation\nscheme", labels = f_pop_replace) +
-  scale_x_continuous(name = "Bias (%)", breaks = pretty, labels = scales::percent_format(accuracy = 1, suffix = NULL)) +
-  scale_y_continuous(name = "Predictive ability", breaks = pretty) +
-  facet_grid(type ~ trait, labeller = labeller(trait = str_add_space, type = toupper),
-             switch = "y", scales = "free_x") +
-  theme_presentation2(base_size = 8)
-
-# Save
-ggsave(filename = "loo_model_predictions_all_summary.jpg", plot = g_loo_ability_bias_all,
-       path = fig_dir, width = 10, height = 6, dpi = 1000)
-
-
-
-# Remove unrealistic levels
-g_loo_ability_bias_all1 <- g_loo_ability_bias_all %>%
-  modify_at(.x = ., .at = "data", ~
-              filter(., model %in% names(model_present), pop == "tp"))
-g_loo_ability_bias_all1 <- g_loo_ability_bias_all1 +
-  facet_grid(type ~ trait, scales = "free_x", labeller = labeller(type = f_type_replace), switch = "y") +
-  scale_color_manual(name = "Model", labels = f_model_replace, values = model_colors) +
-  scale_shape_discrete(guide = FALSE) +
-  theme_presentation2(base_size = 10)
-
-# Save
-ggsave(filename = "loo_model_predictions_all_summary_realistic.jpg", plot = g_loo_ability_bias_all1,
-       path = fig_dir, width = 8, height = 4, dpi = 1000)
-
-# Save as HTML widget
-htmlwidgets::saveWidget(widget = plotly::as_widget(plotly::ggplotly(g_loo_ability_bias_all)),
-                        file = file.path(fig_dir, "loo_model_predictions_all_summary.html"))
 
 
 
@@ -392,7 +330,8 @@ annotation_df <- loo_prediction_accuracy_summ1 %>%
 # Plot mean and range of predictions
 g_loo_predictions_summ <- loo_prediction_accuracy_summ1 %>%
   filter(model %in% names(model_replace)) %>%
-  mutate(selection = f_ec_selection_replace(selection)) %>%
+  mutate(selection = f_ec_selection_replace(selection),
+         selection = fct_relevel(selection, "None")) %>% # Put "None" first
   ggplot(aes(x = selection, group = model, color = model)) +
   # geom_linerange(aes(ymin = ability_lower, ymax = ability_upper, group = model), 
   #                position = position_dodge(0.9), color = "grey85") +
@@ -473,19 +412,16 @@ external_predictions_df <- external_prediction_list %>%
            mutate_if(is.factor, ~parse_guess(as.character(.)))) %>%
   rename(selection = feature_selection) %>%
   mutate(selection = ifelse(is.na(selection), "none", selection),
-         selection = ifelse(selection == "rfa_cv", "adhoc", selection),
          pop = ifelse(line_name %in% tp, "tp", "vp")) %>%
   select(-which(names(.) %in% c(".id", "core", "trait1"))) %>%
   # Coalesce columns
   mutate(leave_one_group = site,
          nGroup = nSite) %>%
+  # Remove charlottetown
+  # filter(leave_one_group != "Charlottetown") %>%
   select(-which(names(.) %in% c("environment", "location", "nLoc", "nEnv", "loc1", "env1", "nSite", "site1")))
 
-## Coalesce models with no covariates into the other selection method
-external_predictions_df <- bind_rows(
-  filter(external_predictions_df, selection != "none"),
-  filter(external_predictions_df, selection == "none") %>% select(-selection) %>% 
-    crossing(., selection = str_subset(unique(external_predictions_df$selection), "none", negate = TRUE)))
+
 
 ## Calculate accuracy and bias per train group, model, and population
 external_predictive_ability <- external_predictions_df %>%
@@ -508,11 +444,13 @@ external_predictive_ability %>%
   distinct(trait, model, pop, type, selection, ability_all, bias_all) %>%
   ggplot(aes(x = model, y = ability_all, fill = selection)) +
   geom_col(position = position_dodge(0.9)) +
-  facet_grid(trait ~ type + pop)
+  facet_grid(trait ~ type + pop, scales = "free_y") +
+  theme_genetics()
 
 external_predictions_df %>%
-  filter(trait == "PlantHeight") %>%
+  filter(trait == "PlantHeight", selection != "none", type == "env") %>%
   ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
+  geom_abline(slope = 1, intercept = 0) +
   geom_point() +
   # scale_color_discrete(guide = FALSE) +
   facet_grid(type + selection ~ model + pop) +
@@ -571,16 +509,16 @@ g_external_prediction_list <- external_predictions_df %>%
              # Edit the covariate selection variable
              selection = paste0("Covariates:~", f_ec_selection_replace(selection)))
     
-    ## Create the plot
-    g_plot <- df1 %>%
-      filter(pred_complete > 0) %>%
+    ## First plot selection == none (identity covariance for environments and gxe)
+    g_plot_none <- df1 %>%
+      filter(selection == "none") %>%
       # Edit the covariate selection variable
       mutate(selection = paste0("Covariates:~", f_ec_selection_replace(selection))) %>%
       ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
       geom_abline(slope = 1, intercept = 0) +
       geom_point(size = 0.5, alpha = 0.5) +
-      geom_text(data = r_mp_annotation, aes(x = x, y = y, label = annotation), parse = TRUE, inherit.aes = FALSE,
-                hjust = 0, size = 2) +
+      geom_text(data = filter(r_mp_annotation, str_detect(selection, "None")), 
+                aes(x = x, y = y, label = annotation), parse = TRUE, inherit.aes = FALSE, hjust = 0, size = 2) +
       scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
       scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
       scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
@@ -589,8 +527,26 @@ g_external_prediction_list <- external_predictions_df %>%
       labs(subtitle = paste0(toupper(unique(df1$type)), ": ", str_add_space(unique(df1$trait)))) +
       theme_presentation2(10)
     
-    ## Return the plot
-    g_plot
+    ## Create the plot
+    g_plot <- df1 %>%
+      filter(selection != "none") %>%
+      # Edit the covariate selection variable
+      mutate(selection = paste0("Covariates:~", f_ec_selection_replace(selection))) %>%
+      ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
+      geom_abline(slope = 1, intercept = 0) +
+      geom_point(size = 0.5, alpha = 0.5) +
+      geom_text(data = filter(r_mp_annotation, str_detect(selection, "None", negate = TRUE)), 
+                aes(x = x, y = y, label = annotation), parse = TRUE, inherit.aes = FALSE, hjust = 0, size = 2) +
+      scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
+      scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
+      scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
+      facet_grid(selection + pop ~ model, switch = "y", 
+                 labeller = labeller(selection = label_parsed, pop = f_pop_replace, model = f_model_replace)) +
+      labs(subtitle = paste0(toupper(unique(df1$type)), ": ", str_add_space(unique(df1$trait)))) +
+      theme_presentation2(10)
+    
+    ## Combine plots and return
+    plot_grid(g_plot_none, g_plot, ncol = 1, rel_heights = c(1/3, 1))
     
   }) %>% ungroup()
 
@@ -602,13 +558,13 @@ for (i in seq_len(nrow(g_external_prediction_list))) {
                      paste0(map_chr(select(g_external_prediction_list, -plot), i), collapse = "_"), 
                      ".jpg")
   ggsave(filename = filename, plot = g_external_prediction_list$plot[[i]], 
-         path = fig_dir, width = 10, height = 4, dpi = 1000)
+         path = fig_dir, width = 6, height = 8, dpi = 1000)
   
 }
 
 
 
-
+#
 
 
 

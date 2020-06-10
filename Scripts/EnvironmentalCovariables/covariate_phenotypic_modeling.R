@@ -15,6 +15,9 @@ repo_dir <- getwd()
 # Source the main project script
 source(file.path(repo_dir, "source.R"))
 
+library(paletteer)
+library(cowplot)
+
 
 ## Add new packages to load
 pkgs <- union(pkgs, c("modelr", "broom", "lme4", "car", "patchwork", "caret"))
@@ -386,669 +389,186 @@ save("concurrent_feature_selection", "historical_feature_selection",
 
 
 
+
+
+
+
+
+
 # Analyze results ---------------------------------------------------------
 
+# Load the data
+load(file = file.path(result_dir, "feature_selection_results_nasapower.RData"))
 
-# Plot prediction/observation
-tr <- "PlantHeight"
-# form <- concurrent_feature_selection %>%
-form <- historical_feature_selection %>%
-  filter(trait == tr, feat_sel_type == "rfa_cv", model == "model3") %>%
-  pull(adhoc) %>%
-  map(1) %>%
-  unlist() %>%
-  reformulate(termlabels = ., response = "value")
-# dat <- subset(S2_MET_BLUEs_tomodel, trait == tr) %>%
-dat <- subset(S2_MET_loc_BLUEs_tomodel, trait == tr) %>%
-  droplevels() %>%
-  # left_join(., ec_tomodel_centered, by = "environment") %>%
-  left_join(., historical_ec_tomodel_centered_use, by = "location") %>%
-  mutate_at(vars(matches("line_name|environment|location")), ~fct_contr_sum(as.factor(.)))
-loo_indices <- dat %>%
-  group_by_at(vars(matches("environment|location"))) %>%
-  crossv_loo_grouped() %>%
-  pull(train) %>%
-  map("idx")
-train_list <- map(loo_indices, ~lm(form, dat[.x,]))
-test_pred <- map2_df(loo_indices, train_list, ~add_predictions(data = dat[-.x,], model = .y))
-plot(value ~ pred, test_pred); with(test_pred, cor(value, pred))
+ec_tomodel_scaled_mat <- ec_tomodel_scaled %>%
+  as.data.frame() %>%
+  column_to_rownames("environment") %>%
+  as.matrix()
 
+## Combine concurrent feature selection df
+concurrent_features <- bind_rows(
+  concurrent_fact_reg_feature_selection %>% select(trait, model, apriori, stepAIC = adhoc) %>% 
+    gather(feat_sel_type, features, apriori, stepAIC),
+  select(concurrent_feature_selection, trait, model, feat_sel_type, features = adhoc)
+)
 
-
-
-## Combine everything
-ec_fr_results <- bind_rows(
-  mutate(concurrent_fact_reg, timeframe = "concurrent"),
-  mutate(historical_fact_reg, timeframe = "historical")
-) %>% gather(selection, fit, -trait, -model, -timeframe)
+## combine model2 and model3 covariates
+concurrent_features1 <- concurrent_features %>%
+  filter(feat_sel_type != "rfs_pls") %>%
+  spread(model, features) %>%
+  mutate_at(vars(contains("model")), ~map(., "optVariables")) %>%
+  mutate(features = map2(model2, model3, union)) %>%
+  ## Add all covariates
+  add_row(trait = unique(.$trait), feat_sel_type = "all", 
+          features = list(c(names(ec_tomodel_centered)[-1], paste0("line_name:", names(ec_tomodel_centered)[-1])))) %>%
+  mutate(features = map(features, ~setdiff(., "line_name"))) %>%
+  select(-contains("model")) %>%
+  mutate(interaction_features = map(features, ~str_subset(., ":")),
+         main_features = map2(features, interaction_features, setdiff))
   
 
-## Use the base model to determine the proportion of E and GE variance explained by
-## covariates
-fr_var_summary <- ec_fr_results %>%
-  group_by(trait, timeframe, selection) %>%
-  do(var_prop_summary = {
-    df <- .
+
+## How many covariates per trait and variable selection procedure?
+(concurrent_features2 <- concurrent_features1 %>%
+  mutate_at(vars(contains("features")), ~map_dbl(., length)) %>%
+  arrange(trait, feat_sel_type))
+
+
+# trait        feat_sel_type features interaction_features main_features
+# 1 GrainProtein all                 82                   41            41
+# 2 GrainProtein apriori             40                   20            20
+# 3 GrainProtein rfa_cv               9                    0             9
+# 4 GrainProtein stepAIC             10                    2             8
+# 5 GrainYield   all                 82                   41            41
+# 6 GrainYield   apriori             40                   20            20
+# 7 GrainYield   rfa_cv              12                    0            12
+# 8 GrainYield   stepAIC             28                    2            26
+# 9 HeadingDate  all                 82                   41            41
+# 10 HeadingDate  apriori             24                   12            12
+# 11 HeadingDate  rfa_cv               4                    0             4
+# 12 HeadingDate  stepAIC             19                    0            19
+# 13 PlantHeight  all                 82                   41            41
+# 14 PlantHeight  apriori             36                   18            18
+# 15 PlantHeight  rfa_cv               5                    0             5
+# 16 PlantHeight  stepAIC             24                    1            23
+# 17 TestWeight   all                 82                   41            41
+# 18 TestWeight   apriori             40                   20            20
+# 19 TestWeight   rfa_cv               5                    0             5
+# 20 TestWeight   stepAIC             16                    3            13
+
+# Save as csv
+write_csv(x = concurrent_features2, path = file.path(fig_dir, "concurrent_environmental_covariate.csv"))
+
+
+## Determine overlap between select pairs of covariates
+## 
+## apriori vs rfa_cv
+## apriori vs stepAIC
+## rfa_cv vs stepAIC
+## 
+covariate_feature_type_comparison <- crossing(concurrent_features1, concurrent_features1) %>% 
+  filter(trait == trait1, 
+         feat_sel_type != feat_sel_type1,
+         feat_sel_type %in% c("apriori", "rfa_cv"), 
+         feat_sel_type1 %in% c("rfa_cv", "stepAIC")) %>%
+  select(-trait1, -starts_with("features"))
+
+
+# Create a table and export
+covariate_feature_type_comparison_table <- covariate_feature_type_comparison %>%
+  mutate(compare_interaction = map2(interaction_features, interaction_features1, intersect),
+         compare_main = map2(main_features, main_features1, intersect)) %>%
+  select(trait, starts_with("feat_sel_type"), starts_with("compare")) %>%
+  gather(term, comparison, contains("compare")) %>%
+  unnest(comparison) %>%
+  mutate(term = str_remove(term, "compare_"))
+write_csv(x = covariate_feature_type_comparison_table, path = file.path("concurrent_feature_selection_comparison.csv"))
+
+
+
+
+## Calculate environmental relationship matrices based on these features
+concurrent_features_env_relmat <- concurrent_features1 %>%
+  mutate(interaction_features = map(interaction_features, ~str_remove(., "line_name:"))) %>%
+  mutate(interaction_features_ec_mat = map(interaction_features, ~ec_tomodel_scaled_mat[, .x, drop = FALSE]),
+         main_features_ec_mat = map(main_features, ~ec_tomodel_scaled_mat[, .x, drop = FALSE])) %>%
+  mutate_at(vars(ends_with("ec_mat")), ~map(., ~Env_mat(x = .x, method = "Jarq")))
+
+concurrent_features_env_relmat1 <- concurrent_features_env_relmat %>%
+  select(trait, feat_sel_type, interaction = interaction_features_ec_mat, main = main_features_ec_mat) %>%
+  gather(covariate_type, Emat, main, interaction) %>%
+  ## If a matrix is all NA, convert to diagonal
+  mutate(Emat = modify_if(Emat, ~all(is.na(.)), ~`diag<-`(ifelse(is.na(.), 0, 1), 1)))
+
+
+## Compare the relationship between training/test and external environments for 
+## each trait and feature selection type
+concurrent_features_env_relmat1 %>%
+  mutate(train_val_relat = map_dbl(Emat, ~mean(.[train_test_env, validation_env])),
+         train_test_relat = ) %>% 
+  arrange(covariate_type, trait, feat_sel_type) %>% 
+  select(-Emat) %>% 
+  View
+
+
+
+# Define heat colors
+heat_colors <- wesanderson::wes_palette("Zissou1", n = 5)[c(1,3,5)]
+
+
+## Plot heatmaps of relationship matrices
+# Separate plots by main/int covariate types
+concurrent_features_heatmap_plots <- concurrent_features_env_relmat1 %>%
+  group_by(trait, feat_sel_type, covariate_type) %>%
+  do(plot = {
+    row <- .
     
-    # Get the base model ANOVA
-    base_anova <- tidy(anova(subset(df, model == "base_alt", fit, drop = TRUE)[[1]])) %>%
-      # Remove line name term
-      filter(term != "line_name") %>%
-      # Rename residuals to GxE or GxL
-      mutate(term = ifelse(term == "Residuals", paste0("line_name:", term[1]), term),
-             group = ifelse(str_detect(term, ":"), "interaction", "main")) %>%
-      select(term, group, sumsq)
+    # Create the heatmap to order the environments
+    row_heat <- heatmap(x = row$Emat[[1]])
+    
+    # Factor order of environments
+    env_order <- fct_inorder(row.names(row$Emat[[1]])[row_heat$rowInd])
+    
+    # Create the plotting data.frame
+    dat <- row$Emat[[1]] %>%
+      as.data.frame(.) %>% 
+      rownames_to_column(., "environment") %>%
+      gather(environment2, relationship, -environment) %>%
+      # Refactor the environments
+      mutate_at(vars(contains("environment")), ~factor(., levels = levels(env_order))) %>%
+      mutate_at(vars(contains("environment")), list(group = ~ifelse(. %in% train_test_env, "training", "external"))) %>%
+      mutate(environment_group = factor(environment_group, levels = c("training", "external")))
+    
+    # Plot
+    g_heat <- dat %>%
+      ggplot(aes(x = environment, y = environment2, fill = relationship)) +
+      geom_tile() +
+      scale_fill_gradient2(low = heat_colors[1], mid = heat_colors[2], high = heat_colors[3]) +
+      facet_grid(environment2_group ~ environment_group, scales = "free", space = "free") +
+      labs(subtitle = paste(str_add_space(row$trait), row$feat_sel_type, sep = ", ")) +
+      theme_genetics(8) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1), panel.spacing = unit(0.25, "line"),
+            strip.placement = "outside", axis.title = element_blank(), legend.position = "none")
       
-    # Get model 3 or 5
-    full_anova <- tidy(Anova(subset(df, model %in% c("model3", "model5"), fit, drop = TRUE)[[1]], type = "II"))
-    
-    # Use the full model to determine the proportion of variance explained by main 
-    # effect or interaction covariates
-    full_anova %>%
-      # Assign main effect or interaction term
-      mutate(group = case_when(
-        term %in% c("line_name", "Residuals") ~ term,
-        str_detect(term, ":") ~ "interaction",
-        TRUE ~ "main")) %>%
-      # Add group
-      left_join(., base_anova, by = "group") %>%
-      # Calculate proportion of variance explained
-      mutate(prop_var_exp = sumsq.x / sumsq.y) %>%
-      select(term = term.x, group, sumsq = sumsq.x, group_sumsq = sumsq.y, prop_var_exp)
+    # Return the plot
+    g_heat
     
   }) %>% ungroup()
 
-## Number of covariates per group
-fr_var_summary %>%
-  unnest() %>%
-  filter(group %in% c("main", "interaction")) %>%
-  group_by(trait, timeframe, selection, group) %>%
-  summarize(nEC = n_distinct(term)) %>%
-  spread(group, nEC) %>%
-  as.data.frame()
-
-
-# trait  timeframe    selection interaction main
-# 1  GrainProtein concurrent        adhoc           2    6
-# 2  GrainProtein concurrent adhoc_nosoil           2    8
-# 3  GrainProtein concurrent      apriori           5    5
-# 4  GrainProtein historical        adhoc           1    5
-# 5  GrainProtein historical adhoc_nosoil          NA    5
-# 6  GrainProtein historical      apriori           5    5
-# 7    GrainYield concurrent        adhoc           2   23
-# 8    GrainYield concurrent adhoc_nosoil          NA   20
-# 9    GrainYield concurrent      apriori           5    5
-# 10   GrainYield historical        adhoc          NA   11
-# 11   GrainYield historical adhoc_nosoil          NA   12
-# 12   GrainYield historical      apriori           5    5
-# 13  HeadingDate concurrent        adhoc          NA   18
-# 14  HeadingDate concurrent adhoc_nosoil          NA    9
-# 15  HeadingDate concurrent      apriori           2    2
-# 16  HeadingDate historical        adhoc          NA    9
-# 17  HeadingDate historical adhoc_nosoil          NA   10
-# 18  HeadingDate historical      apriori           2    2
-# 19  PlantHeight concurrent        adhoc           2   23
-# 20  PlantHeight concurrent adhoc_nosoil          NA   14
-# 21  PlantHeight concurrent      apriori           3    3
-# 22  PlantHeight historical        adhoc           2   11
-# 23  PlantHeight historical adhoc_nosoil           1   11
-# 24  PlantHeight historical      apriori           3    3
-# 25   TestWeight concurrent        adhoc           9   10
-# 26   TestWeight concurrent adhoc_nosoil           7   10
-# 27   TestWeight concurrent      apriori           5    5
-# 28   TestWeight historical        adhoc           5    5
-# 29   TestWeight historical adhoc_nosoil           2    6
-# 30   TestWeight historical      apriori           5    5
-
-
-
-
-
-
-
-## Print a summary for each trait/time_frame/selection
-fr_var_summary_print <- fr_var_summary %>% 
-  unnest() %>% 
-  mutate(total_SS = ifelse(is.na(group_sumsq), sumsq, group_sumsq)) %>% 
-  group_by(trait, timeframe, selection, group) %>% 
-  summarize(total_SS = mean(total_SS), prop_SS = sum(prop_var_exp)) %>%
-  ungroup() %>%
-  mutate(group = factor(group, levels = c("line_name", "main", "interaction", "Residuals"))) %>%
-  arrange(trait, timeframe, selection, group)
-
-# Save as table
-write_csv(x = fr_var_summary_print, path = file.path(fig_dir, "covariate_fact_reg_variance_explained.csv"))
-
-
-# Just interaction and main
-fr_var_summary_print %>%
-  filter(group %in% c("main", "interaction")) %>%
-  select(-total_SS) %>%
-  spread(selection, prop_SS) %>%
-  as.data.frame()
-
-## Proportion of total main effect or interaction variance explained
-
-# trait        timeframe  group         adhoc apriori
-# 1 GrainProtein concurrent main         0.0264   1.23 
-# 2 GrainProtein concurrent interaction  0.430    0.680
-# 3 GrainProtein historical main         0.734    1.99 
-# 4 GrainProtein historical interaction  0.364    0.912
-# 5 GrainYield   concurrent main         0.323    0.208
-# 6 GrainYield   concurrent interaction  0.151    0.234
-# 7 GrainYield   historical main         0.271    0.719
-# 8 GrainYield   historical interaction NA        0.512
-# 9 HeadingDate  concurrent main         0.127    0.545
-# 10 HeadingDate  concurrent interaction NA        0.105
-# 11 HeadingDate  historical main         0.0293   0.933
-# 12 HeadingDate  historical interaction NA        0.350
-# 13 PlantHeight  concurrent main         0.491    0.142
-# 14 PlantHeight  concurrent interaction  0.266    0.133
-# 15 PlantHeight  historical main        NA        0.173
-# 16 PlantHeight  historical interaction  0.258    0.221
-# 17 TestWeight   concurrent main        NA        0.343
-# 18 TestWeight   concurrent interaction  0.664    0.482
-# 19 TestWeight   historical main        NA        0.527
-# 20 TestWeight   historical interaction  0.814    1.21
-
-
-
-## Copy formulas and a single model frame
-ec_fr_results_df <- ec_fr_results %>%
-  group_by(trait, timeframe, selection) %>%
-  do({
-    df <- .
-    
-    # Create a tibble of models and calls
-    formula_df <- select(df, model, fit) %>%
-      mutate(call = map(fit, "call"),
-             call = map(call, ~deparse(.) %>% str_trim(.) %>% paste0(., collapse = " "))) %>%
-      select(-fit)
-    
-    # Get the model.frame for the largest model
-    mf <- model.frame(subset(df, model %in% c("model3", "model5"), fit, drop = TRUE)[[1]]) %>%
-      # Strip attributes to save disk space
-      merTools:::stripAttributes()
-      
-    
-    # Return a tibble
-    tibble(calls = list(formula_df), model_frame = list(mf))
-    
-  }) %>% ungroup()
-
-
-
-
-
-
-## Save results
-save("ec_fr_results_df", "fr_var_summary", file = file.path(result_dir, "factorial_regression_results_nasapower.RData"))
-# save("ec_fr_results_df", "fr_var_summary", file = file.path(result_dir, "factorial_regression_results_daymet.RData"))
-
-
-
-
-## Double-check models for overfitting
-
-# Load the results
-load(file.path(result_dir, "factorial_regression_results_keep.RData"))
-
-
-## Refit models
-ec_fr_refit <- ec_fr_results_df %>%
-  mutate(calls = map(calls, "call") %>% map(last)) %>%
-  mutate(fit = list(NULL),
-         overparam_main = NA,
-         overparam_int = NA,
-         R2 = as.numeric(NA),
-         R2_adj = as.numeric(NA),
-         LL = as.numeric(NA))
-
-# Iterate over rows
-for (i in seq_len(nrow(ec_fr_refit))) {
-  row <- ec_fr_refit[i, ]
+## Create plots by trait
+for (plotList in split(concurrent_features_heatmap_plots, concurrent_features_heatmap_plots$trait)) {
+  # Create plot
+  plot_to_save <- plot_grid(plotlist = plotList$plot, nrow = n_distinct(plotList$feat_sel_type),
+                            labels = c("Int.", "Main"), label_x = 0)
   
-  data <- row$model_frame[[1]]
-  fit <- eval(parse(text = row$calls[[1]]))
-  
-  ## Compare number of covariates versus number of environmnents/locations
-  covariates <- formula(fit) %>%
-    terms() %>% 
-    attr(., "term.labels") %>% 
-    subset(., . != "line_name") %>%
-    split(., ifelse(str_detect(., ":"), "interaction", "main"))
-  
-  nCov <- map_dbl(covariates, length)
-  
-  ## The number of total df for covariates is 2 * (number of E or L - 1)
-  J <- max(map_dbl(data[covariates$main], n_distinct)) - 1
-  H <- 2 * J
-  
-  ec_fr_refit$fit[[i]] <- fit
-  ec_fr_refit$overparam_main[i] <- nCov["main"] > H
-  ec_fr_refit$overparam_int[i] <- nCov["interaction"] > H
-  ec_fr_refit$R2[i] <- summary(fit)$r.squared
-  ec_fr_refit$R2_adj[i] <- summary(fit)$adj.r.squared
-  ec_fr_refit$LL[i] <- as.numeric(logLik(fit))
+  # File name
+  filename <- paste0("environment_covariate_relationship_", unique(plotList$trait), ".jpg")
+  ggsave(filename = filename, plot = plot_to_save, path = fig_dir, 
+         width = 8, height = 14, dpi = 1000)
   
 }
 
 
-## Cross-validation
-# Demonstrate with grain yield
-# Leave one location out
-fit_example <- subset(ec_fr_refit, trait == "GrainYield" & timeframe == "concurrent" & selection == "adhoc", fit, drop = TRUE)[[1]]
-
-
-## Get the data, assign locations
-mf <- model.frame(fit_example)
-cov_use <- which.max(sapply(mf[,-1:-2], n_distinct))
-mf1 <- mf %>%
-  as_tibble() %>%
-  mutate_at(vars(2 + cov_use), list(location = ~paste0("loc", as.numeric(as.factor(.)))))
-
-## Leave-one-location-out
-crossv_data <- mf1 %>%
-  group_by(location) %>%
-  crossv_loo_grouped()
-
-
-## The original
-crossv_fit <- map(crossv_data$train, ~update(fit_example, data = .))
-crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
-# Plot
-plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
-mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
-
-# RMSE ~ 500
-
-
-## Testing ##
-# Remove some soil variables
-# 1. base saturation
-fit_test1 <- terms(fit_example) %>% 
-  drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% "topsoil_base_saturation"), keep.response = TRUE) %>% 
-  formula() %>%
-  update(object = fit_example, formula = ., data = mf1)
-
-## Fit models
-crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
-crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
-# Plot
-plot(value ~ pred, crossv_predict)
-mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
-
-# RMSE ~ 1000
-
-
-# 2. subsoil_teb
-fit_test1 <- terms(fit_example) %>% 
-  drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% "subsoil_teb"), keep.response = TRUE) %>% 
-  formula() %>%
-  update(object = fit_example, formula = ., data = mf1)
-
-## Fit models
-crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
-crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
-# Plot
-plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
-mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
-
-# RMSE ~ 730
-
-
-# 3. subsoil_calcium_carbonate
-fit_test1 <- terms(fit_example) %>% 
-  drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% "subsoil_calcium_carbonate"), keep.response = TRUE) %>% 
-  formula() %>%
-  update(object = fit_example, formula = ., data = mf1)
-
-## Fit models
-crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
-crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
-# Plot
-plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
-mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
-
-# RMSE ~ 1016
-
-# 4. pH
-fit_test1 <- terms(fit_example) %>% 
-  drop.terms(termobj = ., dropx = which( str_detect(string = attr(., "term.labels"), pattern = "pH")), keep.response = TRUE) %>% 
-  formula() %>%
-  update(object = fit_example, formula = ., data = mf1)
-
-## Fit models
-crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
-crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
-# Plot
-plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
-mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
-
-# 4. pH
-fit_test1 <- terms(fit_example) %>% 
-  drop.terms(termobj = ., dropx = which( str_detect(string = attr(., "term.labels"), pattern = "topsoil_pH_h2o")), keep.response = TRUE) %>% 
-  formula() %>%
-  update(object = fit_example, formula = ., data = mf1)
-
-## Fit models
-crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
-crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
-# Plot
-plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
-mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
-
-
-
-## Weather
-# 4. mean temperatures
-fit_test1 <- terms(fit_example) %>% 
-  drop.terms(termobj = ., dropx = which( str_detect(string = attr(., "term.labels"), pattern = "tmean")), keep.response = TRUE) %>% 
-  formula() %>%
-  update(object = fit_example, formula = ., data = mf1)
-
-## Fit models
-crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
-crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
-# Plot
-plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
-mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
-
-
-# 5. Choose min, max, or mean temperature for a growth stage
-# Choose the min, max, or mean with highest SS
-to_remove <- c("late_vegetative.mint_mean", "late_vegetative.mint_mean", "grain_fill.maxt_mean")
-fit_test1 <- terms(fit_example) %>% 
-  drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% to_remove), keep.response = TRUE) %>% 
-  formula() %>%
-  update(object = fit_example, formula = ., data = mf1)
-
-## Fit models
-crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
-crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
-# Plot
-plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
-mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
-
-
-# Test a reduced model using the tests from above
-## Choose the min, max, or mean with highest SS
-to_remove <- c("early_vegetative.maxt_mean", "late_vegetative.maxt_mean", "subsoil_teb")
-fit_test1 <- terms(fit_example) %>% 
-  drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% to_remove), keep.response = TRUE) %>% 
-  formula() %>%
-  update(object = fit_example, formula = ., data = mf1)
-
-## Fit models
-crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
-crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
-# Plot
-plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
-mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
-
-
-
-## Effect plots
-all_effects <- allEffects(fit_test1)
-plot(all_effects[str_detect(names(all_effects), "line_name", negate = TRUE)])
-
-
-
-
-## Try another example
-
-## Cross-validation
-# Demonstrate with grain yield
-# Leave one location out
-fit_example <- subset(ec_fr_refit, trait == "HeadingDate" & timeframe == "concurrent" & selection == "adhoc_nosoil", fit, drop = TRUE)[[1]]
-
-
-## Get the data, assign locations
-mf <- model.frame(fit_example)
-cov_use <- which.max(sapply(mf[,-1:-2], n_distinct))
-mf1 <- mf %>%
-  as_tibble() %>%
-  mutate_at(vars(2 + cov_use), list(location = ~paste0("loc", as.numeric(as.factor(.)))))
-
-## Leave-one-location-out
-crossv_data <- mf1 %>%
-  group_by(location) %>%
-  crossv_loo_grouped()
-
-
-## The original
-crossv_fit <- map(crossv_data$train, ~update(fit_example, data = .))
-crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
-# Plot
-plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
-mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
-
-# RMSE ~ 500
-
-
-## Testing ##
-## Choose the min, max, or mean with highest SS
-to_remove <- c("early_vegetative.maxt_mean", "late_vegetative.tmean_mean")
-fit_test1 <- terms(fit_example) %>% 
-  drop.terms(termobj = ., dropx = which(attr(., "term.labels") %in% to_remove), keep.response = TRUE) %>% 
-  formula() %>%
-  update(object = fit_example, formula = ., data = mf1)
-
-## Fit models
-crossv_fit <- map(crossv_data$train, ~update(fit_test1, data = .))
-crossv_predict <- map2_df(crossv_fit, crossv_data$test, ~add_predictions(as.data.frame(.y), .x))
-# Plot
-plot(value ~ pred, crossv_predict); cor(crossv_predict$value, crossv_predict$pred)
-mean(map2_dbl(crossv_fit, crossv_data$test, rmse))
-
-## Effect plots
-all_effects <- allEffects(fit_test1)
-plot(all_effects[str_detect(names(all_effects), "line_name", negate = TRUE)])
-
-
-
-
-
-
-
-
-
-
-## Run for all traits
-ec_fr_refit_crossv <- ec_fr_refit %>%
-  mutate(full_rmse = as.numeric(NA),
-         crossv_rmse = list(NULL),
-         predictions = list(NULL))
-
-for (i in seq_len(nrow(ec_fr_refit_crossv))) {
-  
-  row <- ec_fr_refit_crossv[i, ]
-  fit_example <- row$fit[[1]]
-  
-  ## Get the data, assign locations
-  mf <- model.frame(fit_example)
-  cov_use <- which.max(sapply(mf[,-1:-2], n_distinct))
-  mf1 <- mf %>%
-    as_tibble() %>%
-    mutate_at(vars(2 + cov_use), list(location = ~paste0("loc", as.numeric(as.factor(.)))))
-  
-  ## Leave-one-location-out
-  crossv_data <- mf1 %>%
-    group_by(location) %>%
-    crossv_loo_grouped()
-  
-  ## Fit models
-  crossv_fit <- map(crossv_data$train, ~update(fit_example, data = .))
-  
-  # Predict, measure RMSE
-  ec_fr_refit_crossv$crossv_rmse[[i]] <- map2_dbl(crossv_fit, crossv_data$test, rmse)
-  ec_fr_refit_crossv$full_rmse[i] <- rmse(fit_example, mf1)
-  ec_fr_refit_crossv$predictions[[i]] <- crossv_data %>% 
-    mutate(prediction = map2(test, crossv_fit, ~add_predictions(as.data.frame(.x), .y))) %>% 
-    unnest(prediction)
-  
-  
-}
-
-
-## Summarize rmse from crossv
-ec_fr_refit_crossv %>%
-  mutate(crossv_rmse = map(crossv_rmse, unlist)) %>%
-  mutate(crossv_rmse_mean = map_dbl(crossv_rmse, mean)) %>%
-  select(trait, timeframe, selection, full_rmse, crossv_rmse_mean) %>%
-  as.data.frame()
-
-# trait  timeframe    selection    full_rmse crossv_rmse_mean
-# 1  GrainProtein concurrent        adhoc    0.5964271         2.730672
-# 2  GrainProtein concurrent adhoc_nosoil    0.5957886         1.630300
-# 3  GrainProtein concurrent      apriori    0.5130104         1.543583
-# 4  GrainProtein historical        adhoc    0.5611728         2.664219
-# 5  GrainProtein historical adhoc_nosoil    0.7035249         1.791760
-# 6  GrainProtein historical      apriori    0.3603326        22.134577
-# 7    GrainYield concurrent        adhoc  506.1560506       572.140996
-# 8    GrainYield concurrent adhoc_nosoil  859.4216257      3036.594374
-# 9    GrainYield concurrent      apriori 1605.4889060      1744.402187
-# 10   GrainYield historical        adhoc  410.7683455       435.729908
-# 11   GrainYield historical adhoc_nosoil  410.7682400      3021.077893
-# 12   GrainYield historical      apriori 1313.1826189      2104.068339
-# 13  HeadingDate concurrent        adhoc    3.1507774         9.791189
-# 14  HeadingDate concurrent adhoc_nosoil    3.4593926         4.785399
-# 15  HeadingDate concurrent      apriori    4.8175084         4.778512
-# 16  HeadingDate historical        adhoc    1.8426994         2.676330
-# 17  HeadingDate historical adhoc_nosoil    1.8424856       465.127939
-# 18  HeadingDate historical      apriori    3.8517715         4.689140
-# 19  PlantHeight concurrent        adhoc    4.3562909        27.700869
-# 20  PlantHeight concurrent adhoc_nosoil    8.4167638        14.777691
-# 21  PlantHeight concurrent      apriori   12.1293827        12.186621
-# 22  PlantHeight historical        adhoc    2.6918425       214.137583
-# 23  PlantHeight historical adhoc_nosoil    2.9277105       117.649132
-# 24  PlantHeight historical      apriori    9.2823767        13.235534
-# 25   TestWeight concurrent        adhoc    6.5344199       339.627867
-# 26   TestWeight concurrent adhoc_nosoil   10.0019010       221.750772
-# 27   TestWeight concurrent      apriori   36.9320143        63.332485
-# 28   TestWeight historical        adhoc    6.0143878      5296.860374
-# 29   TestWeight historical adhoc_nosoil   14.6656554        66.636482
-# 30   TestWeight historical      apriori   29.8547520     30152.414863
-
-
-
-
-
-## Analyze results of factorial regression sampling
-## 
-## In this procedure, one environment or location was dropped, and
-## the same covariate selection procedure was used.
-## 
-
-# Load the results
-load(file.path(result_dir, "factorial_regression_results_sample.RData"))
-
-
-## Analyze concurrent covariates ##
-
-# Subset the data
-concurrent_fact_reg_sample_rmse <- concurrent_fact_reg_sample %>%
-  filter(model == "model3") %>% # Skip the base model
-  select(-test_predictions, -covariates)
-  
-# Plot RMSE
-concurrent_fact_reg_sample_rmse %>%
-  filter(!(trait == "GrainProtein" & rmse > 300),
-         !(trait == "TestWeight" & rmse > 2000)) %>%
-  ggplot(aes(x = selection, y = rmse, color = selection)) +
-  geom_boxplot() +
-  facet_wrap(~ trait, scales = "free_y") +
-  theme_genetics(base_size = 10)
-
-# Plot accuracy
-concurrent_fact_reg_sample_rmse %>%
-  # filter(!(trait == "GrainProtein" & rmse > 300),
-  #        !(trait == "TestWeight" & rmse > 2000)) %>%
-  ggplot(aes(x = selection, y = acc, color = selection)) +
-  geom_boxplot() +
-  facet_wrap(~ trait, scales = "free_y") +
-  theme_genetics(base_size = 10)
-
-## Summarize both
-concurrent_fact_reg_sample_summary <- concurrent_fact_reg_sample_rmse %>% 
-  gather(stat, value, rmse, acc) %>% 
-  group_by(trait, model, selection, stat) %>% 
-  do({
-    x <- .$value
-    stats <- boxplot.stats(x)
-    tibble(median = median(x), lower = stats$conf[1], upper = stats$conf[2])
-  }) %>% ungroup()
-
-concurrent_fact_reg_sample_summary %>%
-  arrange(stat) %>%
-  as.data.frame()
-   
-
-
-## Compare covariates selected in each model with those selected using the 
-## full dataset
-
-# Prepare the full data results
-full_data_fact_reg <- fr_var_summary %>%
-  filter(timeframe == "concurrent", selection != "apriori") %>%
-  mutate(full_covariates = map(var_prop_summary, ~subset(., ! term %in% c("line_name", "Residuals"), term, drop = TRUE))) %>%
-  select(-var_prop_summary)
-
-
-# How often do we get the same exact model?
-# How often do we get the same full-data covariate
-# How often do we get a new covariate?
-concurrent_fact_reg_sample_covariate_check <- concurrent_fact_reg_sample %>%
-  filter(model == "model3") %>%
-  select(trait, dropped_group, selection, covariates) %>%
-  inner_join(., full_data_fact_reg) %>%
-  # Calculate the proportion of full-data covariates that were recovered
-  mutate(full_cov_recovered = map2(full_covariates, covariates, intersect),
-         prop_full_cov_recovered = map2_dbl(full_covariates, covariates, ~mean(.x %in% .y)),
-         new_covariates = map2(covariates, full_covariates, setdiff))
-
-## Calculate some averages, min, and max
-concurrent_fact_reg_sample_covariate_check %>%
-  group_by(trait, selection) %>%
-  summarize(prop_full_cov_recovered_mean = mean(prop_full_cov_recovered),
-            prop_full_cov_recovered_min = min(prop_full_cov_recovered),
-            prop_full_cov_recovered_max = max(prop_full_cov_recovered))
-
-## The proportion of times when the same covariates are recovered seems to be correlated
-## with the number of environments available for a trait
-
-## Calculate the frequency of recovery for full-data covariates
-concurrent_fact_reg_sample_covariate_prop <- concurrent_fact_reg_sample_covariate_check %>%
-  group_by(trait, selection) %>%
-  do({
-    df <- .
-    ## Calculate contingency table for recovered covariates
-    prop_full_cov <- table(unlist(df$full_cov_recovered)) %>% 
-      as.data.frame() %>% 
-      arrange(desc(Freq)) %>%
-      mutate(Freq = Freq / nrow(df))
-    
-    ## Calculate contingency table for new covariates
-    prop_new_cov <- table(unlist(df$new_covariates)) %>% 
-      as.data.frame() %>% 
-      arrange(desc(Freq)) %>%
-      mutate(Freq = Freq / nrow(df))
-    
-    # Return tibble
-    tibble(prop_full_cov = list(prop_full_cov), prop_new_cov = list(prop_new_cov))
-    
-  }) %>% ungroup()
-
-
-## Compare the frequency of recovering a full-data covariate with the proportion
-## of variance that it explains
-concurrent_fact_reg_sample_covariate_prop %>%
-  unnest(prop_full_cov) %>%
-  rename(term = Var1) %>%
-  inner_join(., unnest(subset(fr_var_summary, timeframe == "concurrent"))) %>%
-  ggplot(aes(x = Freq, y = prop_var_exp)) +
-  geom_point() +
-  facet_grid(selection ~ trait)
 
 
 
