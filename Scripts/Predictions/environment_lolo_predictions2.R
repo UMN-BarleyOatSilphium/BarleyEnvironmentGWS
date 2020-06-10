@@ -121,13 +121,22 @@ historical_feature_selection <- historical_feature_selection %>%
   unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>%
   mutate(model = case_when(model == "model2" ~ "model4", model == "model3" ~ "model5"))
 
+# Use the features identified in the environment-specific analysis
+concurrent_feature_selection <- concurrent_feature_selection %>%
+  gather(selection_type, covariates, adhoc, adhoc_nosoil) %>% 
+  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>%
+  mutate(model = case_when(model == "model2" ~ "model4", model == "model3" ~ "model5"),
+         feat_sel_type = paste0("concurrent_", feat_sel_type))
+
 
 # Combine feature selection df
 feature_selection_df <- bind_rows(historical_fact_reg_feature_selection, historical_feature_selection)
+  
 
 
 # Reorganize covariate df
 covariates_tomodel <- feature_selection_df %>%
+  bind_rows(., concurrent_feature_selection) %>% # Add covariates selected in the concurrent analysis
   mutate(timeframe = "historical") %>%
   # Only use adhoc (not adhoc no soil)
   select(trait, feature_selection = feat_sel_type, direction, model, covariates) %>%

@@ -150,7 +150,7 @@ trait_sign <- tibble(trait = traits, sign = c(1, -1, -1, 1, -1))
 
 
 ## Remove
-rm(s2_discrete_mat, s2_imputed_mat, env_herit_rank, s2_metadata, s2_tidy_BLUE)
+rm(s2_discrete_mat, s2_imputed_mat, s2_metadata, s2_tidy_BLUE)
 
 
 
