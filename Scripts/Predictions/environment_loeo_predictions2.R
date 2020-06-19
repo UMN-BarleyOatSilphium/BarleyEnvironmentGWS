@@ -28,15 +28,17 @@ library(parallel)
 # n_core <- detectCores()
 n_core <- 12
 
+# Source of covariates
+source_use <- "daymet"
+
 # time_frame to use for the location relationship matrix
 time_frame_use <- "time_frame5_2010_2014"
 
 ## Load covariate data
-load(file.path(result_dir, "concurrent_historical_covariables_nasapower.RData"))
+load(file.path(result_dir, "concurrent_historical_covariables.RData"))
 
 ## Load the factorial regression results
-# load(file.path(result_dir, "factorial_regression_results.RData"))
-load(file.path(result_dir, "feature_selection_results_nasapower.RData"))
+load(file.path(result_dir, "feature_selection_results.RData"))
 
 ## For either environments or locations, fit the models:
 ## 
@@ -103,24 +105,30 @@ concurrent_feature_selection <- concurrent_feature_selection %>%
 # Combine feature selection df
 feature_selection_df <- bind_rows(concurrent_fact_reg_feature_selection, concurrent_feature_selection)
 
+# A vector of all covariates
+all_covariates <- reduce(map(ec_tomodel_centered, ~names(.)[-1:-2]), intersect)
+# Data.frame with all covariates
+all_covariates_df <- crossing(source = source_use, trait = traits, feature_selection = "all", 
+                              model = c("model2", "model3")) %>% 
+  mutate(covariates = ifelse(model == "model2", list(all_covariates), list(c(all_covariates, paste0("line_name:", all_covariates)))))
+
 
 # Reorganize covariate df
 covariates_tomodel <- feature_selection_df %>%
-  mutate(timeframe = "concurrent") %>%
-  # Only use adhoc (not adhoc no soil)
-  select(trait, feature_selection = feat_sel_type, direction, model, covariates) %>%
+  # Filter the source to use
+  filter(source %in% source_use) %>%
+  rename(feature_selection = feat_sel_type) %>%
   mutate(covariates = map(covariates, "optVariables"),
          direction = ifelse(is.na(direction), "forward", direction)) %>%
+  # Add all covariates
+  bind_rows(., all_covariates_df) %>%
   unnest() %>%
   filter(covariates != "line_name") %>%
-  group_by(trait, feature_selection, model, direction) %>%
+  group_by(source, trait, feature_selection, model, direction) %>%
   nest(.key = "covariates") %>%
   ungroup() %>%
   # Do not use the no soil selections or pls
   filter(str_detect(feature_selection, "nosoil|pls", negate = TRUE)) %>%
-  # Add all covariates
-  bind_rows(., crossing(trait = unique(.$trait), feature_selection = "all", model = unique(.$model), 
-                        covariates = list(tibble(covariates = names(ec_tomodel_centered)[-1])))) %>%
   # Collapse covariates
   mutate(covariates = map(covariates, "covariates")) %>%
   # nest
@@ -145,9 +153,6 @@ loeo_train_test <- data_to_model %>%
 
 ## Assign cores and split
 data_train_test1 <- loeo_train_test %>%
-  group_by(trait, site) %>%
-  slice(1) %>%
-  ungroup() %>%
   assign_cores(df = ., n_core = n_core, split = TRUE)
 
 
@@ -203,7 +208,7 @@ loeo_predictions_out <- data_train_test1 %>%
           map("covariate")
         
         # Create a matrix of scaled and centered covariates
-        covariate_mat <- ec_tomodel_scaled %>%
+        covariate_mat <- ec_tomodel_scaled[[covariates_use$source[r]]] %>%
           filter(environment %in% levels(row$train[[1]]$site1)) %>%
           select(., environment, unique(unlist(covariate_list))) %>%
           as.data.frame() %>%
@@ -337,7 +342,7 @@ env_external_predictions_out <- env_external_train_val1 %>%
           map("covariate")
         
         # Create a matrix of scaled and centered covariates
-        covariate_mat <- ec_tomodel_scaled %>%
+        covariate_mat <- ec_tomodel_scaled[[covariates_use$source[r]]] %>%
           filter(environment %in% levels(row$train[[1]]$site1)) %>%
           select(., environment, unique(unlist(covariate_list))) %>%
           as.data.frame() %>%

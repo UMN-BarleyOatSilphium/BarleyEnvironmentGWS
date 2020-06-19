@@ -147,9 +147,7 @@ cgm_year_plot <- 2017
 cgm_locations_color <- setNames(paletteer_d("ggsci", palette = "nrc_npg", n = 2), cgm_locations_plot)
 
 ## Replacements and colors for growth stages
-# f_growth_stage_replace <- function(x) str_to_title(str_replace_all(x, "_", " "))
-f_growth_stage_replace <- function(x) 
-  c("early_vegetative" = "EV", "late_vegetative" = "LV", "heading" = "HD", "flowering" = "FL", "grain_fill" = "GF")[x]
+
 growth_stage_color <- setNames(object = paletteer_d("ggsci", palette = "default_jco", n = 5),
                                nm = c("early_vegetative", "late_vegetative", "heading", "flowering", "grain_fill"))
 
@@ -756,5 +754,579 @@ g_accuracy_within_env2$layers[[1]]$data <- g_accuracy_within_env2$layers[[1]]$da
 ## Save
 ggsave(filename = "figure4_draft2.jpg", plot = g_accuracy_within_env2, path = fig_dir,
        width = 88, height = 90, dpi = 1000, units = "mm")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Supplemental figures -------------------
+
+
+## Number and overlap of covariates in the analyses ##
+
+# Load the data
+load(file = file.path(result_dir, "feature_selection_results.RData"))
+load(file.path(result_dir, "concurrent_historical_covariables.RData"))
+
+
+## Concurrent
+
+
+
+## Combine concurrent feature selection df
+concurrent_features <- bind_rows(
+  concurrent_fact_reg_feature_selection %>% select(source, trait, model, apriori, stepAIC_adhoc = adhoc) %>% 
+    gather(feat_sel_type, features, apriori, stepAIC_adhoc),
+  gather(concurrent_feature_selection, feat_subset, features, adhoc, adhoc_nosoil) %>%
+    unite(feat_sel_type, feat_sel_type, feat_subset, sep = "_")
+)
+
+## combine model2 and model3 covariates
+concurrent_features1 <- concurrent_features %>%
+  filter(str_detect(feat_sel_type, "adhoc_nosoil", negate = TRUE)) %>%
+  spread(model, features) %>%
+  mutate_at(vars(contains("model")), ~map(., "optVariables")) %>%
+  mutate(features = map2(model2, model3, union)) %>%
+  ## Add all covariates
+  bind_rows(.,
+            tibble(source = names(ec_tomodel_centered), features = map(ec_tomodel_centered, ~names(.)[-1:-2])) %>% 
+              mutate(features = map(features, ~c(., paste0("line_name:", .)))) %>% 
+              crossing(., trait = traits, feat_sel_type = "all")
+  ) %>%
+  mutate(features = map(features, ~setdiff(., "line_name"))) %>%
+  select(-contains("model")) %>%
+  mutate(interaction_features = map(features, ~str_subset(., ":")),
+         main_features = map2(features, interaction_features, setdiff))
+
+
+## Calculate the number of covariates in each contingency
+concurrent_features_count <- concurrent_features1 %>% 
+  mutate_at(vars(contains("features")), ~map_dbl(., n_distinct)) %>%
+  gather(feature_class, n, contains("features")) %>%
+  filter(feature_class != "features")
+
+
+## Plot
+g_concurrent_features_count <- concurrent_features_count %>%
+  mutate(feature_class = fct_rev(feature_class)) %>%
+  ggplot(aes(x = feat_sel_type, y = n, fill = feature_class)) +
+  geom_col() +
+  geom_text(aes(y = 2*max(concurrent_features_count$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
+            nudge_y = ifelse(concurrent_features_count$feature_class == "main_features", 25, 10), size = 3) +
+  facet_grid(trait ~ source, switch = "y", labeller = labeller(trait = str_add_space)) +
+  scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
+  scale_x_discrete(labels = f_ec_selection_replace, name = "Feature selection method") +
+  scale_y_continuous(name = "Number of covariates", breaks = pretty) +
+  theme_genetics() +
+  theme(legend.position = "top", strip.placement = "outside")
+
+ggsave(filename = "concurrent_features_count.jpg", plot = g_concurrent_features_count,
+       path = fig_dir, height = 8, width = 4, dpi = 1000)
+
+
+
+
+
+## Overlap between sources for each trait and feature selection type
+concurrent_features_overlap_source <- concurrent_features1 %>%
+  select(-features) %>%
+  full_join(., ., by = c("trait", "feat_sel_type")) %>%
+  left_join(rename_all(as_tibble(t(combn(x = unique(concurrent_features1$source), m = 2))), ~paste0("source", c(".x", ".y"))), .) %>%
+  mutate(interaction_features_overlap = map2(interaction_features.x, interaction_features.y, intersect),
+         main_features_overlap = map2(main_features.x, main_features.y, intersect)) %>%
+  select(contains("source"), trait, feat_sel_type, contains("overlap")) %>%
+  mutate_at(vars(contains("features")), ~map_dbl(., n_distinct)) %>%
+  gather(feature_class, n, contains("features")) %>%
+  mutate(feature_class = str_remove(feature_class, "_overlap"))
+
+
+## Plot
+g_concurrent_features_overlap_source <- concurrent_features_overlap_source %>%
+  mutate(feature_class = fct_rev(feature_class)) %>%
+  unite(source_pair, source.x, source.y, sep = ":") %>%
+  ggplot(aes(x = feat_sel_type, y = n, fill = feature_class)) +
+  geom_col() +
+  geom_text(aes(y = 2*max(concurrent_features_overlap_source$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
+            nudge_y = ifelse(concurrent_features_overlap_source$feature_class == "main_features", 30, 10), size = 3) +
+  facet_grid(trait ~ source_pair, switch = "y", labeller = labeller(trait = str_add_space)) +
+  scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
+  scale_x_discrete(labels = f_ec_selection_replace, name = "Feature selection method") +
+  scale_y_continuous(name = "Number of overlapping covariates", breaks = pretty) +
+  theme_genetics() +
+  theme(legend.position = "none", strip.placement = "outside")
+
+ggsave(filename = "concurrent_features_overlap_source.jpg", plot = g_concurrent_features_overlap_source,
+       path = fig_dir, height = 8, width = 3, dpi = 1000)
+
+
+## Overlap between non-apriori / all feature selection types
+concurrent_features_overlap_featsel <- concurrent_features1 %>%
+  select(-features) %>%
+  filter(! feat_sel_type %in% c("apriori", "all")) %>%
+  full_join(., ., by = c("trait", "source")) %>%
+  inner_join(rename_all(as_tibble(t(combn(x = unique(concurrent_features1$feat_sel_type), m = 2))), 
+                       ~paste0("feat_sel_type", c(".x", ".y"))), .) %>%
+  mutate(interaction_features_overlap = map2(interaction_features.x, interaction_features.y, intersect),
+         main_features_overlap = map2(main_features.x, main_features.y, intersect)) %>%
+  select(contains("source"), contains("trait"), contains("feat_sel_type"), contains("overlap")) %>%
+  mutate_at(vars(contains("features")), ~map_dbl(., n_distinct)) %>%
+  gather(feature_class, n, contains("features")) %>%
+  mutate(feature_class = str_remove(feature_class, "_overlap"))
+
+
+
+## Plot
+g_concurrent_features_overlap_featsel <- concurrent_features_overlap_featsel %>%
+  mutate(feature_class = fct_rev(feature_class)) %>%
+  mutate_at(vars(contains("feat_sel")), f_ec_selection_replace) %>%
+  unite(feat_sel_type_pair, feat_sel_type.x, feat_sel_type.y, sep = ":") %>%
+  ggplot(aes(x = feat_sel_type_pair, y = n, fill = feature_class)) +
+  geom_col() +
+  geom_text(aes(y = 2*max(concurrent_features_overlap_featsel$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
+            nudge_y = ifelse(concurrent_features_overlap_featsel$feature_class == "main_features", -8, -10), size = 3) +
+  facet_grid(trait ~ source, switch = "y", labeller = labeller(trait = str_add_space)) +
+  scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
+  scale_x_discrete(name = "Feature selection pair") +
+  scale_y_continuous(name = "Number of overlapping covariates", breaks = pretty) +
+  theme_genetics() +
+  theme(legend.position = "none", strip.placement = "outside")
+
+ggsave(filename = "concurrent_features_overlap_featsel.jpg", plot = g_concurrent_features_overlap_featsel,
+       path = fig_dir, height = 8, width = 2.5, dpi = 1000)
+
+
+## Overlap between traits
+concurrent_features_overlap_trait <- concurrent_features1 %>%
+  select(-features) %>%
+  full_join(., ., by = c("feat_sel_type", "source")) %>%
+  inner_join(rename_all(as_tibble(t(combn(x = unique(concurrent_features1$trait), m = 2))), 
+                        ~paste0("trait", c(".x", ".y"))), .) %>%
+  mutate(interaction_features_overlap = map2(interaction_features.x, interaction_features.y, intersect),
+         main_features_overlap = map2(main_features.x, main_features.y, intersect)) %>%
+  select(contains("source"), contains("trait"), contains("feat_sel_type"), contains("overlap")) %>%
+  mutate_at(vars(contains("features")), ~map_dbl(., n_distinct)) %>%
+  gather(feature_class, n, contains("features")) %>%
+  mutate(feature_class = str_remove(feature_class, "_overlap")) %>%
+  # We don't need to see apriori or all
+  filter(! feat_sel_type %in% c("apriori", "all"))
+
+
+
+## Plot
+g_concurrent_features_overlap_trait <- concurrent_features_overlap_trait %>%
+  mutate(feature_class = fct_rev(feature_class)) %>%
+  mutate_at(vars(contains("trait")), ~abbreviate(str_add_space(.), 2)) %>%
+  unite(trait_pair, trait.x, trait.y, sep = ":") %>%
+  ggplot(aes(x = trait_pair, y = n, fill = feature_class)) +
+  geom_col() +
+  geom_text(aes(y = 2*max(concurrent_features_overlap_trait$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
+            nudge_y = ifelse(concurrent_features_overlap_trait$feature_class == "main_features", -7, -10), size = 2) +
+  facet_grid(feat_sel_type ~ source, switch = "y", labeller = labeller(feat_sel_type = f_ec_selection_replace)) +
+  scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
+  scale_x_discrete(name = "Trait pair") +
+  scale_y_continuous(name = "Number of overlapping covariates", breaks = pretty) +
+  theme_genetics() +
+  theme(legend.position = "none", strip.placement = "outside", axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave(filename = "concurrent_features_overlap_trait.jpg", plot = g_concurrent_features_overlap_trait,
+       path = fig_dir, height = 3, width = 8, dpi = 1000)
+
+
+## Stitch these plots together - patchwork
+left_plot <- (g_concurrent_features_count + theme(legend.position = "none")) / g_concurrent_features_overlap_trait +
+  plot_layout(heights = c(1, 0.3), guides = "collect")
+right_plot <- g_concurrent_features_overlap_source | g_concurrent_features_overlap_featsel
+
+merged_plot <- (left_plot | right_plot) + plot_annotation(tag_levels = "a") + plot_layout(widths = c(1, 0.80))
+
+# Save
+ggsave(filename = "concurrent_features_comparison_merged.jpg", plot = merged_plot,
+       path = fig_dir, height = 10, width = 10, dpi = 1000)
+
+
+## Count the number of times a particular covariate is select
+
+concurrent_features2 <- concurrent_features1 %>%
+  select(-features) %>%
+  gather(feature_class, covariates, contains("features")) %>%
+  unnest() %>%
+  mutate(covariates = str_remove(covariates, "line_name:"))
+  
+
+# Counts by source and feat_sel_type
+concurrent_indiv_feature_counts <- concurrent_features2 %>%
+  # Remove all and apriori feat selections
+  filter(! feat_sel_type %in% c("all", "apriori")) %>%
+  group_by(covariates, source, feature_class, ) %>%
+  summarize(n = n()) %>%
+  mutate(nTotal = sum(n)) %>%
+  ungroup() %>%
+  mutate(covariates = fct_reorder(covariates, nTotal, .fun = max, .desc = TRUE))
+
+
+## Plot
+g_concurrent_indiv_feature_counts <- concurrent_indiv_feature_counts %>%
+  ggplot(aes(x = covariates, y = n, fill = feature_class)) +
+  geom_col() +
+  facet_grid(. ~ source, switch = "y") +
+  scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
+  scale_x_discrete(name = "Covariate") +
+  scale_y_continuous(name = "Count", breaks = pretty) +
+  theme_genetics(base_size = 8) +
+  theme(legend.position = "top", strip.placement = "outside", axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+## Save
+ggsave(filename = "concurrent_indiv_feature_counts.jpg", plot = g_concurrent_indiv_feature_counts, 
+       path = fig_dir, width = 8, height = 4, dpi = 1000)
+
+
+
+
+
+## Historical
+
+
+## Combine concurrent feature selection df
+historical_features <- bind_rows(
+  historical_fact_reg_feature_selection %>% select(source, trait, model, apriori, stepAIC_adhoc = adhoc) %>% 
+    gather(feat_sel_type, features, apriori, stepAIC_adhoc),
+  gather(historical_feature_selection, feat_subset, features, adhoc, adhoc_nosoil) %>%
+    unite(feat_sel_type, feat_sel_type, feat_subset, sep = "_")
+) %>% mutate(model = case_when(model == "model2" ~ "model4", model == "model3" ~ "model5", TRUE ~ model))
+
+## combine model4 and model5 covariates
+historical_features1 <- historical_features %>%
+  filter(str_detect(feat_sel_type, "adhoc_nosoil", negate = TRUE)) %>%
+  spread(model, features) %>%
+  mutate_at(vars(contains("model")), ~map(., "optVariables")) %>%
+  mutate(features = map2(model4, model5, union)) %>%
+  ## Add all covariates
+  bind_rows(.,
+            tibble(source = names(ec_tomodel_centered), features = map(ec_tomodel_centered, ~names(.)[-1:-2])) %>% 
+              mutate(features = map(features, ~c(., paste0("line_name:", .)))) %>% 
+              crossing(., trait = traits, feat_sel_type = "all")
+  ) %>%
+  mutate(features = map(features, ~setdiff(., "line_name"))) %>%
+  select(-contains("model")) %>%
+  mutate(interaction_features = map(features, ~str_subset(., ":")),
+         main_features = map2(features, interaction_features, setdiff))
+
+
+## Calculate the number of covariates in each contingency
+historical_features_count <- historical_features1 %>% 
+  mutate_at(vars(contains("features")), ~map_dbl(., n_distinct)) %>%
+  gather(feature_class, n, contains("features")) %>%
+  filter(feature_class != "features")
+
+
+## Plot
+g_historical_features_count <- historical_features_count %>%
+  mutate(feature_class = fct_rev(feature_class)) %>%
+  ggplot(aes(x = feat_sel_type, y = n, fill = feature_class)) +
+  geom_col() +
+  geom_text(aes(y = 2*max(historical_features_count$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
+            nudge_y = ifelse(historical_features_count$feature_class == "main_features", 25, 10), size = 3) +
+  facet_grid(trait ~ source, switch = "y", labeller = labeller(trait = str_add_space)) +
+  scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
+  scale_x_discrete(labels = f_ec_selection_replace, name = "Feature selection method") +
+  scale_y_continuous(name = "Number of covariates", breaks = pretty) +
+  theme_genetics() +
+  theme(legend.position = "top", strip.placement = "outside")
+
+ggsave(filename = "historical_features_count.jpg", plot = g_historical_features_count,
+       path = fig_dir, height = 8, width = 4, dpi = 1000)
+
+
+
+
+
+## Overlap between sources for each trait and feature selection type
+historical_features_overlap_source <- historical_features1 %>%
+  select(-features) %>%
+  full_join(., ., by = c("trait", "feat_sel_type")) %>%
+  left_join(rename_all(as_tibble(t(combn(x = unique(historical_features1$source), m = 2))), ~paste0("source", c(".x", ".y"))), .) %>%
+  mutate(interaction_features_overlap = map2(interaction_features.x, interaction_features.y, intersect),
+         main_features_overlap = map2(main_features.x, main_features.y, intersect)) %>%
+  select(contains("source"), trait, feat_sel_type, contains("overlap")) %>%
+  mutate_at(vars(contains("features")), ~map_dbl(., n_distinct)) %>%
+  gather(feature_class, n, contains("features")) %>%
+  mutate(feature_class = str_remove(feature_class, "_overlap"))
+
+
+## Plot
+g_historical_features_overlap_source <- historical_features_overlap_source %>%
+  mutate(feature_class = fct_rev(feature_class)) %>%
+  unite(source_pair, source.x, source.y, sep = ":") %>%
+  ggplot(aes(x = feat_sel_type, y = n, fill = feature_class)) +
+  geom_col() +
+  geom_text(aes(y = 2*max(historical_features_overlap_source$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
+            nudge_y = ifelse(historical_features_overlap_source$feature_class == "main_features", 30, 10), size = 3) +
+  facet_grid(trait ~ source_pair, switch = "y", labeller = labeller(trait = str_add_space)) +
+  scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
+  scale_x_discrete(labels = f_ec_selection_replace, name = "Feature selection method") +
+  scale_y_continuous(name = "Number of overlapping covariates", breaks = pretty) +
+  theme_genetics() +
+  theme(legend.position = "none", strip.placement = "outside")
+
+ggsave(filename = "historical_features_overlap_source.jpg", plot = g_historical_features_overlap_source,
+       path = fig_dir, height = 8, width = 3, dpi = 1000)
+
+
+## Overlap between non-apriori / all feature selection types
+historical_features_overlap_featsel <- historical_features1 %>%
+  select(-features) %>%
+  filter(! feat_sel_type %in% c("apriori", "all")) %>%
+  full_join(., ., by = c("trait", "source")) %>%
+  inner_join(rename_all(as_tibble(t(combn(x = unique(historical_features1$feat_sel_type), m = 2))), 
+                        ~paste0("feat_sel_type", c(".x", ".y"))), .) %>%
+  mutate(interaction_features_overlap = map2(interaction_features.x, interaction_features.y, intersect),
+         main_features_overlap = map2(main_features.x, main_features.y, intersect)) %>%
+  select(contains("source"), contains("trait"), contains("feat_sel_type"), contains("overlap")) %>%
+  mutate_at(vars(contains("features")), ~map_dbl(., n_distinct)) %>%
+  gather(feature_class, n, contains("features")) %>%
+  mutate(feature_class = str_remove(feature_class, "_overlap"))
+
+
+
+## Plot
+g_historical_features_overlap_featsel <- historical_features_overlap_featsel %>%
+  mutate(feature_class = fct_rev(feature_class)) %>%
+  mutate_at(vars(contains("feat_sel")), f_ec_selection_replace) %>%
+  unite(feat_sel_type_pair, feat_sel_type.x, feat_sel_type.y, sep = ":") %>%
+  ggplot(aes(x = feat_sel_type_pair, y = n, fill = feature_class)) +
+  geom_col() +
+  geom_text(aes(y = 2*max(historical_features_overlap_featsel$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
+            nudge_y = ifelse(historical_features_overlap_featsel$feature_class == "main_features", 3, 1), size = 3) +
+  facet_grid(trait ~ source, switch = "y", labeller = labeller(trait = str_add_space)) +
+  scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
+  scale_x_discrete(name = "Feature selection pair") +
+  scale_y_continuous(name = "Number of overlapping covariates", breaks = pretty) +
+  theme_genetics() +
+  theme(legend.position = "none", strip.placement = "outside")
+
+ggsave(filename = "historical_features_overlap_featsel.jpg", plot = g_historical_features_overlap_featsel,
+       path = fig_dir, height = 8, width = 2.5, dpi = 1000)
+
+
+## Overlap between traits
+historical_features_overlap_trait <- historical_features1 %>%
+  select(-features) %>%
+  full_join(., ., by = c("feat_sel_type", "source")) %>%
+  inner_join(rename_all(as_tibble(t(combn(x = unique(historical_features1$trait), m = 2))), 
+                        ~paste0("trait", c(".x", ".y"))), .) %>%
+  mutate(interaction_features_overlap = map2(interaction_features.x, interaction_features.y, intersect),
+         main_features_overlap = map2(main_features.x, main_features.y, intersect)) %>%
+  select(contains("source"), contains("trait"), contains("feat_sel_type"), contains("overlap")) %>%
+  mutate_at(vars(contains("features")), ~map_dbl(., n_distinct)) %>%
+  gather(feature_class, n, contains("features")) %>%
+  mutate(feature_class = str_remove(feature_class, "_overlap")) %>%
+  # We don't need to see apriori or all
+  filter(! feat_sel_type %in% c("apriori", "all"))
+
+
+
+## Plot
+g_historical_features_overlap_trait <- historical_features_overlap_trait %>%
+  mutate(feature_class = fct_rev(feature_class)) %>%
+  mutate_at(vars(contains("trait")), ~abbreviate(str_add_space(.), 2)) %>%
+  unite(trait_pair, trait.x, trait.y, sep = ":") %>%
+  ggplot(aes(x = trait_pair, y = n, fill = feature_class)) +
+  geom_col() +
+  geom_text(aes(y = 2*max(historical_features_overlap_trait$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
+            nudge_y = ifelse(historical_features_overlap_trait$feature_class == "main_features", -3, -4), size = 2) +
+  facet_grid(feat_sel_type ~ source, switch = "y", labeller = labeller(feat_sel_type = f_ec_selection_replace)) +
+  scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
+  scale_x_discrete(name = "Trait pair") +
+  scale_y_continuous(name = "Number of overlapping covariates", breaks = pretty) +
+  theme_genetics() +
+  theme(legend.position = "none", strip.placement = "outside", axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave(filename = "historical_features_overlap_trait.jpg", plot = g_historical_features_overlap_trait,
+       path = fig_dir, height = 3, width = 8, dpi = 1000)
+
+
+## Stitch these plots together - patchwork
+left_plot <- (g_historical_features_count + theme(legend.position = "none")) / g_historical_features_overlap_trait +
+  plot_layout(heights = c(1, 0.3), guides = "collect")
+right_plot <- g_historical_features_overlap_source | g_historical_features_overlap_featsel
+
+merged_plot <- (left_plot | right_plot) + plot_annotation(tag_levels = "a") + plot_layout(widths = c(1, 0.80))
+
+# Save
+ggsave(filename = "historical_features_comparison_merged.jpg", plot = merged_plot,
+       path = fig_dir, height = 10, width = 10, dpi = 1000)
+
+
+
+## Count the number of times a particular covariate is select
+
+historical_features2 <- historical_features1 %>%
+  select(-features) %>%
+  gather(feature_class, covariates, contains("features")) %>%
+  unnest() %>%
+  mutate(covariates = str_remove(covariates, "line_name:"))
+
+
+# Counts by source and feat_sel_type
+historical_indiv_feature_counts <- historical_features2 %>%
+  # Remove all and apriori feat selections
+  filter(! feat_sel_type %in% c("all", "apriori")) %>%
+  group_by(covariates, source, feature_class, ) %>%
+  summarize(n = n()) %>%
+  mutate(nTotal = sum(n)) %>%
+  ungroup() %>%
+  mutate(covariates = fct_reorder(covariates, nTotal, .fun = max, .desc = TRUE))
+
+
+## Plot
+g_historical_indiv_feature_counts <- historical_indiv_feature_counts %>%
+  ggplot(aes(x = covariates, y = n, fill = feature_class)) +
+  geom_col() +
+  facet_grid(. ~ source, switch = "y") +
+  scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
+  scale_x_discrete(name = "Covariate") +
+  scale_y_continuous(name = "Count", breaks = pretty) +
+  theme_genetics(base_size = 8) +
+  theme(legend.position = "top", strip.placement = "outside", axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+## Save
+ggsave(filename = "historical_indiv_feature_counts.jpg", plot = g_historical_indiv_feature_counts, 
+       path = fig_dir, width = 8, height = 4, dpi = 1000)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Calculate environmental relationship matrices based on these features
+concurrent_features_env_relmat <- concurrent_features1 %>%
+  mutate(interaction_features = map(interaction_features, ~str_remove(., "line_name:"))) %>%
+  mutate(interaction_features_ec_mat = map(interaction_features, ~ec_tomodel_scaled_mat[, .x, drop = FALSE]),
+         main_features_ec_mat = map(main_features, ~ec_tomodel_scaled_mat[, .x, drop = FALSE])) %>%
+  mutate_at(vars(ends_with("ec_mat")), ~map(., ~Env_mat(x = .x, method = "Jarq")))
+
+concurrent_features_env_relmat1 <- concurrent_features_env_relmat %>%
+  select(trait, feat_sel_type, interaction = interaction_features_ec_mat, main = main_features_ec_mat) %>%
+  gather(covariate_type, Emat, main, interaction) %>%
+  ## If a matrix is all NA, convert to diagonal
+  mutate(Emat = modify_if(Emat, ~all(is.na(.)), ~`diag<-`(ifelse(is.na(.), 0, 1), 1)))
+
+
+## Compare the relationship between training/test and external environments for 
+## each trait and feature selection type
+concurrent_features_env_relmat1 %>%
+  mutate(train_val_relat = map_dbl(Emat, ~mean(.[train_test_env, validation_env])),
+         train_test_relat = ) %>% 
+  arrange(covariate_type, trait, feat_sel_type) %>% 
+  select(-Emat) %>% 
+  View
+
+
+
+# Define heat colors
+heat_colors <- wesanderson::wes_palette("Zissou1", n = 5)[c(1,3,5)]
+
+
+## Plot heatmaps of relationship matrices
+# Separate plots by main/int covariate types
+concurrent_features_heatmap_plots <- concurrent_features_env_relmat1 %>%
+  group_by(trait, feat_sel_type, covariate_type) %>%
+  do(plot = {
+    row <- .
+    
+    # Create the heatmap to order the environments
+    row_heat <- heatmap(x = row$Emat[[1]])
+    
+    # Factor order of environments
+    env_order <- fct_inorder(row.names(row$Emat[[1]])[row_heat$rowInd])
+    
+    # Create the plotting data.frame
+    dat <- row$Emat[[1]] %>%
+      as.data.frame(.) %>% 
+      rownames_to_column(., "environment") %>%
+      gather(environment2, relationship, -environment) %>%
+      # Refactor the environments
+      mutate_at(vars(contains("environment")), ~factor(., levels = levels(env_order))) %>%
+      mutate_at(vars(contains("environment")), list(group = ~ifelse(. %in% train_test_env, "training", "external"))) %>%
+      mutate(environment_group = factor(environment_group, levels = c("training", "external")))
+    
+    # Plot
+    g_heat <- dat %>%
+      ggplot(aes(x = environment, y = environment2, fill = relationship)) +
+      geom_tile() +
+      scale_fill_gradient2(low = heat_colors[1], mid = heat_colors[2], high = heat_colors[3]) +
+      facet_grid(environment2_group ~ environment_group, scales = "free", space = "free") +
+      labs(subtitle = paste(str_add_space(row$trait), row$feat_sel_type, sep = ", ")) +
+      theme_genetics(8) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1), panel.spacing = unit(0.25, "line"),
+            strip.placement = "outside", axis.title = element_blank(), legend.position = "none")
+    
+    # Return the plot
+    g_heat
+    
+  }) %>% ungroup()
+
+## Create plots by trait
+for (plotList in split(concurrent_features_heatmap_plots, concurrent_features_heatmap_plots$trait)) {
+  # Create plot
+  plot_to_save <- plot_grid(plotlist = plotList$plot, nrow = n_distinct(plotList$feat_sel_type),
+                            labels = c("Int.", "Main"), label_x = 0)
+  
+  # File name
+  filename <- paste0("environment_covariate_relationship_", unique(plotList$trait), ".jpg")
+  ggsave(filename = filename, plot = plot_to_save, path = fig_dir, 
+         width = 8, height = 14, dpi = 1000)
+  
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

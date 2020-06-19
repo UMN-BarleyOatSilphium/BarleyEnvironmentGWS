@@ -777,79 +777,98 @@ fact_reg <- function(base.formula = value ~ line_name, data, gen = "line_name",
 
 
 
+rapid_cv <- function(object, index, rapid = TRUE, return.predictions = FALSE) {
+  
+  # Get the model frame
+  mf <- model.frame(object)
+  # Model matrix and crossprod inverse
+  X <- model.matrix(object)
+  # Try solve first; return NA if error
+  solve_try <- try(XtX_inv <- solve(crossprod(X)), silent = TRUE)
+  if (inherits(solve_try, "try-error")) {
+    return(c(R2 = NA, MSE = NA, RMSE = NA))
+  }
+    
+  # Response
+  y <- model.response(mf)
+  # Get the index of the testing set
+  index_test <- lapply(X = index, FUN = setdiff, x = seq_along(y))
+  
+  # Coefficients
+  beta_hat <- coef(object)
+  
+  if (rapid) {
+    
+    # Iterate over indices
+    cv_out <- lapply(X = index, FUN = function(modelInd) {
+      # Subset X for the d testing datapoints
+      X_d <- X[-modelInd,,drop = FALSE]
+      d <- nrow(X_d)
+      # H matrix
+      H_d <- tcrossprod(X_d %*% XtX_inv, X_d)
+      H_d_inv <- ginv(diag(d) - H_d)
+      # Residuals
+      e_d <- y[-modelInd] - X_d %*% beta_hat
+      
+      # New betas
+      beta_hat_holdout <- beta_hat - (tcrossprod(XtX_inv, X_d) %*% H_d_inv %*% e_d)
+      
+      # yhat
+      y_hat <- X_d %*% beta_hat_holdout
+      # return y_hat
+      y_hat
+      
+    })
+    
+  } else {
+    
+    # Iterate over indices
+    cv_out <- lapply(X = index, FUN = function(modelInd) {
+      # Subset X for the d testing datapoints
+      X_d <- X[-modelInd,,drop = FALSE]
+      d <- nrow(X_d)
+      # H matrix
+      H_d <- tcrossprod(X_d %*% XtX_inv, X_d)
+      H_d_inv <- ginv(diag(d) - H_d)
+      # Residuals
+      e_d <- y[-modelInd] - X_d %*% beta_hat
+      
+      # New betas
+      beta_hat_holdout <- beta_hat - (tcrossprod(XtX_inv, X_d) %*% H_d_inv %*% e_d)
+      
+      # yhat
+      y_hat <- X_d %*% beta_hat_holdout
+      # return
+      y_hat
+      
+    })
+    
+    
+  }
+  
+  ## Pull out yhat
+  pred <- cbind(y_hat_test = unlist(cv_out), y_test = y[unlist(index_test)])
+  
+  # Calculate metrics and return
+  R2 <- cor(pred)[1,2]^2
+  mse <- mean((pred[,2] - pred[,1])^2)
+  
+  if (return.predictions) {
+    list(
+      cv_metrics = c(R2 = R2, MSE = mse, RMSE = sqrt(mse)),
+      predictions = pred
+    )
+    
+  } else {
+    
+    c(R2 = R2, MSE = mse, RMSE = sqrt(mse))
+    
+  }
+  
+}
 
 
-# rapid_cv <- function(object, index, rapid = TRUE) {
-# 
-#   # Get the model frame
-#   mf <- model.frame(object)
-#   # Model matrix and crossprod inverse
-#   X <- model.matrix(object)
-#   XtX_inv <- solve(crossprod(X))
-#   # Response
-#   y <- model.response(mf)
-#   # Coefficients
-#   beta_hat <- coef(object)
-#   
-#   ## Turn index into the holdout set
-#   all_index <- seq_along(y)
-#   holdout_index <- lapply(index, setdiff, x = all_index)
-# 
-#   if (rapid) {
-# 
-#     # Iterate over indices
-#     cv_out <- lapply(X = index, FUN = function(modelInd) {
-#       # Subset X for the d testing datapoints
-#       X_d <- X[-modelInd,,drop = FALSE]
-#       d <- nrow(X_d)
-#       # H matrix
-#       H_d <- tcrossprod(X_d %*% XtX_inv, X_d)
-#       H_d_inv <- ginv(diag(d) - H_d)
-#       # Residuals
-#       e_d <- y[-modelInd] - X_d %*% beta_hat
-# 
-#       # New betas
-#       beta_hat_holdout <- beta_hat - (tcrossprod(XtX_inv, X_d) %*% H_d_inv %*% e_d)
-# 
-#       # yhat
-#       y_hat <- X_d %*% beta_hat_holdout
-#       # return
-#       y_hat
-# 
-#     })
-# 
-#   } else {
-# 
-#     # Iterate over indices
-#     cv_out <- lapply(X = index, FUN = function(modelInd) {
-#       # Subset X for the training and testing
-#       Xtrain <- X[modelInd,,drop = FALSE]
-#       Xtest <-X[-modelInd,,drop = FALSE]
-#       ytrain <- y[modelInd]
-# 
-#       # Refit
-#       beta_hat <- lm.fit(x = Xtrain, y = ytrain)$coefficients
-#       isNAbeta <- which(!is.na(beta_hat))
-#       # Predict
-#       ytest <- Xtest[,isNAbeta,drop = FALSE] %*% beta_hat[isNAbeta]
-#       # Return
-#       ytest
-# 
-#     })
-# 
-# 
-#   }
-# 
-#   ## Pull out y
-#   y_hat_all <- unlist(cv_out)
-# 
-#   # Calculate metrics and return
-#   R2 <- cor(y_hat_all, y)^2
-#   mse <- mean((y - y_hat_all)^2)
-# 
-#   c(R2 = R2, MSE = mse, RMSE = sqrt(mse))
-# 
-# }
+
 
 
 
@@ -862,11 +881,14 @@ fact_reg <- function(base.formula = value ~ line_name, data, gen = "line_name",
 ## 
 ## 
 ## 
-rfa_loo <- function(object, data, scope, metric = c("RMSE", "R2"), index, env.col = "environment") {
+rfa_loo <- function(object, data, scope, metric = c("RMSE", "R2"), index, env.col = "environment",
+                    direction = c("both", "forward")) {
   
   # Match arguments
   metric <- match.arg(metric)
+  direction <- match.arg(direction)
   maximize <- ifelse(metric == "RMSE", FALSE, TRUE)
+  
   
   # Assuming environments are here, find the maximum number of covariates that could be used
   J <- n_distinct(data[[env.col]])
@@ -879,136 +901,14 @@ rfa_loo <- function(object, data, scope, metric = c("RMSE", "R2"), index, env.co
   base_fit <- object
   base_resample_pred <- rapid_cv(object = object, index = index)
   
-  ## Start the algorithm
-  # Define the available covariates and the used covariates
-  cov_available <- setdiff(attr(terms(scope$upper), "term.labels"), attr(terms(scope$lower), "term.labels"))
-  cov_used <- intersect(attr(terms(scope$upper), "term.labels"), attr(terms(scope$lower), "term.labels"))
   
-  # Define a flag to stop the algorithm
-  optMetric <- FALSE
-  allCovUsed <- length(cov_available) == 0
-  
-  # A list to store output
-  step_out <- list()
-  i = 1
-  
-  # While loop
-  while (!optMetric & !allCovUsed) {
-    
-    # Iterate over cov_available and build models
-    cov_addition_objects <- map(cov_available, ~update(object = base_fit, formula = reformulate(c(cov_used, .), response = "value")))
-    # Remove NAs
-    object_is_na <- map_lgl(cov_addition_objects, ~any(is.na(coef(.x))))
-    cov_addition_objects1 <- setNames(object = cov_addition_objects[!object_is_na], cov_available[!object_is_na])
-    
-    # Run cv - rapid if no interactions
-    has_interactions <- map_lgl(cov_addition_objects1, ~any(str_detect(attr(terms(.x), "term.labels"), ":")))
-    # cov_addition_pred <- map2(cov_addition_objects1, has_interactions, ~rapid_cv(object = .x, index = index, rapid = !.y))
-    cov_addition_pred <- map(cov_addition_objects1, ~rapid_cv(object = .x, index = index))
-    
-
-    # Analyze the metrics
-    cov_addition_metrics <- t(do.call("rbind", cov_addition_pred))
-    cov_addition_metrics <- t(cbind(cov_addition_metrics, `(none)` = base_resample_pred))
-    cov_addition_metrics <- cov_addition_metrics[order(cov_addition_metrics[,metric], decreasing = maximize),, drop = FALSE]
-    
-    # Select the covariate to add
-    cov_retain <- row.names(cov_addition_metrics)[1]
-    
-    # If "none", stop
-    if (cov_retain == "(none)") {
-      optMetric <- TRUE
-      
-    } else {
-      # Edit cov_available and cov_used
-      cov_used <- union(cov_used, cov_retain)
-      cov_available <- setdiff(cov_available, cov_used)
-      
-      allCovUsed <- length(cov_available) == 0 | length(cov_used) - 1 == H
-      
-      # Edit the metrics to compare
-      base_resample_pred <- cov_addition_metrics[1,]
-    }
-    
-    step_out[[i]] <- cov_addition_metrics
-    i <- i + 1
-    
-  } # End the while loop
-  
-  # Return a list
-  list(optVariables = cov_used, finalResults = step_out[[length(step_out)]][1,], stepTestResults = step_out)
-  
-}
-
-
-
-
-
-
-
-
-## Function for recursive feature elimination using PLS
-rfs_loo <- function(X, Y, comp = 3, metric = c("RMSE", "R2"), direction = c("forward", "backward"), index) {
-  
-  require(pls)
-  
-  # Match arguments
-  metric <- match.arg(metric)
-  direction <- match.arg(direction)
-  
-  stopifnot(is.matrix(Y))
-  stopifnot(is.matrix(X))
-  
-  yall <- scale(Y)
-  # Impute missing with 0
-  yall[is.na(yall)] <- 0
-  Xall <- scale(X)
-  
-  # Determine if Y is multivariate
-  is.multivariate <- ncol(yall) > 1
-  
-  # Split on direction
+  ## Separate flow by direction
   if (direction == "forward") {
-    
-    # Split based on multivariate-ness
-    if (!is.multivariate) {
-      
-      X1 <- matrix(1, ncol = 1, nrow = nrow(Xall))
-      ## Find the RMSE of the model with all variables
-      base_fit <- plsr(yall ~ X1, validation = "LOO", scale = FALSE, center = FALSE)
-      rmse <- rmseBase <- RMSEP(object = base_fit)$val[,,1]["CV"]
-      r2 <- r2Base <- R2(base_fit)$val[,,1]
-      
-    } else {
-      
-      # Perform the resampling
-      base_resample_pred <- lapply(X = index, FUN = function(modelInd) {
-        X1 <- Xall[modelInd,,drop = FALSE]
-        y1 <- yall[modelInd,,drop = FALSE]
-        xTest <- Xall[-modelInd,,drop = FALSE]
-        yTest <- yall[-modelInd,,drop = FALSE]
-        fit <- plsr(y1 ~ X1)
-        # Predict and return
-        t(rbind(yTest, predict(object = fit, newdata = xTest, comp = seq_len(comp))))
-      })
-      
-      # Row bind
-      out <- do.call("rbind", base_resample_pred)
-      # Calculate the metrics
-      res <- out[,1] - out[,2]
-      rmse <- rmseBase <- sqrt(mean(res^2, na.rm = TRUE))
-      r2 <- r2Base <- cor(out)[1,2]^2
-      
-    }
-    
-    
+  
     ## Start the algorithm
-    
-    # Set Xbase
-    Xbase <- Xall[,NULL]
     # Define the available covariates and the used covariates
-    cov_available <- colnames(Xall)
-    cov_used <- character()
+    cov_available <- setdiff(attr(terms(scope$upper), "term.labels"), attr(terms(scope$lower), "term.labels"))
+    cov_used <- intersect(attr(terms(scope$upper), "term.labels"), attr(terms(scope$lower), "term.labels"))
     
     # Define a flag to stop the algorithm
     optMetric <- FALSE
@@ -1021,52 +921,25 @@ rfs_loo <- function(X, Y, comp = 3, metric = c("RMSE", "R2"), direction = c("for
     # While loop
     while (!optMetric & !allCovUsed) {
       
-      # Iterate over cov_todrop and build models
-      cov_pred <- sapply(X = cov_available, FUN = function(cov_add) {
-        
-        Xcov <- cbind(Xbase, Xall[,cov_add, drop = FALSE])
-        
-        # Split based on multivariate-ness
-        if (!is.multivariate) {
-          
-          ## Find the RMSE of the model with all variables
-          cov_fit <- plsr(yall ~ Xcov, validation = "LOO", scale = FALSE, center = FALSE)
-          rmseCov <- RMSEP(object = cov_fit)$val[,,min(comp+1, ncol(Xcov)+1)]["CV"]
-          r2Cov <- R2(cov_fit)$val[,,min(comp+1, ncol(Xcov)+1)]
-          
-        } else {
-          
-          # Resampling
-          cov_resample_pred <- lapply(X = index, FUN = function(modelInd) {
-            X1 <- Xcov[modelInd,,drop = FALSE]
-            y1 <- yall[modelInd,,drop = FALSE]
-            xTest <- Xcov[-modelInd,,drop = FALSE]
-            yTest <- yall[-modelInd,,drop = FALSE]
-            fit <- plsr(y1 ~ X1)
-            # Predict and return
-            t(rbind(yTest, predict(object = fit, newdata = xTest, comp = seq_len(min(comp, ncol(X1))))))
-          })
-          
-          # Row bind
-          out <- do.call("rbind", cov_resample_pred)
-          # Calculate the metrics
-          resCov <- out[,1] - out[,2]
-          rmseCov <- sqrt(mean(resCov^2, na.rm = TRUE))
-          r2Cov <- cor(out)[1,2]^2
-          
-        }
-        
-        # Return a matrix
-        c(RMSE = unname(rmseCov), R2 = r2Cov)
-        
-      })
+      # Iterate over cov_available and build models
+      cov_addition_objects <- map(cov_available, ~update(object = base_fit, formula = reformulate(c(cov_used, .), response = "value")))
+      # Remove NAs
+      object_is_na <- map_lgl(cov_addition_objects, ~any(is.na(coef(.x))))
+      cov_addition_objects1 <- setNames(object = cov_addition_objects[!object_is_na], cov_available[!object_is_na])
+      
+      # Run cv - rapid if no interactions
+      has_interactions <- map_lgl(cov_addition_objects1, ~any(str_detect(attr(terms(.x), "term.labels"), ":")))
+      # cov_addition_pred <- map2(cov_addition_objects1, has_interactions, ~rapid_cv(object = .x, index = index, rapid = !.y))
+      cov_addition_pred <- map(cov_addition_objects1, ~rapid_cv(object = .x, index = index))
+      
       
       # Analyze the metrics
-      cov_metrics <- t(cbind(cov_pred, `(none)` = c(rmseBase, r2Base)))
-      cov_metrics <- cov_metrics[order(cov_metrics[,metric], decreasing = FALSE),, drop = FALSE]
+      cov_addition_metrics <- t(do.call("rbind", cov_addition_pred))
+      cov_addition_metrics <- t(cbind(cov_addition_metrics, `(none)` = base_resample_pred))
+      cov_addition_metrics <- cov_addition_metrics[order(cov_addition_metrics[,metric], decreasing = maximize),, drop = FALSE]
       
       # Select the covariate to add
-      cov_retain <- row.names(cov_metrics)[1]
+      cov_retain <- row.names(cov_addition_metrics)[1]
       
       # If "none", stop
       if (cov_retain == "(none)") {
@@ -1077,75 +950,33 @@ rfs_loo <- function(X, Y, comp = 3, metric = c("RMSE", "R2"), direction = c("for
         cov_used <- union(cov_used, cov_retain)
         cov_available <- setdiff(cov_available, cov_used)
         
-        allCovUsed <- length(cov_available) == 0
+        allCovUsed <- length(cov_available) == 0 | length(cov_used) - 1 == H
         
         # Edit the metrics to compare
-        rmseBase <- cov_metrics[1, "RMSE"]
-        r2Base <- cov_metrics[1, "R2"]
-        
-        # Edit the model matrix
-        Xbase <- cbind(Xbase, Xall[,cov_retain, drop = FALSE])
-        
+        base_resample_pred <- cov_addition_metrics[1,]
       }
       
-      step_out[[i]] <- cov_metrics
+      step_out[[i]] <- cov_addition_metrics
       i <- i + 1
       
     } # End the while loop
     
-    # Return a list
-    out <- list(optVariables = cov_used, finalResults = step_out[[length(step_out)]][1,], stepTestResults = step_out)
     
-    
-  } else if (direction == "backward") {
-    
-    
-    # Split based on multivariate-ness
-    if (!is.multivariate) {
-      
-      ## Find the RMSE of the model with all variables
-      base_fit <- plsr(yall ~ Xall, validation = "LOO", scale = FALSE, center = FALSE)
-      rmse <- rmseBase <- RMSEP(object = base_fit)$val[,,comp+1]["CV"]
-      r2 <- r2Base <- R2(base_fit)$val[,,comp+1]
-      
-    } else {
-      
-      # Perform the resampling
-      base_resample_pred <- lapply(X = index, FUN = function(modelInd) {
-        X1 <- Xall[modelInd,,drop = FALSE]
-        y1 <- yall[modelInd,,drop = FALSE]
-        xTest <- Xall[-modelInd,,drop = FALSE]
-        yTest <- yall[-modelInd,,drop = FALSE]
-        fit <- plsr(y1 ~ X1)
-        # Predict and return
-        t(rbind(yTest, predict(object = fit, newdata = xTest, comp = seq_len(comp))))
-      })
-      
-      # Row bind
-      out <- do.call("rbind", base_resample_pred)
-      # Calculate the metrics
-      res <- out[,1] - out[,2]
-      rmse <- rmseBase <- sqrt(mean(res^2, na.rm = TRUE))
-      r2 <- r2Base <- cor(out)[1,2]^2
-      
-    }
-    
+  } else if (direction == "both") {
     
     ## Start the algorithm
+    # Define the available covariates and the used covariates
+    cov_available <- setdiff(attr(terms(scope$upper), "term.labels"), attr(terms(scope$lower), "term.labels"))
+    cov_used <- intersect(attr(terms(scope$upper), "term.labels"), attr(terms(scope$lower), "term.labels"))
+    # Vector of covariates that were removed by backwards elimination
+    cov_remove <- cov_retain <- NULL
     
-    # Set Xbase
-    Xbase <- Xall
-    # Define the covariates that may be dropped
-    cov_todrop <- colnames(Xbase)
-    # Define the covariates that have been dropped
-    cov_dropped <- character()
-    # convert to named vector of column numbers
-    col_todrop <- setNames(object = seq_len(ncol(Xbase)), cov_todrop)
+    ## Create a pseudoformula that documents the addition/removal of covariates
+    traverse_formula <- list("line_name")
     
     # Define a flag to stop the algorithm
     optMetric <- FALSE
-    allCovUsed <- length(cov_todrop) == 0
-    
+    allCovUsed <- length(cov_available) == 0
     
     # A list to store output
     step_out <- list()
@@ -1154,142 +985,328 @@ rfs_loo <- function(X, Y, comp = 3, metric = c("RMSE", "R2"), direction = c("for
     # While loop
     while (!optMetric & !allCovUsed) {
       
-      # Iterate over cov_todrop and build models
-      cov_removal_pred <- sapply(X = col_todrop, FUN = function(col_drop) {
+      ## Initiate backwards elimination if the length of cov_used is >= 3
+      if (length(cov_used) >= 3) {
         
-        Xcov <- Xbase[,-col_drop, drop = FALSE]
+        ## Create formulae where all covariates except line name and the last covariate
+        ## added are eligible for removal
+        cov_removable <- setdiff(cov_used, c("line_name", cov_retain))
+        cov_removal_objects <- map(cov_removable, ~update(object = base_fit, formula = reformulate(setdiff(cov_used, .), response = "value")))
         
-        # Split based on multivariate-ness
-        if (!is.multivariate) {
+        # Remove NAs
+        object_is_na <- map_lgl(cov_removal_objects, ~any(is.na(coef(.x))))
+        cov_removal_objects1 <- setNames(object = cov_removal_objects[!object_is_na], cov_removable[!object_is_na])
+        
+        # Run cv - rapid if no interactions
+        has_interactions <- map_lgl(cov_removal_objects1, ~any(str_detect(attr(terms(.x), "term.labels"), ":")))
+        # cov_addition_pred <- map2(cov_addition_objects1, has_interactions, ~rapid_cv(object = .x, index = index, rapid = !.y))
+        cov_removal_pred <- map(cov_removal_objects1, ~rapid_cv(object = .x, index = index))
+        
+        # Analyze the metrics
+        cov_removal_metrics <- t(do.call("rbind", cov_removal_pred))
+        cov_removal_metrics <- t(cbind(cov_removal_metrics, `(none)` = base_resample_pred))
+        cov_removal_metrics <- cov_removal_metrics[order(cov_removal_metrics[,metric], decreasing = maximize),, drop = FALSE]
+        
+        # Select the covariate to remove
+        cov_remove <- row.names(cov_removal_metrics)[1]
+        
+        # If not none, edit "cov available" so the removed covariate is not considered.
+        if (cov_remove != "(none)") {
+
+          # add to the formula list
+          traverse_formula[[length(traverse_formula)+1]] <- paste0("- ", cov_remove)
           
-          ## Find the RMSE of the model with all variables
-          cov_fit <- plsr(yall ~ Xcov, validation = "LOO", scale = FALSE, center = FALSE)
-          rmseCov <- RMSEP(object = cov_fit)$val[,,comp+1]["CV"]
-          r2Cov <- R2(cov_fit)$val[,,comp+1]
-          
-        } else {
-          
-          # Resampling
-          cov_resample_pred <- lapply(X = index, FUN = function(modelInd) {
-            X1 <- Xcov[modelInd,,drop = FALSE]
-            y1 <- yall[modelInd,,drop = FALSE]
-            xTest <- Xcov[-modelInd,,drop = FALSE]
-            yTest <- yall[-modelInd,,drop = FALSE]
-            fit <- plsr(y1 ~ X1)
-            # Predict and return
-            t(rbind(yTest, predict(object = fit, newdata = xTest, comp = seq_len(min(comp, ncol(X1))))))
-          })
-          
-          # Row bind
-          out <- do.call("rbind", cov_resample_pred)
-          # Calculate the metrics
-          resCov <- out[,1] - out[,2]
-          rmseCov <- sqrt(mean(resCov^2, na.rm = TRUE))
-          r2Cov <- cor(out)[1,2]^2
-          
+          # Edit cov_available and cov_used
+          # Remove the covariate from cov_used
+          cov_used <- setdiff(cov_used, cov_remove)
+          # This removed covariate is not available to add
+          cov_available <- setdiff(cov_available, cov_remove)
+
         }
-        
-        # Return a matrix
-        c(RMSE = unname(rmseCov), R2 = r2Cov)
-        
-      })
-      
-      # Analyze the metrics
-      cov_removal_metrics <- t(cbind(cov_removal_pred, `(none)` = c(rmseBase, r2Base)))
-      cov_removal_metrics <- cov_removal_metrics[order(cov_removal_metrics[,metric], decreasing = FALSE),, drop = FALSE]
-      
-      # Select the covariate to add
-      cov_remove <- row.names(cov_removal_metrics)[1]
-      
-      # If "none", stop
-      if (cov_remove == "(none)") {
-        optMetric <- TRUE
-        
-      } else {
-        # Edit cov_available and cov_used
-        cov_dropped <- union(cov_dropped, cov_remove)
-        cov_todrop <- setdiff(cov_todrop, cov_dropped)
-        
-        allCovUsed <- length(cov_todrop) == 0
-        
-        # Edit the metrics to compare
-        rmseBase <- cov_removal_metrics[1, "RMSE"]
-        r2Base <- cov_removal_metrics[1, "R2"]
-        
-        # Edit the model matrix
-        Xbase <- Xbase[,colnames(Xbase) != cov_remove, drop = FALSE]
-        col_todrop <- setNames(object = seq_len(ncol(Xbase)), cov_todrop)
         
       }
       
-      step_out[[i]] <- cov_removal_metrics
+      
+      # Iterate over cov_available and build models
+      cov_addition_objects <- cov_available %>%
+        # Add lower level main effects if interactions are present
+        modify_if(~str_detect(., ":"), ~paste0(str_remove(., "line_name:"), " + ", .)) %>%
+        map(~update(object = base_fit, formula = reformulate(c(cov_used, .), response = "value")))
+      # Remove NAs
+      object_is_na <- map_lgl(cov_addition_objects, ~any(is.na(coef(.x))))
+      cov_addition_objects1 <- setNames(object = cov_addition_objects[!object_is_na], cov_available[!object_is_na])
+      
+      # Run cv - rapid if no interactions
+      has_interactions <- map_lgl(cov_addition_objects1, ~any(str_detect(attr(terms(.x), "term.labels"), ":")))
+      # cov_addition_pred <- map2(cov_addition_objects1, has_interactions, ~rapid_cv(object = .x, index = index, rapid = !.y))
+      cov_addition_pred <- map(cov_addition_objects1, ~rapid_cv(object = .x, index = index))
+      
+      
+      # Analyze the metrics
+      cov_addition_metrics <- t(do.call("rbind", cov_addition_pred))
+      cov_addition_metrics <- t(cbind(cov_addition_metrics, `(none)` = base_resample_pred))
+      cov_addition_metrics <- cov_addition_metrics[order(cov_addition_metrics[,metric], decreasing = maximize),, drop = FALSE]
+      
+      # Select the covariate to add
+      cov_retain <- row.names(cov_addition_metrics)[1]
+      
+      # If "none", stop
+      if (cov_retain == "(none)") {
+        optMetric <- TRUE
+        
+      } else {
+        
+        # add to the formula list
+        traverse_formula[[length(traverse_formula)+1]] <- paste0("+ ", cov_retain)
+        
+        # Edit cov_available and cov_used
+        cov_used <- union(cov_used, cov_retain)
+        cov_available <- setdiff(cov_available, cov_used)
+        
+        allCovUsed <- length(cov_available) == 0 | length(cov_used) - 1 == H
+        
+        # Edit the metrics to compare
+        base_resample_pred <- cov_addition_metrics[1,]
+      }
+      
+      step_out[[i]] <- cov_addition_metrics
       i <- i + 1
       
     } # End the while loop
     
-    out <- list(optVariables = cov_todrop, finalResults = step_out[[length(step_out)]][1,], stepTestResults = step_out)
+
+  } # End the ifelse statement
     
-  } # End if statement
+  # Return a list
+  list(optVariables = cov_used, finalResults = step_out[[length(step_out)]][1,], 
+       stepTestResults = step_out, stepTraverseFormula = paste0(unlist(traverse_formula), collapse = " "))
   
-  # Return results
-  return(out)
+}
+
+
+
+## Function for running genetic algorithm for variable selection
+genalg_loo <- function(base.formula, covariates.use, data, maxiter = 50, popSize = 150, reps = 5) {
+  
+  require(genalg, quietly = TRUE)
+  require(GA, quietly = TRUE)
+  require(memoise, quietly = TRUE)
+  
+  # Create an evaluation function (PRESS) to minimize
+  fitness <- function(indices, base.formula, maximize = TRUE) {
+    
+    # If the number of 1s is greater than the number of environments - 1, return Inf
+    if (sum(indices) > n_distinct(data$environment) - 1) {
+      return(ifelse(maximize, -Inf, Inf))
+      
+    } else {
+      # variable selection based on the indices
+      form <- reformulate(c(attr(terms(base.formula), "term.labels"), covariates.use[indices == 1]), response = "value")
+      # Fit the model
+      lm_fit <- lm(formula = form, data = data)
+      # Conduct rapid CV
+      rapid_cv_out <- rapid_cv(object = lm_fit, index = loo_indices)
+      # Return the statistic (RMSE)
+      
+      if (all(is.na(rapid_cv_out))) {
+        return(ifelse(maximize, -Inf, Inf))
+      } else {
+        return(ifelse(maximize, -rapid_cv_out["RMSE"], rapid_cv_out["RMSE"]))
+      }
+    }
+  }
+  
+  ## Alternative fitness function that returns BIC
+  fitnessBIC <- function(indices, base.formula) {
+    
+    # If the number of 1s is greater than the number of environments - 1, return Inf
+    if (sum(indices) > n_distinct(data$environment) - 1) {
+      return(-Inf)
+      
+    } else {
+      # variable selection based on the indices
+      form <- reformulate(c(attr(terms(base.formula), "term.labels"), covariates.use[indices == 1]), response = "value")
+      
+      # Fit the model
+      lm_fit <- lm(formula = form, data = data)
+      -BIC(lm_fit)
+      
+      # y <- data$value
+      # x <- model.matrix(form, data)
+      # lm_fit <- lm.fit(x = x, y = y)
+      # -BIC(structure(lm_fit, class = "lm"))
+
+    }
+  }
+  
+  ## Create a funciton to generate a population
+  generateBinaryPopulation <- function(object, maxNonZero = n_distinct(data$environment) - 1) {
+    # empty matrix
+    population <- matrix(as.double(0), nrow = object@popSize, ncol = object@nBits)
+    for (i in 1:object@popSize) {
+      # Sample the maxNonZero size
+      nOne <- sample(maxNonZero, 1)
+      population[i, sample(object@nBits, nOne)] <- 1
+    }
+    storage.mode(population) <- "integer"
+    return(population)
+  }
+  
+  ## Create a function to select
+  selectBinaryPopulation <- function(object) {
+    # Remove any individuals with infinite fitness
+    fitness1 <- object@fitness
+    fitness1[is.infinite(fitness1)] <- NA
+    fitnessOrder <- order(fitness1, decreasing = TRUE, na.last = NA)
+    
+    # Select
+    selectFitness <- fitnessOrder[1:object@elitism]
+    sel <- sample(x = selectFitness, size = object@popSize, replace = TRUE)
+    out <- list(population = object@population[sel, , drop = FALSE], 
+                fitness = object@fitness[sel])
+    
+  }
+
+  
+  ## Memoize the function
+  mFitness <- memoize(fitness)
+  mFitnessBIC <- memoize(fitnessBIC)
+  
+  ## Repeat the genetic algorithm x times
+  ga_out_repeats <- replicate(n = reps, expr = {
+    ga(type = "binary", fitness = mFitness, nBits = length(covariates.use), 
+       population = generateBinaryPopulation, selection = selectBinaryPopulation,
+       maxiter = maxiter, popSize = popSize, elitism = ceiling(0.1 * popSize), pmutation = 0.2,
+       base.formula = base.formula)
+  }, simplify = FALSE)
+  
+  ## Get a matrix of solutions; 
+  solutions_mat <- do.call("rbind", map(ga_out_repeats, ~slot(., "solution")))
+  # Iteratively subset the solutions matrix based on decreasing probability
+  # that a feature was selected
+  solutions_mat1 <- solutions_mat
+  optSol <- FALSE
+  
+  while (!optSol) {
+    probs_ord <- sort(colMeans(solutions_mat1), decreasing = TRUE)
+    probs_ord1 <- probs_ord[probs_ord != 1]
+    
+    # Find solutions that are positive for the most frequent features
+    which_feature_names <- names(subset(probs_ord1, probs_ord1 == max(probs_ord1)))
+    solutions_mat1_temp <- solutions_mat1[rowMeans(solutions_mat1[,which_feature_names,drop = FALSE]) == 1,, drop = FALSE]
+    
+    # If zero, return the first solution
+    if (nrow(solutions_mat1_temp) == 0) {
+      optSol <- TRUE
+      solutions_mat1 <- solutions_mat1[1,,drop = FALSE]
+    } else {
+      solutions_mat1 <- solutions_mat1_temp
+    }
+  }
+    
+  # Get the optimal variables
+  bestSolution <- as.vector(solutions_mat1)
+  optVariables <- c("line_name", covariates.use[bestSolution == 1])
+  
+  ## Combine into a list
+  ga_feat_sel_out <- list(
+    optVariables = optVariables
+  )
+  
+  ## Return result
+  return(ga_feat_sel_out)
   
 }
 
 
 
 ## A function for the recursive feature addition procedure
-rfa_proc <- function(env.col = "environment") {
+select_features_met <- function(data, env.col = "environment", search.method = c("hill.climb", "exchange", "gen.alg")) {
   
+  # 1. Fit a base model
+  base_fit <- lm(value ~ 1 + line_name, data = data)
   covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+  search.method <- match.arg(search.method)
   
-  ## Recursive feature addition ##
-  ## Main effect
-  # 1. Fit a base model
-  base_fit <- lm(value ~ 1 + line_name, data = df1)
-  # 2. Define the scope
-  scope <- list(lower = formula(base_fit), upper = reformulate(c("line_name", covariates_use), response = "value"))
-  # Run rfa
-  rfa_out <- rfa_loo(object = base_fit, data = df1, scope = scope, metric = "RMSE", index = loo_indices, env.col = env.col)
+  ## If hill climb, use stepwise approach
+  if (search.method == "hill.climb") {
+    
+    ## Recursive feature addition ##
+    ## Main effect
+
+    # 2. Define the scope
+    scope <- list(lower = formula(base_fit), upper = reformulate(c("line_name", covariates_use), response = "value"))
+    # Run rfa
+    rfa_out <- rfa_loo(object = base_fit, data = data, scope = scope, metric = "RMSE", index = loo_indices, env.col = env.col)
+    
+    ## Interactions
+    # 1. Fit a base model
+    base_fit_int <- update(base_fit, formula = reformulate(rfa_out$optVariables, response = "value"))
+    # 2. Define the scope
+    scope <- list(lower = formula(base_fit_int), 
+                  upper = reformulate(c(rfa_out$optVariables, paste0("line_name:", covariates_use)), response = "value"))
+    # Run rfa
+    rfa_out_int <- rfa_loo(object = base_fit_int, data = data, scope = scope, metric = "RMSE", index = loo_indices, env.col = env.col)
+    
   
-  ## Interactions
-  # 1. Fit a base model
-  base_fit_int <- update(base_fit, formula = reformulate(rfa_out$optVariables, response = "value"))
-  # 2. Define the scope
-  scope <- list(lower = formula(base_fit_int), 
-                upper = reformulate(c(rfa_out$optVariables, paste0("line_name:", covariates_use)), response = "value"))
-  # Run rfa
-  rfa_out_int <- rfa_loo(object = base_fit_int, data = df1, scope = scope, metric = "RMSE", index = loo_indices, env.col = env.col)
+    
+    ##  no soil
+    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T), 
+                             covariate, drop = TRUE) 
+    ## Main effect
+    # 1. Fit a base model
+    base_fit <- lm(value ~ 1 + line_name, data = data)
+    # 2. Define the scope
+    scope <- list(lower = formula(base_fit), upper = reformulate(c("line_name", covariates_use), response = "value"))
+    # Run rfa
+    rfa_out_nosoil <- rfa_loo(object = base_fit, data = data, scope = scope, metric = "RMSE", index = loo_indices, env.col = env.col)
+    
+    ## Interactions
+    # 1. Fit a base model
+    base_fit_int <- update(base_fit, formula = reformulate(rfa_out_nosoil$optVariables, response = "value"))
+    # 2. Define the scope
+    scope <- list(lower = formula(base_fit_int), 
+                  upper = reformulate(c(rfa_out_nosoil$optVariables, paste0("line_name:", covariates_use)), response = "value"))
+    # Run rfa
+    rfa_out_int_nosoil <- rfa_loo(object = base_fit_int, data = data, scope = scope, metric = "RMSE", index = loo_indices, env.col = env.col)
+    
+    
+    ## Create a tibble
+    res <- tibble(
+      feat_sel_type = "rfa_cv",
+      model = c("model2", "model3"),
+      adhoc = list(rfa_out, rfa_out_int),
+      adhoc_nosoil = list(rfa_out_nosoil, rfa_out_int_nosoil)
+    )
+    
+  } else if (search.method == "exchange") {
+    
+  } else if (search.method == "gen.alg") {
+    
+    ## Run a genetic algorithm to find the optimal variables
+    genalg_out <- genalg_loo(base.formula = formula(base_fit), covariates.use = covariates_use, data = data)
+    
+    ## Fit a model with the selected covariates
+    base_fit_int <- update(base_fit, formula = reformulate(genalg_out$optVariables, response = "value"))
+    
+    # Rerun the genetic algorithm to find interaction covariates
+    genalg_out_int <- genalg_loo(base.formula = formula(base_fit_int), 
+                                 covariates.use = paste0("line_name:", covariates_use), 
+                                 data = data, maxiter = 100)
+    
+
+    
+    ## Create a tibble
+    res <- tibble(
+      feat_sel_type = "rfa_cv",
+      model = c("model2", "model3"),
+      adhoc = list(rfa_out, rfa_out_int),
+      adhoc_nosoil = list(rfa_out_nosoil, rfa_out_int_nosoil)
+    )
+    
+  }
   
-  
-  ##  no soil
-  covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T), 
-                           covariate, drop = TRUE) 
-  ## Main effect
-  # 1. Fit a base model
-  base_fit <- lm(value ~ 1 + line_name, data = df1)
-  # 2. Define the scope
-  scope <- list(lower = formula(base_fit), upper = reformulate(c("line_name", covariates_use), response = "value"))
-  # Run rfa
-  rfa_out_nosoil <- rfa_loo(object = base_fit, data = df1, scope = scope, metric = "RMSE", index = loo_indices, env.col = env.col)
-  
-  ## Interactions
-  # 1. Fit a base model
-  base_fit_int <- update(base_fit, formula = reformulate(rfa_out_nosoil$optVariables, response = "value"))
-  # 2. Define the scope
-  scope <- list(lower = formula(base_fit_int), 
-                upper = reformulate(c(rfa_out_nosoil$optVariables, paste0("line_name:", covariates_use)), response = "value"))
-  # Run rfa
-  rfa_out_int_nosoil <- rfa_loo(object = base_fit_int, data = df1, scope = scope, metric = "RMSE", index = loo_indices, env.col = env.col)
-  
-  
-  ## Create a tibble
-  tibble(
-    feat_sel_type = "rfa_cv",
-    model = c("model2", "model3"),
-    adhoc = list(rfa_out, rfa_out_int),
-    adhoc_nosoil = list(rfa_out_nosoil, rfa_out_int_nosoil)
-  )
+  return(res)
   
 }
 

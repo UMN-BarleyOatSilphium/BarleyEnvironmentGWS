@@ -28,15 +28,17 @@ library(parallel)
 # n_core <- detectCores()
 n_core <- 12
 
+# Source of covariates
+source_use <- "daymet"
+
 # time_frame to use for the location relationship matrix
 time_frame_use <- "time_frame5_2010_2014"
 
 ## Load covariate data
-load(file.path(result_dir, "concurrent_historical_covariables_nasapower.RData"))
+load(file.path(result_dir, "concurrent_historical_covariables.RData"))
 
 ## Load the factorial regression results
-# load(file.path(result_dir, "factorial_regression_results.RData"))
-load(file.path(result_dir, "feature_selection_results_nasapower.RData"))
+load(file.path(result_dir, "feature_selection_results.RData"))
 
 ## For either environments or locations, fit the models:
 ## 
@@ -89,7 +91,8 @@ S2_MET_loc_BLUEs <- S2_MET_BLUEs %>%
   ungroup()
 
 ## Pull out location covariates to use
-loc_ec_tomodel_scaled <-  historical_ec_tomodel_timeframe_scaled[[time_frame_use]]
+loc_ec_tomodel_scaled <-  historical_ec_tomodel_timeframe_scaled %>%
+  subset(., grepl(pattern = time_frame_use, x = names(.)))
 
 
 # Leave-one-out -----------------------------------------------
@@ -132,27 +135,36 @@ concurrent_feature_selection <- concurrent_feature_selection %>%
 # Combine feature selection df
 feature_selection_df <- bind_rows(historical_fact_reg_feature_selection, historical_feature_selection)
   
+# A vector of all covariates
+covariates_by_source_df <- tibble(source = map_chr(map(loc_ec_tomodel_scaled, "source"), unique),
+                                  covariates = map(loc_ec_tomodel_scaled, ~names(.)[-1:-3]))
+# Data.frame with all covariates
+all_covariates_df <- crossing(covariates_by_source_df, trait = traits, feature_selection = "all", 
+                              model = c("model4", "model5")) %>% 
+  mutate(covariates = map2(covariates, model, ~ifelse(.y == "model4", list(.x), list(c(.x, paste0("line_name:", .x))))) %>%
+           map(1)) %>%
+  filter(source %in% source_use)
+
 
 
 # Reorganize covariate df
 covariates_tomodel <- feature_selection_df %>%
   bind_rows(., concurrent_feature_selection) %>% # Add covariates selected in the concurrent analysis
-  mutate(timeframe = "historical") %>%
-  # Only use adhoc (not adhoc no soil)
-  select(trait, feature_selection = feat_sel_type, direction, model, covariates) %>%
+  # Filter the source to use
+  filter(source %in% source_use) %>%
+  rename(feature_selection = feat_sel_type) %>%
   mutate(covariates = map(covariates, "optVariables"),
          covariates = modify_if(covariates, is.null, ~character(0)),
          direction = ifelse(is.na(direction), "forward", direction)) %>%
+  # Add all covariates
+  bind_rows(., all_covariates_df) %>%
   unnest() %>%
   filter(covariates != "line_name") %>%
-  group_by(trait, feature_selection, model, direction) %>%
+  group_by(source, trait, feature_selection, model, direction) %>%
   nest(.key = "covariates") %>%
   ungroup() %>%
   # Do not use the no soil selections or pls
   filter(str_detect(feature_selection, "nosoil|pls", negate = TRUE)) %>%
-  # Add all covariates
-  bind_rows(., crossing(trait = unique(.$trait), feature_selection = "all", model = unique(.$model), 
-                        covariates = list(tibble(covariates = names(loc_ec_tomodel_scaled)[-1:-2])))) %>%
   # Collapse covariates
   mutate(covariates = map(covariates, "covariates")) %>%
   # nest
@@ -178,9 +190,6 @@ lolo_train_test <- data_to_model %>%
 
 ## Assign cores and split
 data_train_test1 <- lolo_train_test %>%
-  group_by(trait, site) %>%
-  slice(1) %>%
-  ungroup() %>%
   assign_cores(df = ., n_core = n_core, split = TRUE)
 
 
@@ -237,6 +246,7 @@ lolo_predictions_out <- data_train_test1 %>%
         
         # Create a matrix of scaled and centered covariates
         covariate_mat <- loc_ec_tomodel_scaled %>%
+          subset(., grepl(pattern = covariates_use$source[r], x = names(.))) %>% .[[1]] %>%
           filter(location %in% levels(row$train[[1]]$site1)) %>%
           select(., location, unique(unlist(covariate_list))) %>%
           as.data.frame() %>%
@@ -372,6 +382,7 @@ loc_external_predictions_out <- loc_external_train_val1 %>%
         
         # Create a matrix of scaled and centered covariates
         covariate_mat <- loc_ec_tomodel_scaled %>%
+          subset(., grepl(pattern = covariates_use$source[r], x = names(.))) %>% .[[1]] %>%
           filter(location %in% levels(row$train[[1]]$site1)) %>%
           select(., location, unique(unlist(covariate_list))) %>%
           as.data.frame() %>%
