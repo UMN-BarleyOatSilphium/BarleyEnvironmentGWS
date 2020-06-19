@@ -149,6 +149,35 @@ trait_units1 <- setNames(object = c("Mg~ha^-1", "days", "cm", "g~L^-1", "'%'"), 
 trait_sign <- tibble(trait = traits, sign = c(1, -1, -1, 1, -1))
 
 
+
+## Functions that might be useful for plotting ##
+
+
+## A vector to rename models
+model_replace <- c("model1" = "g", "model2_id" = "g + E", "model2_cov" = "g + w", 
+                   "model3_id" = "g + E + gE", "model3_cov" = "g + w + gu", "model3_cov1" = "g + w + gw")
+
+## Models to present
+# model_present <- model_replace[str_detect(names(model_replace), "_", negate = TRUE)]
+model_present <- model_replace
+
+
+f_model_replace <- function(x) model_replace[x]
+f_model_replace2 <- function(x) model_present[x]
+# f_model_replace <- function(x) paste0("M", toupper(str_extract(x, "[0-9]{1}[a-z]{0,1}")))
+# Vector to rename validation schemes
+f_pop_replace <- function(x) str_replace_all(x, c("tp" = "Cross-validation", "vp" = "Offspring validation"))
+# Replace type
+f_type_replace <- function(x) c("loeo" = "New environment", "lolo" = "New location", "loyo" = "New year")[x]
+# Replace ec selection
+f_ec_selection_replace <- function(x)  c("rfa_cv_adhoc" = "stepCV", "stepAIC_adhoc" = "stepAIC", "apriori" = "literature", 
+                                         "all" = "All", "none" = "None")[x]
+f_growth_stage_replace <- function(x) 
+  c("early_vegetative" = "EV", "late_vegetative" = "LV", "heading" = "HD", "flowering" = "FL", "grain_fill" = "GF")[x]
+
+
+
+
 ## Remove
 rm(s2_discrete_mat, s2_imputed_mat, s2_metadata, s2_tidy_BLUE)
 

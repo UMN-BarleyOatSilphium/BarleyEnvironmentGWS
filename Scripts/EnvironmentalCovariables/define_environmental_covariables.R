@@ -130,8 +130,8 @@ ggsave(filename = "cgm_pred_obs_HD_cultivars.jpg", plot = g_cgm_cultivar_summary
 
 
 ## Load the environmental covariates
-# load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates_daymet.RData"))
-load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates_nasapower.RData"))
+## This contains output from both nasapower and dayment
+load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates.RData"))
 
 
 ## Fit models to calculate environmental means
@@ -164,7 +164,7 @@ env_means <- S2_MET_BLUEs %>%
 # Calculate avereage DAP of heading date predictions from CGM
 cgm_predicted_heading <- growth_stage_weather %>% 
   filter(stage %in% c("heading", "flowering")) %>% 
-  group_by(trial, environment, stage) %>% 
+  group_by(source, trial, environment, stage) %>% 
   rename(pred_HD = dap) %>%
   summarize_at(vars(pred_HD, day), list(mean = ~mean, min = ~min)) %>%
   ungroup() %>%
@@ -183,26 +183,21 @@ pred_obs_heading <- inner_join(env_mean_heading, cgm_predicted_heading)
 
 ## Summarize
 (cgm_pred_HD_summary <- pred_obs_heading %>%
-  group_by(stage) %>%
+  group_by(source, stage) %>%
   summarize_at(vars(pred_HD_mean, pred_HD_min), list(
     cor = ~cor(obs_HD, .), mae = ~mean(abs(. - obs_HD)), rmse = ~sqrt(mean((. - obs_HD)^2))
   )))
 
 
 ## Plot by stage
-pred_obs_heading %>%
-  ggplot(aes(x = pred_HD_mean, y = obs_HD)) +
+g_pred_obs_HD <- pred_obs_heading %>%
+  ggplot(aes(x = pred_HD_mean, y = obs_HD, label = environment)) +
   geom_abline(slope = 1, intercept = 0) +
   geom_point() +
-  facet_wrap(~ stage)
+  facet_wrap(~ source + stage) +
+  theme_presentation2(12)
+plotly::ggplotly(g_pred_obs_HD)
 
-
-
-## Plot
-(g_hd <- qplot(x = obs_HD, y = pred_HD_mean, data = pred_obs_heading, 
-               geom = "point", facets = "stage", group = environment) +
-    geom_abline(slope = 1, intercept = 0))
-plotly::ggplotly(g_hd)
 
 ## Replot and save
 cgm_pred_HD_summary_annotate <- cgm_pred_HD_summary %>%
@@ -218,13 +213,15 @@ g_cgm_summary <- pred_obs_heading %>%
   geom_point() +
   scale_x_continuous(name = "Observed mean heading (dap)") +
   scale_y_continuous(name = "CGM predicted flowering (dap)") +
+  facet_grid(~ source) +
   geom_text(data = filter(cgm_pred_HD_summary_annotate, stage == "flowering"), 
             aes(x = 51, y = 72, label = pred_HD_mean_cor), parse = T, hjust = 0) +
   geom_text(data = filter(cgm_pred_HD_summary_annotate, stage == "flowering"), 
-            aes(x = 51, y = 70, label = pred_HD_mean_rmse), parse = T, hjust = 0)
+            aes(x = 51, y = 70, label = pred_HD_mean_rmse), parse = T, hjust = 0) +
+  theme_genetics()
 
 ggsave(filename = "cgm_pred_obs_HD.jpg", plot = g_cgm_summary, path = fig_dir,
-       height = 5, width = 5, dpi = 500)
+       height = 5, width = 8, dpi = 500)
   
   
 
@@ -236,8 +233,21 @@ ggsave(filename = "cgm_pred_obs_HD.jpg", plot = g_cgm_summary, path = fig_dir,
 
 
 ## Load the environmental covariates
-# load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates_daymet.RData"))
-load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates_nasapower.RData"))
+load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates.RData"))
+
+
+## Compare sources
+growth_stage_covariates %>%
+  gather(covariate, value, -trial, -stage, -source) %>%
+  spread(source, value) %>%
+  ggplot(aes(x = daymet, y = nasapower)) +
+  geom_point() +
+  facet_wrap(~ covariate + stage, scales = "free", ncol = n_distinct(growth_stage_covariates$stage)) +
+  theme_genetics()
+
+
+
+
 
 ## Create the ECs and select the relevant ones for modeling
 growth_stage_covariates1 <- growth_stage_covariates %>%
@@ -246,7 +256,7 @@ growth_stage_covariates1 <- growth_stage_covariates %>%
   ## Only use TP environments
   inner_join(., env_trials, by = "trial") %>% 
   select(-trial) %>%
-  gather(covariate, value, -environment, -stage) %>%
+  gather(covariate, value, -environment, -stage, -source) %>%
   unite(covariate, stage, covariate, sep = ".") %>%
   ## Remove trange, relhum, and rain (water stress will cover this)
   filter(str_detect(covariate, "radn_mean", negate = TRUE)) %>%
@@ -256,7 +266,6 @@ soil_covariates1 <- soil_covariates %>%
   ## Only use TP environments
   inner_join(., env_trials, by = "trial") %>%
   select(-trial)
-  
 
 # Add soil covariates
 ec_select <- full_join(growth_stage_covariates1, soil_covariates1, by = "environment")
@@ -264,13 +273,18 @@ ec_select <- full_join(growth_stage_covariates1, soil_covariates1, by = "environ
 
 ## Summarize min/max/var for each covariate
 ec_select_summ <- ec_select %>%
-  gather(covariate, value, -environment) %>%
-  group_by(covariate) %>%
+  gather(covariate, value, -environment, -source) %>%
+  group_by(covariate, source) %>%
   summarize_at(vars(value), list(min = min, max = max, sd = sd, cv = cv), 
-               na.rm = T)
+               na.rm = T) %>%
+  ungroup()
 
 ## Remove covariates with low CV
-ec_select1 <- select(ec_select, environment, subset(ec_select_summ, !is.na(cv), covariate, drop = TRUE))
+ec_select1 <- ec_select_summ %>% 
+  filter(!is.na(cv)) %>%
+  select(source, covariate) %>%
+  inner_join(., gather(ec_select, covariate, value, -environment, -source)) %>%
+  spread(covariate, value)
 
 
 ### Covariate diagnostics ###
@@ -280,57 +294,59 @@ ec_select2 <- ec_select1 # %>% select(-matches("tmean"))
 
 ## Test for normality using ks test
 ec_tomodel_normality <- ec_select2 %>%
-  gather(covariate, value, -environment) %>%
-  group_by(covariate) %>%
+  gather(covariate, value, -environment, -source) %>%
+  group_by(source, covariate) %>%
   do(ks_test = ks.test(x = .$value, y = "pnorm", mean = mean(.$value, na.rm = T), sd = sd(.$value, na.rm = T))) %>%
   ungroup() %>%
   mutate(p_value = map_dbl(ks_test, "p.value"),
          p_adj = p.adjust(p = p_value, method = "bonf"))
 
 ## Which covariates fail?
-subset(ec_tomodel_normality, p_adj < 0.1)
+subset(ec_tomodel_normality, p_value < 0.10 * (0.1 / n_distinct(ec_tomodel_normality$covariate)))
 
 ## Which ECs should be kept
-ec_to_keep <- subset(ec_tomodel_normality, p_adj >= 0.10, covariate, drop = TRUE)
+ec_to_keep <- ec_tomodel_normality %>%
+  filter(p_value >= 0.10 * (0.1 / n_distinct(ec_tomodel_normality$covariate))) %>%
+  select(source, covariate)
 
 
 
 # Remove some covariate and impute with the mean
 ec_select3 <- ec_select2 %>%
-  select(c("environment", ec_to_keep)) %>%
+  gather(covariate, value, -environment, -source) %>%
+  inner_join(., ec_to_keep) %>%
+  spread(covariate, value) %>%
+  split(.$source) %>%
   # Inpute using the mean
-  mutate_at(vars(-environment), impute)
+  map_df(., ~mutate_at(., vars(-environment, -source), impute))
 
 
 ## Calculate pairwise correlations
 ec_tidy_cor <- ec_select3 %>%
-  select(-environment) %>%
-  cor() %>%
-  as.dist() %>%
-  tidy() %>%
-  rename_all(~c("covariate1", "covariate2", "correlation")) %>%
-  mutate_at(vars(-correlation), as.character)
+  split(.$source) %>%
+  imap_dfr(~select(., -environment, -source) %>%
+        cor() %>%
+        as.dist() %>%
+        tidy() %>%
+        rename_all(~c("covariate1", "covariate2", "correlation")) %>%
+        mutate_at(vars(-correlation), as.character) %>%
+        mutate(source = .y)
+  )
 
 ## Find those pairs of covariates with inflated correlations, above 0.9
 (ec_inflated_cor <- ec_tidy_cor %>% 
   filter(abs(correlation) > max_cor))
 
-# covariate1                covariate2                correlation
-# 1 subsoil_pH_h2o            subsoil_base_saturation         0.939
-# 2 topsoil_calcium_carbonate subsoil_calcium_carbonate       0.990
-# 3 subsoil_teb               subsoil_cec_soil                0.911
-# 4 subsoil_teb               subsoil_pH_h2o                  0.935
-# 5 topsoil_ref_bulk_density  subsoil_ref_bulk_density        0.934
-# 6 topsoil_teb               subsoil_teb                     0.945
-# 7 topsoil_pH_h2o            topsoil_base_saturation         0.911
+# covariate1                  covariate2                 correlation source   
+# 1 early_vegetative.tmean_mean early_vegetative.maxt_mean       0.919 daymet   
+# 2 early_vegetative.radn_sum   early_vegetative.mint_mean      -0.909 daymet   
+# 3 early_vegetative.tmean_mean early_vegetative.mint_mean       0.937 daymet   
+# 4 subsoil_teb                 subsoil_pH_h2o                   0.924 daymet   
+# 5 topsoil_teb                 subsoil_teb                      0.908 daymet   
+# 6 subsoil_teb                 subsoil_pH_h2o                   0.924 nasapower
+# 7 topsoil_teb                 subsoil_teb                      0.908 nasapower
 
-## Remove the following:
-## 
-## base_saturation, since it is nearly linearly correlated with pH (HWSD docs)
-## subsoil_teb, for high correlations with others
-## subsoil_calcium_carbonate
-## subsoil_ref_bulk_density
-## 
+# Remove nothing 
 
 ec_select4 <- ec_select3 # %>% select(-subsoil_teb, -subsoil_ref_bulk_density)
 
@@ -339,33 +355,24 @@ ec_select4 <- ec_select3 # %>% select(-subsoil_teb, -subsoil_ref_bulk_density)
 ## Prepare the covariates for modeling
 ## Center, but do not scale. Save the mean for later
 ec_tomodel_temp <- ec_select4 %>%
-  mutate_at(vars(-environment), scale, scale = FALSE, center = TRUE)
+  split(.$source) %>%
+  map(~mutate_at(., vars(-environment, -source), scale, scale = FALSE, center = TRUE))
 
 ec_tomodel_centers <- ec_tomodel_temp %>%
-  summarize_at(vars(-environment), ~attr(., "scaled:center")) %>%
-  gather(covariate, center)
+  map(~summarize_at(., vars(-environment, -source), ~attr(., "scaled:center")) %>%
+        gather(covariate, center) )
 
 ## Convert scaled to numeric
 ec_tomodel_centered <- ec_tomodel_temp %>%
-  mutate_at(vars(-environment), as.numeric)
+  map(~mutate_at(., vars(-environment, -source), as.numeric))
 
 ## Center and scale
 ec_tomodel_scaled <- ec_select4 %>%
-  mutate_at(vars(-environment), scale, scale = TRUE, center = TRUE) %>%
-  mutate_at(vars(-environment), as.numeric)
+  split(.$source) %>%
+  map(~mutate_at(., vars(-environment, -source), ~as.numeric(scale(., scale = TRUE, center = TRUE))))
 
 
-# Vector of covariates
-environmental_covariates <- names(ec_tomodel_centered)[-1]
 
-
-## Visualize histogram
-ec_select4 %>%
-  gather(covariate, value, -environment) %>%
-  ggplot(aes(x = value)) +
-  geom_histogram() +
-  facet_wrap(~ covariate, scales = "free") +
-  theme_presentation2(10)
 
 
 
@@ -375,12 +382,12 @@ ec_select4 %>%
 
 
 # Load the covariate data
-load(file.path(enviro_dir, "EnvironmentalCovariates/historical_environmental_covariates.RData"))
+load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_historical_environmental_covariates.RData"))
 
 ## Environments to use with corresponding trials
 loc_trials <- S2_MET_BLUEs %>% 
   # Remove irrigated trials - these will eventually be included
-  filter(!str_detect(environment, "HTM")) %>%
+  filter(!str_detect(environment, "AID|HTM")) %>%
   filter(environment %in% c(train_test_env, validation_env),
          str_detect(trial, "S2C1", negate = TRUE)) %>%
   distinct(trial, location)
@@ -403,7 +410,7 @@ growth_stage_covariates1 <- growth_stage_covariates %>%
   inner_join(., loc_trials, by = "location") %>% 
   # Filter for years before those observed in the S2MET project
   filter(year < min(S2_MET_BLUEs$year)) %>%
-  gather(covariate, value, -trial, -stage, -location, -year) %>%
+  gather(covariate, value, -trial, -stage, -location, -year, -source) %>%
   unite(covariate, stage, covariate, sep = ".")
 
 soil_covariates1 <- soil_covariates %>%
@@ -413,7 +420,9 @@ soil_covariates1 <- soil_covariates %>%
   ## Only use TP environments
   inner_join(., loc_trials, by = "location") %>%
   gather(covariate, value, -trial, -location) %>%
-  left_join(distinct(growth_stage_covariates1, year, trial, location), .)
+  left_join(distinct(growth_stage_covariates1, year, trial, location), .) %>%
+  # Cross with sources of weather data
+  crossing(., source = unique(growth_stage_covariates1$source))
 
 ## Combine
 hist_ec_select <- bind_rows(growth_stage_covariates1, soil_covariates1) %>%
@@ -448,7 +457,7 @@ ec_select_timeframe <- tibble(
 # Summarize - calculate the mean covariate for each location across years
 ec_select_timeframe_summary <- ec_select_timeframe %>%
   unnest(ec_data) %>%
-  group_by(time_frame, covariate, location) %>%
+  group_by(source, time_frame, covariate, location) %>%
   summarize(value = mean(value)) %>%
   ungroup()
 
@@ -462,7 +471,7 @@ ec_select_window <- tibble(
 # Summarize
 ec_select_window_summary <- ec_select_window %>%
   unnest(ec_data) %>%
-  group_by(time_frame, covariate, location) %>%
+  group_by(source, time_frame, covariate, location) %>%
   summarize(value = mean(value)) %>%
   ungroup()
 
@@ -483,7 +492,7 @@ nTests <- n_distinct(ec_select_timeframe_summary$covariate)
 
 ## Test for normality using ks test
 ec_timeframe_normality <- ec_select_timeframe_summary %>%
-  group_by(covariate, time_frame) %>%
+  group_by(source, covariate, time_frame) %>%
   do(ks_test = ks.test(x = .$value, y = "pnorm", mean = mean(.$value, na.rm = T), sd = sd(.$value, na.rm = T))) %>%
   ungroup() %>%
   mutate(p_value = map_dbl(ks_test, "p.value"),
@@ -498,7 +507,7 @@ subset(ec_timeframe_normality, p_value < (0.1 / nTests))
 # Repeat for window
 ## Test for normality using ks test
 ec_window_normality <- ec_select_window_summary %>%
-  group_by(covariate, time_frame) %>%
+  group_by(source, covariate, time_frame) %>%
   do(ks_test = ks.test(x = .$value, y = "pnorm", mean = mean(.$value, na.rm = T), sd = sd(.$value, na.rm = T))) %>%
   ungroup() %>%
   mutate(p_value = map_dbl(ks_test, "p.value"),
@@ -512,20 +521,23 @@ subset(ec_window_normality, p_value < (0.1 / nTests))
 
 # Impute with the mean
 ec_select_timeframe_summary_wide1 <- ec_select_timeframe_summary_wide %>%
+  split(.$source) %>%
   # Inpute using the mean
-  mutate_at(vars(-time_frame, -location), impute)
+  map_df(., ~mutate_at(., vars(-time_frame, -source, -location), impute))
+
 
 ec_select_window_summary_wide1 <- ec_select_window_summary_wide %>%
+  split(.$source) %>%
   # Inpute using the mean
-  mutate_at(vars(-time_frame, -location), impute)
+  map_df(., ~mutate_at(., vars(-time_frame, -source, -location), impute))
 
 
 ## Calculate pairwise correlations ##
 # Timeframe
 ec_timeframe_tidy_cor <- ec_select_timeframe_summary_wide1 %>%
   select(-location) %>%
-  split(.$time_frame) %>%
-  imap_dfr(~cor(.x[,-1]) %>% as.dist() %>% tidy() %>% 
+  split(list(.$source, .$time_frame)) %>%
+  imap_dfr(~cor(.x[,-1:-2]) %>% as.dist() %>% tidy() %>% 
          rename_all(~c("covariate1", "covariate2", "correlation")) %>%
          mutate_at(vars(-correlation), as.character) %>%
          mutate(time_frame = .y))
@@ -543,8 +555,8 @@ ec_timeframe_inflated_cor <- ec_timeframe_tidy_cor %>%
 # Window
 ec_window_tidy_cor <- ec_select_window_summary_wide1 %>%
   select(-location) %>%
-  split(.$time_frame) %>%
-  imap_dfr(~cor(.x[,-1]) %>% as.dist() %>% tidy() %>% 
+  split(list(.$source, .$time_frame)) %>%
+  imap_dfr(~cor(.x[,-1:-2]) %>% as.dist() %>% tidy() %>% 
              rename_all(~c("covariate1", "covariate2", "correlation")) %>%
              mutate_at(vars(-correlation), as.character) %>%
              mutate(time_frame = .y))
@@ -552,8 +564,7 @@ ec_window_tidy_cor <- ec_select_window_summary_wide1 %>%
 ## Find those pairs of covariates with inflated correlations, above 0.9
 ec_window_inflated_cor<- ec_window_tidy_cor %>% 
   filter(abs(correlation) > max_cor)
-# ec_window_inflated_cor %>%
-#   split(.$time_frame)
+
 
 # Same problem
 
@@ -566,44 +577,44 @@ ec_window_inflated_cor<- ec_window_tidy_cor %>%
 ## 
 ## Center, but do not scale. Save the mean for later
 historical_ec_tomodel_timeframe_temp <- ec_select_timeframe_summary_wide1 %>%
-  split(.$time_frame) %>%
-  map(~mutate_at(.x, vars(-time_frame, -location), scale, scale = FALSE, center = TRUE))
+  split(list(.$source, .$time_frame)) %>%
+  map(~mutate_at(.x, vars(-source, -time_frame, -location), scale, scale = FALSE, center = TRUE))
 
 historical_ec_tomodel_timeframe_centers <- historical_ec_tomodel_timeframe_temp %>%
-  map(~summarize_at(.x, vars(-time_frame, -location), ~attr(., "scaled:center")) %>%
+  map(~summarize_at(.x, vars(-source, -time_frame, -location), ~attr(., "scaled:center")) %>%
         gather(covariate, center) )
 
 ## Convert scaled to numeric
 historical_ec_tomodel_timeframe_centered <- historical_ec_tomodel_timeframe_temp %>%
-  map(~mutate_at(.x, vars(-time_frame, -location), as.numeric) )
+  map(~mutate_at(.x, vars(-time_frame, -location, -source), as.numeric) )
 
 ## Center and scale
 historical_ec_tomodel_timeframe_scaled <- ec_select_timeframe_summary_wide1 %>%
-  split(.$time_frame) %>%
-  map(~mutate_at(.x, vars(-time_frame, -location), scale, scale = TRUE, center = TRUE) %>%
-        mutate_at(vars(-time_frame, -location), as.numeric) )
+  split(list(.$source, .$time_frame)) %>%
+  map(~mutate_at(.x, vars(-time_frame, -location, -source), scale, scale = TRUE, center = TRUE) %>%
+        mutate_at(vars(-time_frame, -location, -source), as.numeric) )
 
 
 ## Window ##
 ## 
 ## Center, but do not scale. Save the mean for later
 historical_ec_tomodel_window_temp <- ec_select_window_summary_wide1 %>%
-  split(.$time_frame) %>%
-  map(~mutate_at(.x, vars(-time_frame, -location), scale, scale = FALSE, center = TRUE))
+  split(list(.$source, .$time_frame)) %>%
+  map(~mutate_at(.x, vars(-time_frame, -location, -source), scale, scale = FALSE, center = TRUE))
 
 historical_ec_tomodel_window_centers <- historical_ec_tomodel_window_temp %>%
-  map(~summarize_at(.x, vars(-time_frame, -location), ~attr(., "scaled:center")) %>%
+  map(~summarize_at(.x, vars(-time_frame, -location, -source), ~attr(., "scaled:center")) %>%
         gather(covariate, center) )
 
 ## Convert scaled to numeric
 historical_ec_tomodel_window_centered <- historical_ec_tomodel_window_temp %>%
-  map(~mutate_at(.x, vars(-time_frame, -location), as.numeric) )
+  map(~mutate_at(.x, vars(-time_frame, -location, -source), as.numeric) )
 
 ## Center and scale
 historical_ec_tomodel_window_scaled <- ec_select_window_summary_wide1 %>%
-  split(.$time_frame) %>%
-  map(~mutate_at(.x, vars(-time_frame, -location), scale, scale = TRUE, center = TRUE) %>%
-        mutate_at(vars(-time_frame, -location), as.numeric) )
+  split(list(.$source, .$time_frame)) %>%
+  map(~mutate_at(.x, vars(-time_frame, -location, -source), scale, scale = TRUE, center = TRUE) %>%
+        mutate_at(vars(-time_frame, -location, -source), as.numeric) )
 
 
 
@@ -612,12 +623,6 @@ historical_ec_tomodel_window_scaled <- ec_select_window_summary_wide1 %>%
 save("ec_tomodel_centered", "ec_tomodel_scaled", "ec_tomodel_centers", 
      "historical_ec_tomodel_timeframe_centered", "historical_ec_tomodel_timeframe_scaled", "historical_ec_tomodel_timeframe_centers",
      "historical_ec_tomodel_window_centered", "historical_ec_tomodel_window_scaled", "historical_ec_tomodel_window_centers",
-     file = file.path(result_dir, "concurrent_historical_covariables_nasapower.RData"))
-     
-# ## Save these results
-# save("ec_tomodel_centered", "ec_tomodel_scaled", "ec_tomodel_centers", 
-#      "historical_ec_tomodel_timeframe_centered", "historical_ec_tomodel_timeframe_scaled", "historical_ec_tomodel_timeframe_centers",
-#      "historical_ec_tomodel_window_centered", "historical_ec_tomodel_window_scaled", "historical_ec_tomodel_window_centers",
-#      file = file.path(result_dir, "concurrent_historical_covariables_daymet.RData"))
+     file = file.path(result_dir, "concurrent_historical_covariables.RData"))
 
 
