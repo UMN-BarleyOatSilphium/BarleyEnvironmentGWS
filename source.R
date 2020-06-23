@@ -83,11 +83,11 @@ K <- A.mat(X = s2_imputed_mat_use, min.MAF = 0, max.missing = 1)
 
 ## Rank the environments according to heritability
 env_trait_herit <- s2_metadata %>% 
-  select(trial, trait, heritability) %>% 
+  select(trial, trait, heritability, varR) %>% 
   left_join(., distinct(s2_tidy_BLUE, trial, environment), by = "trial") %>%
   filter(!str_detect(trial, "S2C1"),
          trial %in% trials) %>%
-  select(trait, environment, heritability) %>%
+  select(trait, environment, varR, heritability) %>%
   # filter for relevant traits
   filter(trait %in% traits) %>%
   filter(., heritability >= 0.10)
@@ -108,7 +108,8 @@ S2_MET_BLUEs <- s2_tidy_BLUE %>%
   # Remove environments deemed failures (i.e. HNY16 for grain yield)
   filter(!(environment == "HNY16" & trait == "GrainYield"),
          !(environment == "EON17" & trait == "HeadingDate"),
-         !(environment == "KNY16" & trait == "TestWeight")) %>%
+         !(environment == "KNY16" & trait == "TestWeight"),
+         !(location == "Charlottetown" & trait == "HeadingDate")) %>%
   # Rename and reorder
   select(trial, environment, location, year, trait, line_name, value, std_error = std.error)
 
@@ -179,7 +180,7 @@ f_growth_stage_replace <- function(x)
 
 
 ## Remove
-rm(s2_discrete_mat, s2_imputed_mat, s2_metadata, s2_tidy_BLUE)
+rm(s2_discrete_mat, s2_metadata, s2_imputed_mat, s2_tidy_BLUE)
 
 
 

@@ -27,6 +27,10 @@ file_list <- list.files(result_dir, pattern = "fact_reg.RData$", full.names = TR
 object_list <- unlist(lapply(file_list, load, envir = .GlobalEnv))
 
 
+## Filter loeo results
+lo
+
+
 ## Significant level
 alpha <- 0.05
 
@@ -74,7 +78,7 @@ loo_predictions_df <- loo_prediction_list %>%
   select(-which(names(.) %in% c(".id", "core", "trait1"))) %>%
   # Coalesce columns
   mutate(leave_one_group = site1, nGroup = nSite) %>%
-  select(-which(names(.) %in% c("environment", "location", "nLoc", "nEnv", "loc1", "env1", "nSite", "site1")))
+  select(-which(names(.) %in% c("environment", "location", "nLoc", "nEnv", "loc1", "env1", "nSite", "site1", "source")))
 
 
 
@@ -109,11 +113,11 @@ loo_predictive_ability %>%
   facet_grid(trait ~ type + pop)
 
 loo_predictions_df %>%
-  filter(trait == "GrainYield", type == "lolo", selection != "none") %>%
+  filter(trait == "TestWeight", type == "lolo", selection != "none") %>%
   filter(selection != "concurrent_rfa_cv_adhoc") %>%
   ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
   geom_abline(slope = 1, intercept = 0) +
-  geom_point() +
+  geom_point(size = 2) +
   scale_color_discrete(guide = FALSE) +
   facet_grid(type + selection ~ model + pop) +
   theme_presentation2(10)
