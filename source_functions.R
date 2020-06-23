@@ -1917,16 +1917,27 @@ genomewide_prediction2 <- function(x, model.list, K, E, KE) {
         
       } else {
         
-        # Check to make sure the loglikihood was maximized
-        maxed_LL <- which.max(model_fit$monitor[1,]) == ncol(model_fit$monitor)
+        ## If the variance components are zero, 
+        zero_vc <- apply(X = model_fit$monitor[-1,] == 0, MARGIN = 2, FUN = any)
         
-        if (!maxed_LL) {
-          # Refit the model using the iterations that maximized the LL
-          model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
-                            data = train, date.warning = FALSE, verbose = TRUE, getPEV = TRUE,
-                            iters = which.max(model_fit$monitor[1,]))
+        # If there are no zeros, continue
+        if (any(zero_vc)) {
+          
+          # find the iteration that maximizes the LL with non-zero variance components
+          which_iter_max_LL <- max(intersect( order(model_fit$monitor[1,], decreasing = TRUE), which(! zero_vc) ))
+          # Was this the max iteration of this model?
+          maxed_LL <- which_iter_max_LL == ncol(model_fit$monitor)
+          
+          # If not, refit the model
+          if (!maxed_LL) {
+            # Refit the model using the iterations that maximized the LL
+            model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
+                              data = train, date.warning = FALSE, verbose = TRUE, getPEV = TRUE,
+                              iters = which_iter_max_LL)
+          }
+          
         }
-        
+         
         ## Fixed effects
         fixed_eff <- coef(model_fit) %>%
           select(term = Effect, estimate = Estimate) %>%

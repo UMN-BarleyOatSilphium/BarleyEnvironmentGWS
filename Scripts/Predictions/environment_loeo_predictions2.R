@@ -26,7 +26,7 @@ library(parallel)
 
 ## Number of cores
 # n_core <- detectCores()
-n_core <- 8
+n_core <- 12
 
 # Source of covariates
 source_use <- "daymet"
@@ -172,21 +172,21 @@ loeo_predictions_out <- data_train_test1 %>%
       # Record the number of environment and observations used for training
       train_n <- summarize(row$train[[1]], nSite = n_distinct(environment), nObs = n())
       
-      # ##############
-      # ##############
-      # 
-      # ## First fit models with identity covariance for environments
-      # models_run <- lapply(X = model.list, "[", c("model1", "model2_id", "model3_id"))
-      # 
-      # Emain <- Eint <- diag(nlevels(row$train[[1]]$site))
-      # dimnames(Emain) <- replicate(2, levels(row$train[[1]]$site), simplify = FALSE)
-      # dimnames(Eint) <- dimnames(Emain)
-      # 
-      # # The genomewide prediction function is in the source_functions.R script
-      # prediction_out_id <- genomewide_prediction2(x = row, model.list = models_run, K = K, E = Emain, KE = Eint)
-      # 
-      # ##############
-      # ##############
+      ##############
+      ##############
+
+      ## First fit models with identity covariance for environments
+      models_run <- lapply(X = model.list, "[", c("model1", "model2_id", "model3_id"))
+
+      Emain <- Eint <- diag(nlevels(row$train[[1]]$site))
+      dimnames(Emain) <- replicate(2, levels(row$train[[1]]$site), simplify = FALSE)
+      dimnames(Eint) <- dimnames(Emain)
+
+      # The genomewide prediction function is in the source_functions.R script
+      prediction_out_id <- genomewide_prediction2(x = row, model.list = models_run, K = K, E = Emain, KE = Eint)
+
+      ##############
+      ##############
       
       ## Relationships for E
       # Subset models
@@ -243,8 +243,8 @@ loeo_predictions_out <- data_train_test1 %>%
       ###################
       
       ## Combine and return the predictions
-      # out[[i]] <- mutate(bind_rows(prediction_out_id$prediction_out, prediction_out_cov), train_n = list(train_n)) %>% unnest(train_n)
-      out[[i]] <- mutate(prediction_out_cov, train_n = list(train_n)) %>% unnest(train_n)
+      out[[i]] <- mutate(bind_rows(prediction_out_id$prediction_out, prediction_out_cov), train_n = list(train_n)) %>% unnest(train_n)
+      # out[[i]] <- mutate(prediction_out_cov, train_n = list(train_n)) %>% unnest(train_n)
       
       
       ## Notify user
@@ -311,21 +311,21 @@ env_external_predictions_out <- env_external_train_val1 %>%
       # Record the number of environment and observations used for training
       train_n <- summarize(row$train[[1]], nSite = n_distinct(environment), nObs = n())
       
-      # ##############
-      # ##############
-      # 
-      # ## First fit models with identity covariance for environments
-      # models_run <- lapply(X = model.list, "[", c("model1", "model2_id", "model3_id"))
-      # 
-      # Emain <- Eint <- diag(nlevels(row$train[[1]]$site))
-      # dimnames(Emain) <- replicate(2, levels(row$train[[1]]$site), simplify = FALSE)
-      # dimnames(Eint) <- dimnames(Emain)
-      # 
-      # # The genomewide prediction function is in the source_functions.R script
-      # prediction_out_id <- genomewide_prediction2(x = row, model.list = models_run, K = K, E = Emain, KE = Eint)
-      # 
-      # ##############
-      # ##############
+      ##############
+      ##############
+
+      ## First fit models with identity covariance for environments
+      models_run <- lapply(X = model.list, "[", c("model1", "model2_id", "model3_id"))
+
+      Emain <- Eint <- diag(nlevels(row$train[[1]]$site))
+      dimnames(Emain) <- replicate(2, levels(row$train[[1]]$site), simplify = FALSE)
+      dimnames(Eint) <- dimnames(Emain)
+
+      # The genomewide prediction function is in the source_functions.R script
+      prediction_out_id <- genomewide_prediction2(x = row, model.list = models_run, K = K, E = Emain, KE = Eint)
+
+      ##############
+      ##############
       
       ## Relationships for E and GxE
       # Subset models
@@ -382,8 +382,8 @@ env_external_predictions_out <- env_external_train_val1 %>%
       ###################
       
       ## Combine and return the predictions
-      # out[[i]] <- mutate(bind_rows(prediction_out_id$prediction_out, prediction_out_cov), train_n = list(train_n)) %>% unnest(train_n)
-      out[[i]] <- mutate(prediction_out_cov, train_n = list(train_n)) %>% unnest(train_n)
+      out[[i]] <- mutate(bind_rows(prediction_out_id$prediction_out, prediction_out_cov), train_n = list(train_n)) %>% unnest(train_n)
+      # out[[i]] <- mutate(prediction_out_cov, train_n = list(train_n)) %>% unnest(train_n)
       
       
       ## Notify user
