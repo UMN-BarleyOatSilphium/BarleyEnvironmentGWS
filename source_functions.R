@@ -1917,8 +1917,13 @@ genomewide_prediction2 <- function(x, model.list, K, E, KE) {
         
       } else {
         
+        ## Are any main effect variance components equal to zero?
+        # Find main effects
+        which_main_effects <- str_count(string = names(model_fit$sigma), pattern = ":") == 1 &
+          str_detect(string = names(model_fit$sigma), pattern = "units", negate = TRUE)
+        
         ## If the variance components are zero, 
-        zero_vc <- apply(X = model_fit$monitor[-1,] == 0, MARGIN = 2, FUN = any)
+        zero_vc <- apply(X = model_fit$monitor[-1,][which_main_effects,] == 0, MARGIN = 2, FUN = any)
         
         # If there are no zeros, continue
         if (any(zero_vc)) {
@@ -2018,8 +2023,8 @@ genomewide_prediction2 <- function(x, model.list, K, E, KE) {
         modify_if(~str_detect(names(.x)[1], ":"), 
                   ~separate(.x, col = 1, into = separation_col_names, sep = ":")) %>% 
         .[order(map_dbl(., ncol), decreasing = T)] %>% 
-        map(~left_join(test_merge, .x)) %>%
-        reduce(full_join) %>% 
+        map(~merge(x = test_merge, y = .x)) %>%
+        reduce(merge) %>% 
         mutate(pred_incomplete = rowSums(select(., contains("pred"))), pred_incomplete_pev = rowSums(select(., contains("pev")))) %>% 
         select(-contains(":"))
       

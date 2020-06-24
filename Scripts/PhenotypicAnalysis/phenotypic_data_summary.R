@@ -28,25 +28,20 @@ alpha <- 0.05
 S2_MET_BLUEs %>% 
   # Assign environment by train/test or external and split
   mutate(env_set = ifelse(environment %in% train_test_env, "trainTest", "external")) %>%
-  split(.$env_set) %>%
-  map(~group_by(., trait) %>% 
-      summarize_at(vars(location, year, environment), n_distinct))
+  group_by(trait, env_set) %>%
+  summarize_at(vars(location, year, environment), n_distinct)
 
-# $external
-# trait        location  year environment
-# 1 GrainProtein        2     1           2
-# 2 GrainYield          3     2           4
-# 3 HeadingDate         1     2           2
-# 4 PlantHeight         2     2           3
-# 5 TestWeight          2     2           3
-# 
-# $trainTest
-# trait        location  year environment
-# 1 GrainProtein        7     3          11
-# 2 GrainYield         14     3          30
-# 3 HeadingDate        12     3          27
-# 4 PlantHeight        13     3          30
-# 5 TestWeight          8     2          15
+# trait        env_set   location  year environment
+# 1 GrainProtein external         2     1           2
+# 2 GrainProtein trainTest        7     3          11
+# 3 GrainYield   external         3     2           4
+# 4 GrainYield   trainTest       14     3          30
+# 5 HeadingDate  external         1     2           2
+# 6 HeadingDate  trainTest       12     3          27
+# 7 PlantHeight  external         2     2           3
+# 8 PlantHeight  trainTest       13     3          30
+# 9 TestWeight   external         2     2           3
+# 10 TestWeight   trainTest        8     2          15
 
 
 
@@ -97,10 +92,6 @@ S2_MET_BLUEs_tomodel <- S2_MET_BLUEs %>%
 S2_MET_varR_tomodel <- s2_metadata %>%
   filter(trial %in% unique(S2_MET_BLUEs_tomodel$trial), trait %in% traits) %>%
   select(trial, trait, varR)
-
-
-# Boot reps
-boot_reps <- 10
 
 # Group by trait and fit the multi-environment model
 # Fit models in the TP and the TP + VP
@@ -156,9 +147,14 @@ stage_two_fits2_varcomp <- stage_two_fits1 %>%
                         mutate(term = str_trim(str_remove_all(term, "\\(1 \\||\\)"))) ),
          var_comp2 = map2(var_comp, ranova, full_join, by = "term")) %>%
   unnest(var_comp2) %>%
-  mutate(variance = formatC(x = signif(variance, 3), digits = 3, width = 3, format = "fg", flag = "0"),
-         p.value = formatC(x = p.value, digits = 3, width = 3, format = "E")) %>%
-  mutate(annotation = ifelse(p.value == "NA", variance, paste0(variance, " (P = ", p.value, ")"))) %>%
+  group_by(trait, population) %>%
+  mutate(variance_prop = variance / sum(variance)) %>%
+  ungroup() %>%
+  mutate(variance = formatC(x = signif(variance, 3), digits = 3, width = 2, format = "fg", flag = "0"),
+         variance_prop = formatC(x = variance_prop * 100, digits = 3, width = 2, format = "fg"),
+         variance1 = paste0(variance, " / ", variance_prop, "%"),
+         p.value = str_trim(formatC(x = p.value, digits = 3, width = 3, format = "E"))) %>%
+  mutate(annotation = ifelse(p.value == "NA", variance1, paste0(variance1, " (P = ", p.value, ")"))) %>%
   select(trait, population, term, annotation)
 
 

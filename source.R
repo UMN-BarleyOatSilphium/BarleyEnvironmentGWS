@@ -67,6 +67,14 @@ traits <- c("GrainYield", "HeadingDate", "PlantHeight", "TestWeight", "GrainProt
 trials <- subset(trial_info, project2 == "S2MET", trial, drop = TRUE)
 
 
+# ## Traits by environment
+# s2_tidy_BLUE %>% 
+#   filter(trait %in% traits, environment %in% trial_info$environment, year > 2014) %>% 
+#   mutate(nEnvAll = n_distinct(environment)) %>%
+#   group_by(trait) %>% 
+#   summarize(nEnv = n_distinct(environment), nEnvAll = mean(nEnvAll))
+
+
 # Find the tp and vp that are genotyped with markers
 tp_geno <- intersect(tp, row.names(s2_imputed_mat))
 vp_geno <- intersect(vp, row.names(s2_imputed_mat))
