@@ -57,8 +57,10 @@ north_america <- bind_rows(usa_state, usa_county, canada)
 
 ## Now create labels for each location (as a combination of all environments)
 use_loc_info_toplot <-  trial_info %>% 
+  # Correct GRV spelling mistake
+  mutate(location = ifelse(location == "Grande_rhonde_valley", "Grande_ronde_valley", location)) %>%
   # Add trial designator
-  mutate(set = ifelse(environment %in% train_test_env, "Train/test trials", "Validation trials")) %>%
+  mutate(set = ifelse(environment %in% train_test_env, "Train/test locations", "Validation locations")) %>%
   filter(environment %in% unique(S2_MET_BLUEs$environment)) %>%
   group_by(location, set, latitude, longitude) %>%
   summarize(n_years = n_distinct(year)) %>%
@@ -93,13 +95,14 @@ g_map_alt <- ggplot(data = north_america, aes(x = long, y = lat, group = group))
   geom_text(data = use_loc_info_toplot1, aes(x = longitude, y = latitude, group = location, label = nExperiments), size = 2, 
             color = ifelse(use_loc_info_toplot1$location == "Arlington", "black", "white")) +
   coord_fixed(ratio = 1.5, xlim = long_limit, ylim = lat_limit) +
-  scale_shape_manual(name = NULL, values = c(16, 15)) +
+  scale_shape_manual(name = NULL, values = c(16, 15), guide = guide_legend(label.position = "left", override.aes = list(size = 2))) +
   scale_x_continuous(breaks = NULL, name = NULL, labels = NULL) + 
   scale_y_continuous(breaks = NULL, name = NULL, labels = NULL) +
   theme_classic(base_size = 8) +
   theme(panel.background = element_blank(), panel.grid = element_blank(), 
         panel.border = element_rect(colour = "black", fill = alpha("white", 0)), axis.line = element_blank(),
-        legend.position = "bottom")
+        legend.position = c(0.90, 0.20), legend.text.align = 1, legend.background = element_rect(fill = alpha("white", 0)),
+        legend.text = element_text(size = 5), legend.key.height = unit(0.5, "lines"), legend.key.width = unit(0.25, "lines"))
 
 # Save the map
 ggsave(filename = "map_of_experiments.jpg", plot = g_map_alt, path = fig_dir,
@@ -122,8 +125,8 @@ ggsave(filename = "map_of_experiments.jpg", plot = g_map_alt, path = fig_dir,
 ## Plot examples of crop model outputs
 
 # Load concurrent and historical crop model output
-load(file.path(enviro_dir, "GrowthStaging/apsim_s2met_model_results.RData"))
-load(file.path(enviro_dir, "GrowthStaging/historical_growth_model_results.RData"))
+load(file.path(enviro_dir, "GrowthStaging/apsim_s2met_model_results_daymet.RData"))
+load(file.path(enviro_dir, "GrowthStaging/apsim_historical_growth_model_results.RData"))
 
 
 # Assign units to variables
@@ -138,6 +141,8 @@ covariate_variable_unit <- setNames(c(rep("degree*C", 4), "mm", "MJ~m^-2"), name
 
 ## Function for renaming a covariate
 f_covariate_replace <- function(x) paste0("'", covariate_rename[x], "'~(", covariate_variable_unit[x], ")")
+# Function for renaming timeframe
+f_timeframe_replace <- function(x) c("concurrent" = "Environment-concurrent", "historical" = "Historical location average")[x]
 
 
 ## Plot Bozeman and Columbus (Wooster)
@@ -155,16 +160,17 @@ growth_stage_color <- setNames(object = paletteer_d("ggsci", palette = "default_
 concurrent_cgm_toplot <- apsim_s2met_out %>%
   mutate(location = ifelse(location == "Columbus", "Wooster", location)) %>%
   filter(location %in% cgm_locations_plot, year == cgm_year_plot)
-historical_cgm_toplot <- location_historical_growth_staging %>%
+historical_cgm_toplot <- location_historical_growth_staging_daymet %>%
   mutate(location = ifelse(location == "Columbus", "Wooster", location)) %>%
   filter(location %in% cgm_locations_plot) %>%
-  mutate(predicted_planting_date = parse_date(predicted_planting_date, format = "%Y-%m-%d"))
+  mutate(predicted_planting_date = parse_date(predicted_planting_date, format = "%Y-%m-%d"),
+         data = map2(daily_data, growth_model, ~left_join(.x, select(.y, yday = day, pet = eo), by = "yday")))
 
 ## Combine
 cgm_toplot <- bind_rows(
   select(concurrent_cgm_toplot, location, planting_date, latitude, longitude, data, growth_model = apsim_out) %>% 
     mutate(timeframe = "concurrent"),
-  select(historical_cgm_toplot, location, planting_date = predicted_planting_date, latitude, longitude, data = daily_data, growth_model) %>% 
+  select(historical_cgm_toplot, location, planting_date = predicted_planting_date, latitude, longitude, data, growth_model) %>% 
     mutate(timeframe = "historical")
 ) %>% mutate(year = year(planting_date))
 
@@ -197,7 +203,7 @@ cgm_toplot_growth_stages <- cgm_toplot %>%
     stages %>% 
       filter(sowing_das == 1) %>% 
       mutate(dap = seq(nrow(.))) %>% 
-      select(date, day, dap, stage)
+      select(date = Date, day, dap, stage)
     
   }))
 
@@ -209,7 +215,7 @@ cgm_toplot_growth_stage_weather <- cgm_toplot_growth_stages %>%
   unnest(growth_stages) %>%
   left_join(., unnest(cgm_toplot_growth_stages, data)) %>%
   # Add GDD info
-  left_join(., unnest(cgm_toplot_growth_stages, growth_model) %>% select(location, year, timeframe, date, tt)) %>%
+  left_join(., unnest(cgm_toplot_growth_stages, growth_model) %>% select(location, year, timeframe, date = Date, tt = TT)) %>%
   ## Calculate water stress as the difference between pet and rain
   mutate(water_balance = rain - pet) %>%
   rename(gdd = tt) %>%
@@ -224,133 +230,117 @@ cgm_toplot_growth_stage_times <- cgm_toplot_growth_stage_weather %>%
   filter(!is.na(stage)) %>% 
   summarize_at(vars(dap), list(~min, ~max)) %>%
   ungroup() %>%
-  mutate(y = as.numeric(as.factor(location)),
-         dap = min)
+  mutate(y = as.numeric(as.factor(location)), dap = min,
+         type = "Growth\nstage") # Dummy variable for growth stage facet
 
 
 ## Plot 2-3 covariates
 covariates_plot <- c("mint", "radn", "water_balance")
 
-## Plot
-g_concurrent_weather <- cgm_toplot_growth_stage_weather %>%
-  filter(variable %in% covariates_plot, timeframe == "concurrent") %>%
-  mutate(variable = f_covariate_replace(variable)) %>%
-  ggplot(aes(x = dap, y = value, color = location)) +
-  geom_line(lwd = 0.3) +
-  facet_grid(variable ~ ., scales = "free_y", switch = "y", labeller = labeller(variable = label_parsed)) +
-  scale_y_continuous(name = NULL, breaks = pretty) +
-  scale_x_continuous(name = "Days after realized planting date", breaks = pretty) +
-  scale_color_manual(values = cgm_locations_color) +
-  labs(subtitle = "Environment-concurrent") +
-  theme_genetics(base_size = 6) +
-  theme(strip.placement = "outside", strip.background = element_blank(), panel.spacing.y = unit(0.5, "line"))
 
-# Plot segments for growth stages
-g_concurrent_growth_stages <- cgm_toplot_growth_stage_times %>%
-  filter(timeframe == "concurrent") %>%
-  ggplot(aes(x = dap, color = stage)) +
-  geom_segment(aes(x = min, xend = max, y = y, yend = y), lwd = 2) +
-  geom_segment(data = subset(cgm_toplot_growth_stage_times, timeframe == "concurrent") %>%
-                 group_by(location) %>% 
-                 summarize(min = min(min), max = max(max), y = mean(y)),
-               aes(x = min, xend = max, y = y, yend = y), 
-               color = cgm_locations_color, lwd = 0.5, inherit.aes = FALSE) + 
-  # geom_segment(aes(x = min, xend = min, y = y, yend = y + 0.5), lwd = 2) +
-  # geom_segment(aes(x = max, xend = max, y = y, yend = y + 0.5), lwd = 2) +
-  geom_text(data = subset(cgm_toplot_growth_stage_times, timeframe == "concurrent" & y == 1),
-            aes(x = (min + max) / 2, y = y - 1, label = f_growth_stage_replace(as.character(stage))), size = 1.5) +
-  scale_color_manual(values = growth_stage_color, guide = FALSE) +
-  scale_y_continuous(limits = c(-0.5, 2.5)) +
-  scale_x_continuous(breaks = pretty, name = "Days after planting date") +
-  theme_genetics(base_size = 6) +
-  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),
-        axis.title.y = element_blank(), axis.line.y = element_blank())
-
-
-
-## Plot historical
+## Plot both concurrent and historical data ##
 # First make some edits and then summarize over years
 cgm_toplot_growth_stage_weather_historical <- cgm_toplot_growth_stage_weather %>%
   filter(variable %in% covariates_plot, timeframe == "historical", 
          # 5 years of data
          between(year, cgm_year_plot - 5, cgm_year_plot - 1)) %>%
-  mutate(variable = f_covariate_replace(variable),
-         # add grouping variable
-         group = paste0(location, "_", year))
+  mutate(group = paste0(location, "_", year))
 
 cgm_toplot_growth_stage_weather_historical_mean <- cgm_toplot_growth_stage_weather_historical %>% 
-  group_by(location, dap, variable) %>%
+  group_by(timeframe, location, dap, variable) %>%
   summarize(value = mean(value, na.rm = TRUE)) %>% 
-  mutate(group = location)
-
-g_historical_weather <- cgm_toplot_growth_stage_weather_historical %>%
-  ggplot(aes(x = dap, y = value, color = location, group = group)) +
-  geom_line(alpha = 0.2, lwd = 0.15) +
-  # Add average line
-  geom_line(data = cgm_toplot_growth_stage_weather_historical_mean, lwd = 0.3) +
-  facet_grid(variable ~ ., scales = "free_y", switch = "y", labeller = labeller(variable = label_parsed)) +
-  scale_y_continuous(name = NULL, breaks = pretty) +
-  scale_x_continuous(name = "Days after predicted planting date", breaks = pretty, 
-                     limit = range(cgm_toplot_growth_stage_weather_historical$dap)) +
-  scale_color_manual(values = cgm_locations_color) +
-  labs(subtitle = "Historical location average") +
-  theme_genetics(base_size = 6) +
-  theme(strip.placement = "outside", strip.background = element_blank(), panel.spacing.y = unit(0.5, "line"))
-
-## Calculate average growth stages
-cgm_toplot_growth_stage_times_historical <- cgm_toplot_growth_stage_times %>%
-  filter(timeframe == "historical") %>%
-  group_by(location, stage) %>%
-  summarize_at(vars(min, max, y, dap), mean) %>%
+  mutate(group = location) %>%
   ungroup()
 
 
+## Combine to plot
+cgm_toplot_growth_stage_weather_summary <- bind_rows(
+  filter(cgm_toplot_growth_stage_weather, timeframe == "concurrent") %>% mutate(group = location),
+  cgm_toplot_growth_stage_weather_historical_mean
+) %>% filter(variable %in% covariates_plot) %>%
+  mutate(variable = f_covariate_replace(variable))
+
+# Simple subplot label df
+g_weather_subplot_label <- tibble(timeframe = c("concurrent", "historical"), variable = f_covariate_replace(covariates_plot[1]), 
+                                  label = letters[2:3], dap = min(cgm_toplot_growth_stage_weather_historical$dap))
+
+
+## Plot of both concurrent and historical mean (plus individual year) data
+g_weather_concurrent_historical <- cgm_toplot_growth_stage_weather_historical %>%
+  filter(variable %in% covariates_plot) %>%
+  mutate(variable = f_covariate_replace(variable)) %>%
+  ggplot(aes(x = dap, y = value, color = location, group = group)) +
+  geom_line(alpha = 0.2, lwd = 0.15) +
+  # Add average line
+  geom_line(data = cgm_toplot_growth_stage_weather_summary, lwd = 0.3) +
+  # Add text for plot labels
+  # geom_text(data = g_weather_subplot_label, aes(x = dap, y = Inf, vjust = 1, label = label), 
+  #           fontface = 2, size = 3, inherit.aes = FALSE) +
+  facet_grid(variable ~ timeframe, scales = "free", space = "free_x", switch = "y", 
+             labeller = labeller(variable = label_parsed, timeframe = f_timeframe_replace)) +
+  scale_y_continuous(name = NULL, breaks = pretty) +
+  scale_x_continuous(name = "Days after planting date", breaks = pretty) +
+  scale_color_manual(values = cgm_locations_color) +
+  theme_genetics(base_size = 6) +
+  theme(strip.placement = "outside", strip.background = element_blank(), panel.spacing.y = unit(0.5, "line"))
+
+
+
+
+
+## Create summary data.frames for historical and concurrent growth stages
+# First summarize the entire length of the growing season per location
+cgm_toplot_growing_season <- cgm_toplot_growth_stage_times %>%
+  split(.$timeframe) %>%
+  modify_at(., "historical", ~filter(., between(year, cgm_year_plot - 5, cgm_year_plot - 1))) %>%
+  bind_rows() %>%
+  group_by(type, timeframe, location) %>% 
+  summarize(min = min(min), max = max(max), y = mean(y)) %>%
+  ungroup()
+
+
+## Calculate average growth stages
+cgm_toplot_growth_stage_times_summary <- cgm_toplot_growth_stage_times %>%
+  filter(timeframe == "historical", between(year, cgm_year_plot - 5, cgm_year_plot - 1)) %>%
+  group_by(type, timeframe, location, stage) %>%
+  summarize_at(vars(min, max, y, dap), mean) %>%
+  ungroup() %>%
+  bind_rows(., filter(cgm_toplot_growth_stage_times, timeframe == "concurrent"))
+
+
 # Plot segments for growth stages
-g_historical_growth_stages <- cgm_toplot_growth_stage_times %>%
-  filter(timeframe == "historical") %>%
+# both concurrent and historical
+g_growth_stages <- cgm_toplot_growth_stage_times %>%
+  filter(timeframe == "historical", 
+         # 5 years of data
+         between(year, cgm_year_plot - 5, cgm_year_plot - 1)) %>%
   ggplot(aes(x = dap, color = stage)) +
   # Individual-year stages
   geom_segment(aes(x = min, xend = max, y = y, yend = y), lwd = 4, alpha = 0.01) +
   # Average stages
-  geom_segment(data = cgm_toplot_growth_stage_times_historical, 
+  geom_segment(data = cgm_toplot_growth_stage_times_summary, 
                aes(x = min, xend = max, y = y, yend = y), lwd = 2) +
-  geom_segment(data = group_by(cgm_toplot_growth_stage_times_historical, location) %>% 
-                 summarize(min = min(min), max = max(max), y = mean(y)),
-               aes(x = min, xend = max, y = y, yend = y), 
-               color = cgm_locations_color, lwd = 0.5, inherit.aes = FALSE) + 
-  # geom_segment(aes(x = min, xend = min, y = y, yend = y + 0.5), lwd = 2) +
-  # geom_segment(aes(x = max, xend = max, y = y, yend = y + 0.5), lwd = 2) +
-  geom_text(data = subset(cgm_toplot_growth_stage_times_historical,  y == 1),
+  # Lines for the entire growing season per location
+  geom_segment(data = cgm_toplot_growing_season, aes(x = min, xend = max, y = y, yend = y),
+               color = cgm_locations_color[cgm_toplot_growing_season$location], lwd = 0.5, inherit.aes = FALSE) +
+  # Annotation for growth stages
+  geom_text(data = subset(cgm_toplot_growth_stage_times_summary, y == 1),
             aes(x = (min + max) / 2, y = y - 1, label = f_growth_stage_replace(as.character(stage))), size = 1.5) +
+  facet_grid(type ~ timeframe, labeller = labeller(type = str_add_space), switch = "y", scales = "free_x", space = "free_x") +
   scale_color_manual(values = growth_stage_color, guide = FALSE) +
   scale_y_continuous(limits = c(-0.5, 2.5)) +
-  scale_x_continuous(breaks = pretty, name = "Days after predicted planting date",
-                     limit = range(cgm_toplot_growth_stage_weather_historical$dap)) +
+  scale_x_continuous(breaks = pretty, name = "Days after planting date") +
   theme_genetics(base_size = 6) +
-  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), strip.background = element_blank(),
         axis.title.y = element_blank(), axis.line.y = element_blank())
 
 
-
-## Modify plots - combine with stage data
-g_concurrent_weather_stages <- plot_grid(
-  g_concurrent_weather + theme(legend.position = "none", axis.title.x = element_blank(),
-                               axis.text.x = element_blank()), 
-  g_concurrent_growth_stages, ncol = 1, 
-  align = "v", axis = "lr", rel_heights = c(1, 0.25))
-
-g_historical_weather_stages <- plot_grid(
-  g_historical_weather + theme(legend.position = "none", axis.title.x = element_blank(),
-                               axis.text.x = element_blank(), strip.text.y = element_blank()), 
-  g_historical_growth_stages, ncol = 1, 
-  align = "v", axis = "tblr", rel_heights = c(1, 0.25))
-
-
-
-## Combine these plots
-g_weather <- plot_grid(g_concurrent_weather_stages, g_historical_weather_stages, align = "hv",
-                       labels = letters[2:3], label_size = 8)
-
+## Combine weather and growth stage plot
+g_weather_stages <- plot_grid(
+  g_weather_concurrent_historical + theme(legend.position = "none", axis.title.x = element_blank(),
+                                          axis.text.x = element_blank()), 
+  g_growth_stages + theme(strip.text.x = element_blank()),
+  ncol = 1, align = "v", axis = "lr", rel_heights = c(1, 0.25), labels = letters[2:3], label_size = 8)
 
 
 
@@ -365,10 +355,11 @@ g_map_alt1 <- g_map_alt1 +
   geom_text_repel(data = use_loc_info_toplot1, aes(x = longitude, y = latitude, group = location, label = location, color = location),
                   size = 2, hjust = 0.5, nudge_x = ifelse(use_loc_info_toplot1$location == "Bozeman", 3, -1), segment.size = 0.2, 
                   point.padding = unit(2, "pt"), min.segment.length = 1) +
-  scale_color_manual(values = map_location_colors, guide = FALSE)
+  scale_color_manual(values = map_location_colors, guide = FALSE) +
+  theme(legend.position = c(0.88, 0.20))
   
 
-g_fig1 <- plot_grid(g_map_alt1, g_weather, ncol = 1, labels = letters[1], label_size = 8,
+g_fig1 <- plot_grid(g_map_alt1, g_weather_stages, ncol = 1, labels = letters[1], label_size = 8,
                     rel_heights = c(0.4, 1))
 
 # Save
@@ -764,11 +755,6 @@ ggsave(filename = "figure4_draft2.jpg", plot = g_accuracy_within_env2, path = fi
 
 
 
-
-
-
-
-
 # Supplemental figures -------------------
 
 
@@ -780,8 +766,6 @@ load(file.path(result_dir, "concurrent_historical_covariables.RData"))
 
 
 ## Concurrent
-
-
 
 ## Combine concurrent feature selection df
 concurrent_features <- bind_rows(
@@ -834,6 +818,19 @@ ggsave(filename = "concurrent_features_count.jpg", plot = g_concurrent_features_
        path = fig_dir, height = 8, width = 4, dpi = 1000)
 
 
+## Save as a table
+concurrent_features_count %>% 
+  spread(feature_class, n) %>% 
+  arrange(source, feat_sel_type, trait) %>%
+  write_csv(x = ., path = file.path(fig_dir, "concurrent_environmental_covariate.csv"))
+
+# Polish as a supplemental table
+
+
+
+
+
+#### Compare among data sources ####
 
 
 
@@ -993,7 +990,167 @@ ggsave(filename = "concurrent_indiv_feature_counts.jpg", plot = g_concurrent_ind
 
 
 
-## Historical
+
+#### Do not compare among data sources ####
+
+# These will be polished plots for the manuscript
+concurrent_features_count1 <- concurrent_features_count %>%
+  filter(source == "daymet", feat_sel_type != "stepAIC_adhoc")
+
+concurrent_features2 <- concurrent_features1 %>%
+  filter(source == "daymet", feat_sel_type != "stepAIC_adhoc")
+
+
+## Modify the feature count plot to remove nasapower
+g_concurrent_features_count2 <- concurrent_features_count1 %>%
+  mutate(feature_class = fct_rev(feature_class)) %>%
+  filter(source == "daymet") %>%
+  ggplot(aes(x = feat_sel_type, y = n, fill = feature_class)) +
+  geom_col() +
+  geom_text(aes(y = 2*max(concurrent_features_count1$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
+            nudge_y = ifelse(concurrent_features_count1$feature_class == "main_features", 25, 10), size = 3) +
+  facet_grid(trait ~ ., switch = "y", labeller = labeller(trait = str_add_space)) +
+  scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
+  scale_x_discrete(labels = f_ec_selection_replace, name = "Covariate set") +
+  scale_y_continuous(name = "Number of covariates", breaks = pretty) +
+  theme_genetics() +
+  theme(legend.position = "top", strip.placement = "outside")
+
+ggsave(filename = "concurrent_features_count_daymet.jpg", plot = g_concurrent_features_count2,
+       path = fig_dir, height = 8, width = 3.5, dpi = 1000)
+
+
+
+## Overlap between non-all feature selection types
+concurrent_features_overlap_featsel <- concurrent_features2 %>%
+  select(-features) %>%
+  filter(! feat_sel_type %in% c("all")) %>%
+  full_join(., ., by = c("trait", "source")) %>%
+  inner_join(rename_all(as_tibble(t(combn(x = unique(concurrent_features1$feat_sel_type), m = 2))), 
+                        ~paste0("feat_sel_type", c(".x", ".y"))), .) %>%
+  mutate(interaction_features_overlap = map2(interaction_features.x, interaction_features.y, intersect),
+         main_features_overlap = map2(main_features.x, main_features.y, intersect)) %>%
+  select(contains("source"), contains("trait"), contains("feat_sel_type"), contains("overlap")) %>%
+  mutate_at(vars(contains("features")), ~map_dbl(., n_distinct)) %>%
+  gather(feature_class, n, contains("features")) %>%
+  mutate(feature_class = str_remove(feature_class, "_overlap"))
+
+
+
+## Plot
+g_concurrent_features_overlap_featsel <- concurrent_features_overlap_featsel %>%
+  mutate(feature_class = fct_rev(feature_class)) %>%
+  mutate_at(vars(contains("feat_sel")), f_ec_selection_replace) %>%
+  unite(feat_sel_type_pair, feat_sel_type.x, feat_sel_type.y, sep = "-") %>%
+  ggplot(aes(x = trait, y = n, fill = feature_class)) +
+  geom_col() +
+  geom_text(aes(y = 2*max(concurrent_features_overlap_featsel$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
+            nudge_y = ifelse(concurrent_features_overlap_featsel$feature_class == "main_features", 0, -2), size = 3) +
+  facet_grid(~ feat_sel_type_pair, switch = "y", labeller = labeller(trait = str_add_space)) +
+  scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
+  scale_x_discrete(name = "Trait", labels = str_add_space) +
+  scale_y_continuous(name = "Overlapping covariates", breaks = pretty) +
+  theme_genetics() +
+  theme(legend.position = "none", strip.placement = "outside", axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave(filename = "concurrent_features_overlap_featsel_daymet.jpg", plot = g_concurrent_features_overlap_featsel,
+       path = fig_dir, height = 3, width = 4, dpi = 1000)
+
+
+## Overlap between traits
+concurrent_features_overlap_trait <- concurrent_features2 %>%
+  select(-features) %>%
+  full_join(., ., by = c("feat_sel_type", "source")) %>%
+  inner_join(rename_all(as_tibble(t(combn(x = unique(concurrent_features2$trait), m = 2))), 
+                        ~paste0("trait", c(".x", ".y"))), .) %>%
+  mutate(interaction_features_overlap = map2(interaction_features.x, interaction_features.y, intersect),
+         main_features_overlap = map2(main_features.x, main_features.y, intersect)) %>%
+  select(contains("source"), contains("trait"), contains("feat_sel_type"), contains("overlap")) %>%
+  mutate_at(vars(contains("features")), ~map_dbl(., n_distinct)) %>%
+  gather(feature_class, n, contains("features")) %>%
+  mutate(feature_class = str_remove(feature_class, "_overlap")) %>%
+  # We don't need to see apriori or all
+  filter(! feat_sel_type %in% c("all"))
+
+
+
+## Plot
+g_concurrent_features_overlap_trait <- concurrent_features_overlap_trait %>%
+  mutate(feature_class = fct_rev(feature_class)) %>%
+  mutate_at(vars(contains("trait")), ~abbreviate(str_add_space(.), 2)) %>%
+  unite(trait_pair, trait.x, trait.y, sep = ":") %>%
+  ggplot(aes(x = trait_pair, y = n, fill = feature_class)) +
+  geom_col() +
+  geom_text(aes(y = 2*max(concurrent_features_overlap_trait$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
+            nudge_y = ifelse(concurrent_features_overlap_trait$feature_class == "main_features", 7, 2), size = 2) +
+  facet_grid(feat_sel_type ~ ., switch = "y", labeller = labeller(feat_sel_type = f_ec_selection_replace)) +
+  scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
+  scale_x_discrete(name = "Trait pair") +
+  scale_y_continuous(name = "Overlapping covariates", breaks = pretty) +
+  theme_genetics() +
+  theme(legend.position = "none", strip.placement = "outside", axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave(filename = "concurrent_features_overlap_trait_daymet.jpg", plot = g_concurrent_features_overlap_trait,
+       path = fig_dir, height = 3, width = 3.5, dpi = 1000)
+
+
+
+## Count the number of times a particular covariate is select
+
+concurrent_features3 <- concurrent_features2 %>%
+  select(-features) %>%
+  gather(feature_class, covariates, contains("features")) %>%
+  unnest() %>%
+  mutate(covariates = str_remove(covariates, "line_name:"))
+
+
+# Counts by source and feat_sel_type
+concurrent_indiv_feature_counts <- concurrent_features3 %>%
+  # Remove all and apriori feat selections
+  filter(! feat_sel_type %in% c("all", "apriori")) %>%
+  group_by(covariates, source, feature_class, ) %>%
+  summarize(n = n()) %>%
+  mutate(nTotal = sum(n)) %>%
+  ungroup() %>%
+  mutate(covariates = fct_reorder(covariates, nTotal, .fun = max, .desc = TRUE))
+
+
+## Plot
+g_concurrent_indiv_feature_counts <- concurrent_indiv_feature_counts %>%
+  ggplot(aes(x = covariates, y = n, fill = feature_class)) +
+  geom_col() +
+  scale_fill_discrete(labels = c("main_features" = "Environment covariate", "interaction_features" = "G x E covariate"), name = NULL) +
+  scale_x_discrete(name = "Covariate") +
+  scale_y_continuous(name = "Count", breaks = pretty) +
+  theme_genetics(base_size = 8) +
+  theme(legend.position = c(0.75, 0.75), strip.placement = "outside", axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+## Save
+ggsave(filename = "concurrent_indiv_feature_counts_daymet.jpg", plot = g_concurrent_indiv_feature_counts, 
+       path = fig_dir, width = 4, height = 5, dpi = 1000)
+
+
+## Stitch these plots together - patchwork
+left_plot <- plot_grid(g_concurrent_features_count2 + theme(legend.position = "none"), g_concurrent_features_overlap_trait, 
+                       ncol = 1, rel_heights = c(1, 0.45), align = "hv", axis = "lr", labels = letters[1:2],
+                       label_size = 10)  
+right_plot <- plot_grid(g_concurrent_features_overlap_featsel, g_concurrent_indiv_feature_counts, ncol = 1,
+                        rel_heights = c(0.6, 1), align = "hv", axis = "lr", labels = letters[3:4], label_size = 10)  
+
+merged_plot <- (left_plot | right_plot) + plot_layout(widths = c(1, 1))
+
+# Save
+ggsave(filename = "concurrent_features_comparison_merged+daymet.jpg", plot = merged_plot,
+       path = fig_dir, height = 8, width = 6, dpi = 1000)
+
+
+
+
+
+
+
+
+#### Historical ####
 
 
 ## Combine concurrent feature selection df

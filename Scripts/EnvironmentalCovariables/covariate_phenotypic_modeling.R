@@ -1,9 +1,6 @@
 ## S2MET phenotypic modeling with covariates
 ## 
 ## Author: Jeff Neyhart
-## Last updated: 10 June 2019
-## 
-## Model the impact of covariates on GxE and LxE
 ## 
 ## This script will look at variable selection to determine optimal models that use
 ## covariates

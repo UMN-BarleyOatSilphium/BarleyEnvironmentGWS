@@ -28,7 +28,9 @@ object_list <- unlist(lapply(file_list, load, envir = .GlobalEnv))
 
 
 ## Filter loeo results
-lo
+loeo_predictions_out <- loeo_predictions_out %>% 
+  subset(., map_lgl(., is_tibble)) %>%
+  bind_rows()
 
 
 ## Significant level
@@ -113,7 +115,7 @@ loo_predictive_ability %>%
   facet_grid(trait ~ type + pop)
 
 loo_predictions_df %>%
-  filter(trait == "TestWeight", type == "lolo", selection != "none") %>%
+  filter(trait == "GrainYield", type == "lolo", selection != "none") %>%
   filter(selection != "concurrent_rfa_cv_adhoc") %>%
   ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
   geom_abline(slope = 1, intercept = 0) +
@@ -445,7 +447,7 @@ external_predictive_ability %>%
   theme_genetics()
 
 external_predictions_df %>%
-  filter(trait == "PlantHeight", selection != "none", type == "env") %>%
+  filter(trait == "PlantHeight", selection != "none", type == "loc") %>%
   ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
   geom_abline(slope = 1, intercept = 0) +
   geom_point() +
