@@ -20,7 +20,7 @@ source(file.path(repo_dir, "source_MSI.R"))
 # Other packages
 library(modelr)
 library(broom)
-library(lme4qtl)
+# library(lme4qtl)
 
 load(file = file.path(result_dir, "feature_selection_results.RData"))
 load(file.path(result_dir, "concurrent_historical_covariables.RData"))
