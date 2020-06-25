@@ -25,6 +25,9 @@ library(broom)
 load(file = file.path(result_dir, "feature_selection_results.RData"))
 load(file.path(result_dir, "concurrent_historical_covariables.RData"))
 
+# Set the number of cores
+n_cores <- 8
+
 
 
 
@@ -60,105 +63,118 @@ covariate_mat <- ec_tomodel_scaled$daymet %>%
   
 
 ## Create a results df
-full_model_df <- data_to_model %>% 
+data_to_model_split <- data_to_model %>% 
   group_by(trait, population) %>% 
   nest() %>%
   full_join(., covariates_to_model, by = "trait") %>%
-  mutate(results = list(NULL))
+  assign_cores(df = ., n_core = n_cores, split = TRUE)
 
-## Loop over rows
-for (i in seq_len(nrow(full_model_df))) {
+## Iterate over cores
+pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function(core_df) {
   
-  row <- full_model_df[i,]
+  # Output list
+  out <- vector("list", length = nrow(core_df))
   
-  # Trait
-  tr <- row$trait
-  data <- droplevels(row$data[[1]])
-  genotypes <- levels(data$line_name)
-  environments <- levels(data$environment)
-  covariates <- row$features[[1]]
+  # Iterate over rows
+  for (i in seq_along(out)) {
   
-  # Separate covariates into main effect or interaction
-  covariate_list <- tibble(term = unique(covariates)) %>% 
-    mutate(class = ifelse(str_detect(term, ":"), "interaction", "main"),
-           covariate = str_remove(term, "line_name:")) %>%
-    split(.$class) %>% 
-    map("covariate")
-
-  
-  # Create or subset relationship matrices
-  K_use <- K[genotypes, genotypes]
-  Zg <- model.matrix(~ -1 + line_name, data)
-  Emain <- Eint2 <- Env_mat(x = covariate_mat[environments, covariate_list$main, drop = FALSE], method = "Jarq")
-  Eint <- Env_mat(x = covariate_mat[environments, covariate_list$int, drop = FALSE], method = "Jarq")
-  # Replace with diagonal matrix if NA
-  if (all(is.na(Eint))) { 
-    Eint[] <- 0
-    diag(Eint) <- 1 
-    no_gxe_cov <- TRUE
+    row <- core_df[i,]
     
-  } else {
-    no_gxe_cov <- FALSE
+    # Trait
+    tr <- row$trait
+    data <- droplevels(row$data[[1]])
+    genotypes <- levels(data$line_name)
+    environments <- levels(data$environment)
+    covariates <- row$features[[1]]
     
-  }
-
-  Ze <- model.matrix(~ -1 + environment, data)
-  KE <- tcrossprod(Zg %*% K_use, Zg) * tcrossprod(Ze %*% Eint, Ze)
-  dimnames(KE) <- replicate(2, data$gxe, simplify = FALSE)
-  
-  # # Fit the model
-  # fit <- relmatLmer(value ~ (1|line_name_cov) + (1|line_name) + (1|environment_cov) + (1|environment) + 
-  #                     (1|gxe), 
-  #                   data = data, relmat = list(line_name_cov = K_use, environment_cov = Emain))
-  
-  ## Sommer
-  model_stdout <- capture.output({ 
-    model_try <- try( {
+    # Separate covariates into main effect or interaction
+    covariate_list <- tibble(term = unique(covariates)) %>% 
+      mutate(class = ifelse(str_detect(term, ":"), "interaction", "main"),
+             covariate = str_remove(term, "line_name:")) %>%
+      split(.$class) %>% 
+      map("covariate")
+    
+    
+    # Create or subset relationship matrices
+    K_use <- K[genotypes, genotypes]
+    Zg <- model.matrix(~ -1 + line_name, data)
+    Emain <- Eint2 <- Env_mat(x = covariate_mat[environments, covariate_list$main, drop = FALSE], method = "Jarq")
+    Eint <- Env_mat(x = covariate_mat[environments, covariate_list$int, drop = FALSE], method = "Jarq")
+    # Replace with diagonal matrix if NA
+    if (all(is.na(Eint))) { 
+      Eint[] <- 0
+      diag(Eint) <- 1 
+      no_gxe_cov <- TRUE
+      
+    } else {
+      no_gxe_cov <- FALSE
+      
+    }
+    
+    Ze <- model.matrix(~ -1 + environment, data)
+    KE <- tcrossprod(Zg %*% K_use, Zg) * tcrossprod(Ze %*% Eint, Ze)
+    dimnames(KE) <- replicate(2, data$gxe, simplify = FALSE)
+    
+    # # Fit the model
+    # fit <- relmatLmer(value ~ (1|line_name_cov) + (1|line_name) + (1|environment_cov) + (1|environment) + 
+    #                     (1|gxe), 
+    #                   data = data, relmat = list(line_name_cov = K_use, environment_cov = Emain))
+    
+    ## Sommer
+    model_stdout <- capture.output({ 
+      model_try <- try( {
+        fit_mmer <- mmer(fixed = value ~ 1, 
+                         random = ~ line_name + vs(line_name_cov, Gu = K_use) + environment + vs(environment_cov, Gu = Emain) +
+                           gxe + vs(gxe_cov, Gu = KE),
+                         data = data, verbose = TRUE) 
+      }, silent = TRUE) })
+    
+    # Retry with fewer iterations if singular
+    if (class(model_try) == "try-error") {
+      
+      # Parse the monitor for iterations
+      model_monitor <- read_table(head(model_stdout, -1))
+      
+      # Select 1 iteration fewer
+      iter_max <- max(model_monitor$iteration) - 1
+      
+      # refit the model
       fit_mmer <- mmer(fixed = value ~ 1, 
                        random = ~ line_name + vs(line_name_cov, Gu = K_use) + environment + vs(environment_cov, Gu = Emain) +
                          gxe + vs(gxe_cov, Gu = KE),
-                       data = data, verbose = TRUE) 
-    }, silent = TRUE) })
-  
-  # Retry with fewer iterations if singular
-  if (class(model_try) == "try-error") {
+                       data = data, verbose = TRUE, iter = iter_max)
+      
+    }
     
-    # Parse the monitor for iterations
-    model_monitor <- read_table(head(model_stdout, -1))
     
-    # Select 1 iteration fewer
-    iter_max <- max(model_monitor$iteration) - 1
+    # Get the variance components; asemble into a tibble
+    varcomp_df <- fit_mmer$sigma %>% 
+      map_dbl(~.) %>% 
+      tibble(term = names(.), variance = .) %>% 
+      mutate(term = str_remove_all(term, "u:"), 
+             source = str_remove_all(term, "_cov")) %>%
+      group_by(source) %>%
+      mutate(total_source_variance = sum(variance)) %>%
+      ungroup() %>%
+      mutate(variance_prop = variance / total_source_variance,
+             note = list(NULL))
     
-    # refit the model
-    fit_mmer <- mmer(fixed = value ~ 1, 
-                     random = ~ line_name + vs(line_name_cov, Gu = K_use) + environment + vs(environment_cov, Gu = Emain) +
-                       gxe + vs(gxe_cov, Gu = KE),
-                     data = data, verbose = TRUE, iter = iter_max)
+    # Return
+    out[[i]] <- varcomp_df
     
-  }
+  } # Close loop
   
+  # Add out to core_df and return
+  core_df %>%
+    mutate(results = out) %>%
+    select(-data, -core)
   
-  # Get the variance components; asemble into a tibble
-  varcomp_df <- fit_mmer$sigma %>% 
-    map_dbl(~.) %>% 
-    tibble(term = names(.), variance = .) %>% 
-    mutate(term = str_remove_all(term, "u:"), 
-           source = str_remove_all(term, "_cov")) %>%
-    group_by(source) %>%
-    mutate(total_source_variance = sum(variance)) %>%
-    ungroup() %>%
-    mutate(variance_prop = variance / total_source_variance,
-           note = list(NULL))
-  
-  if (no_gxe_cov) varcomp_df$note[[varcomp_df$term == "gxe_cov"]] <- "no covariates"
-  
-  # Return
-  full_model_df$results[[i]] <- varcomp_df
-  
-  
-}
+}) %>% bind_rows()
 
 
+# Rename
+pheno_variance_analysis <- pheno_variance_analysis_out
+  
 
 # Save the df
-save("full_model_df", file = file.path(result_dir, "full_model_variance_analysis.RData"))
+save("pheno_variance_analysis", file = file.path(result_dir, "full_model_variance_analysis.RData"))

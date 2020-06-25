@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#PBS -l walltime=08:00:00,mem=16gb,nodes=1:ppn=1
+#PBS -l walltime=12:00:00,mem=62gb,nodes=1:ppn=8
 #PBS -N phenotypic_variance_analysis
 #PBS -M neyha001@umn.edu
 #PBS -m abe
