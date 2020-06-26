@@ -150,6 +150,19 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
                          random = ~ line_name + vs(line_name_cov, Gu = K_use) + environment + vs(environment_cov, Gu = Emain) +
                            gxe + vs(gxe_cov, Gu = KE),
                          data = data, verbose = TRUE, iter = iter_max)
+        
+        # Get the variance components; asemble into a tibble
+        varcomp_df <- fit_mmer$sigma %>% 
+          map_dbl(~.) %>% 
+          tibble(term = names(.), variance = .) %>% 
+          mutate(term = str_remove_all(term, "u:"), 
+                 source = str_remove_all(term, "_cov")) %>%
+          group_by(source) %>%
+          mutate(total_source_variance = sum(variance)) %>%
+          ungroup() %>%
+          mutate(variance_prop = variance / total_source_variance,
+                 note = list(NULL))
+        
       }
       
       # Give an error message if empty
