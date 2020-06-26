@@ -175,12 +175,13 @@ f_model_replace <- function(x) model_replace[x]
 f_model_replace2 <- function(x) model_present[x]
 # f_model_replace <- function(x) paste0("M", toupper(str_extract(x, "[0-9]{1}[a-z]{0,1}")))
 # Vector to rename validation schemes
-f_pop_replace <- function(x) str_replace_all(x, c("tp" = "Cross-validation", "vp" = "Offspring validation"))
+f_validation_replace <- function(x) str_replace_all(x, c("tp" = "Cross-validation", "vp" = "Offspring validation"))
+f_pop_replace <- function(x) str_replace_all(x, c("all" = "All", "tp" = "FP", "vp" = "OP"))
 # Replace type
 f_type_replace <- function(x) c("loeo" = "New environment", "lolo" = "New location", "loyo" = "New year")[x]
 # Replace ec selection
-f_ec_selection_replace <- function(x)  c("rfa_cv_adhoc" = "stepCV", "stepAIC_adhoc" = "stepAIC", "apriori" = "literature", 
-                                         "all" = "All", "none" = "None")[x]
+f_ec_selection_replace <- function(x)  c("rfa_cv_adhoc" = "Stepwise", "stepAIC_adhoc" = "stepAIC", 
+                                         "apriori" = "Literature", "all" = "All", "none" = "None")[x]
 f_growth_stage_replace <- function(x) 
   c("early_vegetative" = "EV", "late_vegetative" = "LV", "heading" = "HD", "flowering" = "FL", "grain_fill" = "GF")[x]
 

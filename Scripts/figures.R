@@ -1373,6 +1373,9 @@ ggsave(filename = "historical_indiv_feature_counts.jpg", plot = g_historical_ind
 
 
 
+
+
+
 ## Calculate environmental relationship matrices based on these features
 concurrent_features_env_relmat <- concurrent_features1 %>%
   mutate(interaction_features = map(interaction_features, ~str_remove(., "line_name:"))) %>%
@@ -1460,6 +1463,46 @@ for (plotList in split(concurrent_features_heatmap_plots, concurrent_features_he
 
 
 
+
+# Supplemental Table XX - full model phenotypic variance analysis ---------
+
+# Load the full model analysis results
+load(file.path(result_dir, "full_model_variance_analysis.RData"))
+
+# Collapse if a list
+if (is.list(pheno_variance_analysis)) {
+  pheno_variance_analysis <- pheno_variance_analysis %>% 
+    subset(., sapply(., is.data.frame)) %>%
+    bind_rows()
+}
+
+# Unnest results
+pheno_variance_analysis1 <- pheno_variance_analysis %>%
+  # Make a note as to whether any GxE covariates were included
+  mutate(any_gxe_cov = map_lgl(features, ~any(str_detect(., "line_name:"))) | feat_sel_type == "all") %>%
+  unnest(results)
+
+## Calculate the total variance and calculate the proportion explained by each source
+pheno_variance_analysis2 <- pheno_variance_analysis1 %>%
+  group_by(trait, population, feat_sel_type) %>%
+  mutate(total_variance = sum(variance), prop_total_variance = variance / total_variance) %>%
+  rename(prop_source_variance = variance_prop) %>%
+  ungroup()
+
+## Clean up for a table
+pheno_variance_analysis_table <- pheno_variance_analysis2 %>%
+  mutate(feat_sel_type = ifelse(feat_sel_type == "rfa_cv", "rfa_cv_adhoc", feat_sel_type)) %>%
+  select(trait, population, covariate_set = feat_sel_type, any_gxe_cov, source, term, prop_source_variance, prop_total_variance) %>%
+  mutate(trait = str_add_space(trait), population = f_pop_replace(population), covariate_set = f_ec_selection_replace(covariate_set),
+         source = str_replace_all(source, c("line_name" = "G", "environment" = "E", "gxe" = "G x E", "units" = "Residuals")),
+         term = str_replace_all(term, c("line_name" = "G", "environment" = "E", "gxe" = "G x E", "units" = "Residuals")),
+         term = str_replace_all(term, c("G_cov" = "Markers", "G x E_cov" = "Markers x Covariates",  "E_cov" = "Covariates"))) %>%
+  mutate_at(vars(contains("prop")), ~formatC(x = signif(., 2), digits = 2, width = 2, format = "f")) %>%
+  arrange(trait, population, covariate_set) %>%
+  rename_all(~str_to_title(str_replace_all(., "_", " ")))
+
+# Output table
+write_csv(x = pheno_variance_analysis_table, path = file.path(fig_dir, "full_model_phenotypic_variance_analysis.csv"))
 
 
 

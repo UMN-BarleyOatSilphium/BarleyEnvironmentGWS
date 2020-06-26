@@ -139,26 +139,40 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
       # Select 1 iteration fewer
       iter_max <- max(model_monitor$iteration) - 1
       
-      # refit the model
-      fit_mmer <- mmer(fixed = value ~ 1, 
-                       random = ~ line_name + vs(line_name_cov, Gu = K_use) + environment + vs(environment_cov, Gu = Emain) +
-                         gxe + vs(gxe_cov, Gu = KE),
-                       data = data, verbose = TRUE, iter = iter_max)
+      # If only one iteration, then error out
+      if (iter_max == 0) {
+        varcomp_df <- tibble(term = "Error in singularlity.")
+        
+      } else {
+      
+        # refit the model
+        fit_mmer <- mmer(fixed = value ~ 1, 
+                         random = ~ line_name + vs(line_name_cov, Gu = K_use) + environment + vs(environment_cov, Gu = Emain) +
+                           gxe + vs(gxe_cov, Gu = KE),
+                         data = data, verbose = TRUE, iter = iter_max)
+      }
+      
+      # Give an error message if empty
+    } else if (is_empty(fit_mmer)) {
+      varcomp_df <- tibble(term = "Error in singularlity.")
+      
+      
+      # else proceed normally
+    } else {
+      
+      # Get the variance components; asemble into a tibble
+      varcomp_df <- fit_mmer$sigma %>% 
+        map_dbl(~.) %>% 
+        tibble(term = names(.), variance = .) %>% 
+        mutate(term = str_remove_all(term, "u:"), 
+               source = str_remove_all(term, "_cov")) %>%
+        group_by(source) %>%
+        mutate(total_source_variance = sum(variance)) %>%
+        ungroup() %>%
+        mutate(variance_prop = variance / total_source_variance,
+               note = list(NULL))
       
     }
-    
-    
-    # Get the variance components; asemble into a tibble
-    varcomp_df <- fit_mmer$sigma %>% 
-      map_dbl(~.) %>% 
-      tibble(term = names(.), variance = .) %>% 
-      mutate(term = str_remove_all(term, "u:"), 
-             source = str_remove_all(term, "_cov")) %>%
-      group_by(source) %>%
-      mutate(total_source_variance = sum(variance)) %>%
-      ungroup() %>%
-      mutate(variance_prop = variance / total_source_variance,
-             note = list(NULL))
     
     # Return
     out[[i]] <- varcomp_df
