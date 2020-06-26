@@ -66,6 +66,7 @@ covariate_mat <- ec_tomodel_scaled$daymet %>%
 data_to_model_split <- data_to_model %>% 
   group_by(trait, population) %>% 
   nest() %>%
+  ungroup() %>%
   full_join(., covariates_to_model, by = "trait") %>%
   assign_cores(df = ., n_core = n_cores, split = TRUE)
 
@@ -169,7 +170,7 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
     mutate(results = out) %>%
     select(-data, -core)
   
-}) %>% bind_rows()
+})
 
 
 # Rename
