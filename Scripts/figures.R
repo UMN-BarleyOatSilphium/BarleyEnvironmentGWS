@@ -1501,6 +1501,18 @@ pheno_variance_analysis_table <- pheno_variance_analysis2 %>%
   arrange(trait, population, covariate_set) %>%
   rename_all(~str_to_title(str_replace_all(., "_", " ")))
 
+
+# Calculate difference in variance explained
+pheno_variance_analysis_table %>%
+  rename_all(make.names) %>%
+  select(-Any.Gxe.Cov, -Prop.Total.Variance) %>%
+  filter(Population == "FP", str_detect(Term, "Covariates")) %>%
+  {full_join(x = filter(., Covariate.Set == "Stepwise"), y = filter(., Covariate.Set != "Stepwise"),
+             by = c("Trait", "Population", "Source", "Term"))} %>%
+  mutate_at(vars(contains("Prop")), parse_number) %>%
+  mutate(prop_diff = Prop.Source.Variance.x - Prop.Source.Variance.y)
+
+
 # Output table
 write_csv(x = pheno_variance_analysis_table, path = file.path(fig_dir, "full_model_phenotypic_variance_analysis.csv"))
 

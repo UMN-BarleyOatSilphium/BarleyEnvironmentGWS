@@ -115,7 +115,7 @@ loo_predictive_ability %>%
   facet_grid(trait ~ type + pop)
 
 loo_predictions_df %>%
-  filter(trait == "GrainYield", type == "lolo", selection != "none") %>%
+  filter(trait == "HeadingDate", type == "loeo", selection == "rfa_cv_adhoc") %>%
   filter(selection != "concurrent_rfa_cv_adhoc") %>%
   ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
   geom_abline(slope = 1, intercept = 0) +
@@ -123,6 +123,12 @@ loo_predictions_df %>%
   scale_color_discrete(guide = FALSE) +
   facet_grid(type + selection ~ model + pop) +
   theme_presentation2(10)
+
+
+
+loo_predictive_ability %>%
+  filter(model == "model3_cov", pop == "tp", selection == "rfa_cv_adhoc") %>%
+  distinct(trait, model, type, selection, ability_all)
 
 
 
