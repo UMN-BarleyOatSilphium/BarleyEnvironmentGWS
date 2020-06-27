@@ -375,378 +375,237 @@ ggsave(filename = "figure1_draft.jpg", plot = g_fig1, path = fig_dir,
 
 
 
-# Figure 3: predicted versus observed phenotypic values -------------------
 
 
-## Load prediction data
-file_list <- list.files(result_dir, pattern = "fact_reg.RData$", full.names = TRUE)
-object_list <- unlist(lapply(file_list, load, envir = .GlobalEnv))
 
-## A vector to rename models
-model_replace <- c("model1" = "y = g", "model2_id" = "y = g + E", "model2_cov" = "y = g + e", 
-                   "model3_id" = "y = g + e + gE", "model3_cov" = "y = g + e + ge")
+# Figure 2. LOO prediction accuracy ---------------------------------------
 
-f_model_replace <- function(x) model_replace[x]
-f_pop_replace <- function(x) str_replace_all(x, c("tp" = "CV", "vp" = "POV"))
-# Replace type
-f_type_replace <- function(x) c("loeo" = "New environment", "lolo" = "New location", "loyo" = "New year")[x]
-# Replace ec selection
-f_ec_selection_replace <- function(x) 
-  c("adhoc" = "italic(ad~hoc)", "adhoc_nosoil" = "italic(ad~hoc)~(no~soil)", "apriori" = "italic(a~priori)")[x]
+
+# Load the compiled prediction results
+load(file.path(result_dir, "prediction_accuracy_compiled.RData"))
+
 
 # Color scheme for models
 model_colors <- c(neyhart_palette("umn1")[1], neyhart_palette("umn3")[3], neyhart_palette("umn1")[3],
-                  neyhart_palette("umn3")[4], neyhart_palette("umn1")[4])
+                  neyhart_palette("umn3")[4], neyhart_palette("umn1")[4], neyhart_palette("umn2")[5])
 # names(model_colors) <- grep(pattern = "_", x = names(model_replace), value = TRUE, invert = TRUE)
 names(model_colors) <- names(model_replace)
 
 
+## Part A - plot predicted/observed phenotypes for each trait and by target population
+## for model 3 with stepwise covariates - LOEO
 
-## Grab the prediction outputs
-loo_prediction_list <- map(set_names(object_list, object_list), get) %>%
-  # Bind rows if necessary
-  modify_if(is.list, bind_rows) %>%
-  subset(., map_lgl(., ~nrow(.) > 1)) %>%
-  map(~unnest(., out)) %>%
-  set_names(x = ., nm = str_extract(names(.), "^[a-z]{4}"))
-
-
-## Combine data.frames and mutate columns
-loo_predictions_df <- loo_prediction_list %>%
-  imap(~unnest(.x, prediction) %>% mutate(type = .y) ) %>%
-  map(~rename_at(.x, vars(which(names(.x) %in% c("env", "loc"))),
-                 ~str_replace_all(., c("loc" = "location", "env" = "environment")))) %>%
-  map_df(~mutate_if(., is.character, parse_guess) %>%
-           mutate_if(is.factor, ~parse_guess(as.character(.)))) %>%
-  mutate(pop = ifelse(line_name %in% tp, "tp", "vp")) %>%
-  select(-which(names(.) %in% c(".id", "core", "trait1"))) %>%
-  # Coalesce columns
-  mutate(leave_one_group = coalesce(environment, location),
-         nGroup = coalesce(nEnv, nLoc)) %>%
-  select(-which(names(.) %in% c("environment", "location", "nLoc", "nEnv", "loc1", "env1")))
-
-
-## Calculate accuracy and bias per train group, model, and population
-loo_predictive_ability <- loo_predictions_df %>%
-  group_by(trait, model, pop, type, leave_one_group, selection) %>%
-  # First calculate accuracy per environment
-  mutate(ability = cor(pred_complete, value), 
-         bias = mean((pred_complete - value) / value)) %>% # Bias as percent deviation from observed
-  group_by(trait, model, pop, type, selection) %>%
-  # Next calculate accuracy across all environments
-  mutate(ability_all = cor(pred_complete, value), 
-         bias_all = mean((pred_complete - value) / value)) %>% # Bias as percent deviation from observed
-  # Now summarize across all
-  group_by(trait, model, pop, type, leave_one_group, selection) %>%
-  summarize_at(vars(ability, bias, ability_all, bias_all, nObs, nGroup), mean) %>%
-  ungroup()
-
-
-
-# First create annotation df
-loo_prediction_accuracy_annotation <- loo_predictive_ability %>% 
-  distinct(trait, model, pop, type, selection, ability_all, bias_all) %>%
-  mutate_at(vars(contains("ability")), ~formatC(., width = 3, digits = 2, format = "f")) %>%
-  mutate(ability_all_annotation = paste0("r[MP]==", ability_all))
-
-
-# Plot predicted versus observed value using the best model and selection for each trait
-best_results <- loo_prediction_accuracy_annotation %>% 
-  filter(model == "model3_cov", pop == "tp") %>%
-  group_by(trait, type) %>%
-  top_n(x = ., n = 1, wt = ability_all) %>%
-  ungroup() %>%
-  distinct(trait, model, type, selection) %>%
-  left_join(., subset(loo_prediction_accuracy_annotation, model == "model3_cov"))
-
-
-## Plot - combine by trait
-loo_pred_obs_tp_list <- loo_predictions_df %>%
-  filter(pop == "tp") %>%
-  inner_join(., best_results) %>%
+loo_pred_obs_df <- predictions_df %>%
+  filter(type == "loeo") %>%
+  filter(model == "model3_cov", selection == "rfa_cv_adhoc") %>%
+  # Add annotations
+  left_join(., across_site_prediction_accuracy_annotation) %>%
+  # convert grain yield to Mg/ha
   mutate_at(vars(value, pred_complete), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
-  mutate(trait = paste0("'", str_add_space(trait), "'~(", trait_units1[trait], ")")) %>%
+  # Add trait units
+  # mutate(trait = paste0("atop('", str_add_space(trait), "',(", trait_units1[trait], "))"))
+  mutate(trait1 = paste0("'", abbreviate(str_add_space(trait), 2), "'~(", trait_units1[trait], ")"))
+
+# Split by trait and Plot
+g_loo_pred_obs_list <- loo_pred_obs_df %>%
   split(.$trait) %>%
   map(~{
+    # Extract annotations
+    ann_df <- distinct(.x, trait, pop, ability_all) %>%
+      mutate(annotation = paste0("r[MP]==", ability_all))
+    
     ggplot(.x, aes(x = pred_complete, y = value, color = leave_one_group)) +
-      geom_point(size = 0.5, alpha = 0.5) +
-      geom_text(data = distinct(.x, trait, type, ability_all_annotation),
-                aes(x = Inf, y = -Inf, label = ability_all_annotation), inherit.aes = FALSE, 
+      geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
+      geom_point(size = 0.2) +
+      geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
                 parse = TRUE, vjust = -1, hjust = 1.2, size = 1.5) +
       scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
       scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
-      scale_color_discrete(guide = FALSE) +
-      facet_grid(trait ~ type, switch = "y", labeller = labeller(trait = label_parsed, type = f_type_replace)) +
+      scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
+      facet_grid(trait1 ~ pop, switch = "y", labeller = labeller(trait1 = label_parsed, pop = f_validation_replace)) +
       theme_genetics(base_size = 6) +
-      theme(strip.placement = "outside", strip.background = element_blank(), panel.spacing.x = unit(1, "line"))
+      theme(strip.placement = "outside", strip.background = element_blank())
   })
 
-# Combine the plots
-loo_pred_obs_tp <- loo_pred_obs_tp_list %>%
-  modify_at(-1, ~. + theme(strip.text.x = element_blank())) %>%
-  map(~. + theme(axis.title = element_blank())) %>%
-  plot_grid(plotlist = ., ncol = 1, align = "hv") %>%
-  add_sub(plot = ., label = "Predicted phenotypic value", size = 6)
-
-# Save
-ggsave(filename = "figure2_draft.jpg", plot = loo_pred_obs_tp, path = fig_dir,
-       height = 120, width = 88, units = "mm", dpi = 1000)
-
-# Alternative
-loo_pred_obs_tp1 <- loo_pred_obs_tp_list %>%
-  modify_at(-1, ~. + theme(strip.text.x = element_blank())) %>%
-  map(~. + theme(axis.title = element_blank())) %>%
-  .[-4] %>%
-  plot_grid(plotlist = ., ncol = 1, align = "hv") %>%
-  add_sub(plot = ., label = "Predicted phenotypic value", size = 6)
-
-ggsave(filename = "figure2_draft1.jpg", plot = loo_pred_obs_tp1, path = fig_dir,
-       height = 120, width = 88, units = "mm", dpi = 1000)
-
-
-
-## VP ##
-
-## Plot - combine by trait
-loo_pred_obs_vp_list <- loo_predictions_df %>%
-  filter(pop == "vp") %>%
-  inner_join(., best_results) %>%
-  mutate_at(vars(value, pred_complete), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
-  mutate(trait = paste0("'", str_add_space(trait), "'~(", trait_units1[trait], ")")) %>%
-  split(.$trait) %>%
-  map(~{
-    ggplot(.x, aes(x = pred_complete, y = value, color = leave_one_group)) +
-      geom_point(size = 0.5, alpha = 0.5) +
-      geom_text(data = distinct(.x, trait, type, ability_all_annotation),
-                aes(x = Inf, y = -Inf, label = ability_all_annotation), inherit.aes = FALSE, 
-                parse = TRUE, vjust = -1, hjust = 1.2, size = 1.5) +
-      scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
-      scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
-      scale_color_discrete(guide = FALSE) +
-      facet_grid(trait ~ type, switch = "y", labeller = labeller(trait = label_parsed, type = f_type_replace)) +
-      theme_genetics(base_size = 6) +
-      theme(strip.placement = "outside", strip.background = element_blank(), panel.spacing.x = unit(1, "line"))
-  })
 
 # Combine the plots
-loo_pred_obs_vp <- loo_pred_obs_vp_list %>%
+g_loo_pred_obs <- g_loo_pred_obs_list %>%
   modify_at(-1, ~. + theme(strip.text.x = element_blank())) %>%
   map(~. + theme(axis.title = element_blank())) %>%
   plot_grid(plotlist = ., ncol = 1, align = "hv") %>%
-  add_sub(plot = ., label = "Predicted phenotypic value", size = 6)
+  add_sub(plot = ., label = "Predicted phenotypic value", size = 6, vjust = -1) %>%
+  plot_grid(textGrob(label = "Observed phenotypic value", rot = 90, gp = gpar(fontsize = 6)), ., rel_widths = c(0.03, 1))
+
 
 # Save
-ggsave(filename = "figure3_draft.jpg", plot = loo_pred_obs_vp, path = fig_dir,
-       height = 120, width = 88, units = "mm", dpi = 1000)
-
-# Alternative
-loo_pred_obs_vp1 <- loo_pred_obs_vp_list %>%
-  modify_at(-1, ~. + theme(strip.text.x = element_blank())) %>%
-  map(~. + theme(axis.title = element_blank())) %>%
-  .[-4] %>%
-  plot_grid(plotlist = ., ncol = 1, align = "hv") %>%
-  add_sub(plot = ., label = "Predicted phenotypic value", size = 6)
-
-ggsave(filename = "figure3_draft1.jpg", plot = loo_pred_obs_vp1, path = fig_dir,
-       height = 120, width = 88, units = "mm", dpi = 1000)
+ggsave(filename = "figure2_partA_draft.jpg", plot = g_loo_pred_obs, path = fig_dir,
+       height = 120, width = 80, units = "mm", dpi = 1000)
 
 
+## Part B - accuracy within environments - LOEO
 
-## Plot VP within TP
-loo_pred_obs_combine_list <- loo_predictions_df %>%
-  inner_join(., best_results) %>%
-  mutate_at(vars(value, pred_complete), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
-  mutate(trait = paste0("'", str_add_space(trait), "'~(", trait_units1[trait], ")")) %>%
-  split(.$trait) %>%
-  map(~{
-    
-    ## Determine x and y axis breaks and limits
-    xlims <- range(.x$pred_complete)
-    ylims <- range(.x$value)
-    xbreaks <- pretty(xlims)
-    ybreaks <- pretty(ylims)
-    
-    ## Define the limits for the plot-in-plot (topleft)
-    pp_scale <- 0.33
-    pp_xs <- c(xlims[1] * 1.01, (xlims[1] * 1.01) + diff(xlims) * pp_scale)
-    pp_ys <- rev(c(ylims[2] * 0.99, (ylims[2] * 0.99) - diff(ylims) * pp_scale))
-    
-    # Plot modifier
-    g_mod <- list(
-      scale_x_continuous(name = "Predicted phenotypic value", breaks = xbreaks, limits = xlims),
-      scale_y_continuous(name = "Observed phenotypic value", breaks = ybreaks, limits = ylims),
-      scale_color_discrete(guide = FALSE),
-      theme_genetics(base_size = 6),
-      theme(strip.placement = "outside", strip.background = element_blank(), axis.title = element_blank())
-    )
-    
-    ## Split by type
-    g_list_type <- split(.x, .x$type) %>%
-      map(.x = ., .f = function(x1) {
-        
-        # Plot modifier
-        
-        # Plot the VP plot-in-plot window
-        g_vp <- filter(x1, pop == "vp") %>%
-          ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
-          geom_point(size = 0.5, alpha = 0.5) +
-          geom_text(data = filter(x1, pop == "vp") %>% distinct(trait, type, ability_all_annotation),
-                    aes(x = Inf, y = -Inf, label = ability_all_annotation), inherit.aes = FALSE, 
-                    parse = TRUE, vjust = -1, hjust = 1.2, size = 1.5) +
-          g_mod
-        
-        ## Plot tp
-        g_tp <- filter(x1, pop == "tp") %>%
-          ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
-          geom_point(size = 0.5, alpha = 0.5) +
-          geom_text(data = distinct(x1, trait, type, ability_all_annotation),
-                    aes(x = Inf, y = -Inf, label = ability_all_annotation), inherit.aes = FALSE, 
-                    parse = TRUE, vjust = -1, hjust = 1.2, size = 1.5) +
-          facet_grid(trait ~ type, switch = "y", labeller = labeller(trait = label_parsed, type = f_type_replace)) +
-          g_mod
-        
-        ## Add custom annotation
-        g_tp + annotation_custom(grob = ggplotGrob(g_vp), xmin = pp_xs[1], xmax = pp_xs[2], 
-                                 ymin = pp_ys[1], ymax = pp_ys[2])
-        
-      })
-    
-    ## Combine these plots
-    # First modify so the second does not have a y strip or axis line
-    g_combine <- g_list_type %>%
-      modify_at(2, ~. + theme(strip.text.y = element_blank(), axis.line.y = element_blank(), 
-                              axis.ticks.y = element_blank(), axis.text.y = element_blank()))  %>%
-      plot_grid(plotlist = ., nrow = 1, align = "hv")
-    
-    # Return
-    g_combine
-    
-  })
-        
- 
-# Combine the plots
-loo_pred_obs_combine <- loo_pred_obs_combine_list %>%
-  modify_at(-1, ~. + theme(strip.text.x = element_blank())) %>%
-  map(~. + theme(axis.title = element_blank())) %>%
-  plot_grid(plotlist = ., ncol = 1, align = "hv") %>%
-  add_sub(plot = ., label = "Predicted phenotypic value", size = 6)
-
-# Save
-ggsave(filename = "figure2_draft2.jpg", plot = loo_pred_obs_combine, path = fig_dir,
-       height = 120, width = 88, units = "mm", dpi = 1000)
-
-# Alternative
-loo_pred_obs_combine1 <- loo_pred_obs_combine_list %>%
-  modify_at(-1, ~. + theme(strip.text.x = element_blank())) %>%
-  map(~. + theme(axis.title = element_blank())) %>%
-  .[-4] %>%
-  plot_grid(plotlist = ., ncol = 1, align = "hv") %>%
-  add_sub(plot = ., label = "Predicted phenotypic value", size = 6)
-
-ggsave(filename = "figure2_draft2b.jpg", plot = loo_pred_obs_combine1, path = fig_dir,
-       height = 130, width = 88, units = "mm", dpi = 1000)
+## Plot
+accuracy_within_env_toplot <- within_site_prediction_accuracy_summ %>%
+  filter(type == "loeo") %>%
+  filter(model %in% c("model1", "model2_cov", "model3_cov"), selection %in% c("none", "rfa_cv_adhoc")) %>%
+  # Add individual points
+  left_join(., predictive_ability) %>%
+  mutate(trait1 = paste0(abbreviate(str_add_space(trait), 2), "\n(n = ", nGroup+1, ")")) %>%
+  unite(group, trait, model, pop, remove = FALSE)
+  
+# Plot option 1: boxplot
+g_accuracy_within_env <- accuracy_within_env_toplot %>%
+  ggplot(aes(x = trait1, y = ability, fill = model, group = group)) +
+  # jitter points
+  geom_jitter(position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.9), size = 0.01) +
+  geom_boxplot(position = position_dodge(0.9), alpha = 0.5, outlier.shape = NA, lwd = 0.2) +
+  scale_x_discrete(name = NULL) +
+  scale_y_continuous(name = expression('Prediction accuracy'~r[MP]), breaks = pretty) +
+  scale_fill_manual(name = "Model", values = model_colors, labels = f_model_replace,
+                    guide = guide_legend(label.position = "left", title = NULL)) +
+  facet_grid(type ~ pop, switch = "y", labeller = labeller(pop = f_validation_replace)) +
+  theme_genetics(base_size = 6) +
+  theme(strip.background = element_blank(), strip.placement = "outside", axis.line.x = element_blank(),
+        legend.text.align = 1, legend.position = c(0.89, 0.95), legend.key.size = unit(0.4, "line"),
+        legend.title.align = 1, legend.background = element_rect(fill = alpha("white", 0)),
+        legend.text = element_text(size = 5), legend.key.height = unit(0.3, "line")) +
+  theme(axis.title = element_blank(), strip.text = element_text(color = "white"))
 
 
-
-
-
-# Figure 4: prediction accuracy within environments and locations ---------
-
-
-## Summarize the best selection predictions
-loo_predictive_ability_summ <- loo_predictive_ability %>%
-  inner_join(., distinct(best_results, trait, type, selection)) %>%
-  group_by(trait, model, pop, type, selection) %>%
-  mutate_at(vars(ability, bias), list(mean = ~mean, sd = ~sd, n = ~n())) %>%
-  ungroup() %>%
-  mutate_at(vars(contains("sd")), list(se = ~. / sqrt(ability_n))) %>%
-  select(trait, model, pop, type, leave_one_group, selection, ability, ability_mean, 
-         ability_se = ability_sd_se) %>%
-  unite(group, model, pop, remove = FALSE)
-
-
-## Determine the LSD between model-selection groups
-loo_prediction_accuracy_summ1 <- loo_predictive_ability %>%
-  filter(!is.na(ability)) %>%
-  mutate(type = str_extract(type, "l[a-z]{3}")) %>%
-  group_by(type, trait, pop) %>%
+accuracy_within_env_toplot2 <- accuracy_within_env_toplot %>%
+  group_by(type, group, trait, trait1, model, pop, selection) %>%
   do({
-    dat <- .
-    fit <- lm(ability ~ model + selection + model:selection, data = dat)
-    n <- max(as.numeric(xtabs(~ model + selection, dat)))
-    MS_within <- sigma(fit)^2 # Within-group error (residuals)
-    df <- df.residual(fit)
-    LSD <- qt(p = 1 - (0.05 / 2), df = df) * sqrt(MS_within * (2 / n))
-    
-    # Return mean and LSD of prediction accuracy
-    aggregate(ability ~ model + selection, dat, mean) %>% 
-      mutate(LSD = LSD)
+    df <- .
+    # Get ranges from boxplot
+    bp <- boxplot(x = df$ability, plot = FALSE)
+    # Return a tibble
+    bind_cols(distinct(df, ability_mean), 
+              as_tibble(setNames(object = as.list(bp$stats), nm = c("lower", "q25", "median", "q75", "upper"))) )
   }) %>% ungroup()
 
 
 
-
-
-## Plot
-g_accuracy_within_env <- loo_predictive_ability_summ %>%
-  distinct(trait, model, pop, type, ability_mean, ability_se) %>%
-  unite(group, model, pop, remove = FALSE) %>%
-  ggplot(aes(x = trait, y = ability_mean, color = model, shape = pop, group = group)) +
-  geom_point(position = position_dodge(0.9)) +
-  scale_x_discrete(name = NULL, labels = str_add_space) +
-  scale_y_continuous(name = expression('Predictive ability'~r[MP]), breaks = pretty) +
-  scale_color_manual(name = "Model", values = model_colors, labels = f_model_replace) +
-  scale_shape_discrete(name = "Validation\nscheme", labels = f_pop_replace) +
-  facet_grid(~ type, labeller = labeller(type = f_type_replace)) +
-  theme_genetics(base_size = 6) +
-  theme(strip.background = element_blank(), panel.border = element_rect(fill = alpha("white", 0)))
-
-
-## Only plot models with covariates
-g_accuracy_within_env2 <- g_accuracy_within_env %>% 
-  modify_at("data", ~filter(., str_detect(model, "id", negate = TRUE)))
-
-## Only plot model3_cov
-g_accuracy_within_env3 <- g_accuracy_within_env %>% 
-  modify_at("data", ~filter(., model == "model3_cov"))
-
-
-
-
-g_accuracy_within_env <- loo_predictive_ability_summ %>%
-  distinct(trait, model, pop, type, group, ability_mean, ability_se) %>%
-  ggplot(aes(x = trait, y = ability_mean, group = group)) +
-  # add points with jitter
-  geom_jitter(data = loo_predictive_ability_summ, aes(y = ability), position = position_dodge(0.9),
-              size = 0.15, alpha = 0.75, shape = 1) +
-  geom_col(aes(fill = model), position = position_dodge(0.9), color = "black", lwd = 0.25, alpha = 0.75) +
-  geom_errorbar(aes(ymin = ability_mean - ability_se, ymax = ability_mean + ability_se), 
-                position = position_dodge(0.9), width = 0.5) +
-  scale_x_discrete(name = NULL, labels = function(x) str_replace_all(str_add_space(x), " ", "\n")) +
-  scale_y_continuous(name = expression('Predictive ability'~r[MP]), breaks = pretty) +
+# Option 2: point and line range
+g_accuracy_within_env <- accuracy_within_env_toplot %>%
+  ggplot(aes(x = trait1, color = model, fill = model, group = group)) +
+  # jitter points
+  geom_jitter(aes(y = ability), position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.9), 
+              size = 0.1, color = "grey85") +
+  # Pointrange
+  geom_linerange(data = accuracy_within_env_toplot2, aes(ymin = lower, ymax = upper), position = position_dodge(0.9), lwd = 0.25) +
+  geom_linerange(data = accuracy_within_env_toplot2, aes(ymin = q25, ymax = q75), position = position_dodge(0.9), lwd = 0.75) +
+  geom_point(data = accuracy_within_env_toplot2, aes(y = ability_mean), position = position_dodge(0.9), size = 1) +
+  scale_x_discrete(name = NULL) +
+  scale_y_continuous(name = expression('Prediction accuracy'~r[MP]), breaks = pretty) +
   scale_fill_manual(name = "Model", values = model_colors, labels = f_model_replace,
                     guide = guide_legend(label.position = "left", title = NULL)) +
-  scale_shape_discrete(name = "Validation\nscheme", labels = f_pop_replace) +
-  facet_grid(type ~ pop, switch = "y", labeller = labeller(type = f_type_replace, pop = f_pop_replace)) +
+  scale_color_manual(name = "Model", values = model_colors, labels = f_model_replace,
+                    guide = guide_legend(label.position = "left", title = NULL)) +
+  facet_grid(type ~ pop, switch = "y", labeller = labeller(pop = f_validation_replace)) +
   theme_genetics(base_size = 6) +
-  theme(strip.background = element_blank(), panel.border = element_rect(fill = alpha("white", 0)),
-        strip.placement = "outside", axis.line = element_blank(),
-        legend.text.align = 1, legend.position = c(0.89, 0.94), legend.key.size = unit(0.6, "line"),
+  theme(strip.background = element_blank(), strip.placement = "outside", axis.line.x = element_blank(),
+        legend.text.align = 1, legend.position = c(0.89, 0.95), legend.key.size = unit(0.4, "line"),
         legend.title.align = 1, legend.background = element_rect(fill = alpha("white", 0)),
-        legend.text = element_text(size = 5))
+        legend.text = element_text(size = 5), legend.key.height = unit(0.3, "line")) +
+  theme(axis.title = element_blank(), strip.text.y = element_text(color = "white"))
 
-
-## Only plot models with covariates
-g_accuracy_within_env2 <- g_accuracy_within_env %>% 
-  modify_at("data", ~filter(., str_detect(model, "id", negate = TRUE))) 
-g_accuracy_within_env2$layers[[1]]$data <- g_accuracy_within_env2$layers[[1]]$data %>%
-  filter(., str_detect(model, "id", negate = TRUE))
+# Add text grob
+g_accuracy_within_env1 <- plot_grid(textGrob(label = expression('Prediction accuracy'~r[MP]), rot = 90, gp = gpar(fontsize = 6)), 
+                                    g_accuracy_within_env, 
+                                    rel_widths = c(0.03, 1))  
 
 ## Save
-ggsave(filename = "figure4_draft2.jpg", plot = g_accuracy_within_env2, path = fig_dir,
-       width = 88, height = 90, dpi = 1000, units = "mm")
+ggsave(filename = "figure2_partB_draft.jpg", plot = g_accuracy_within_env1, path = fig_dir,
+       width = 80, height = 40, dpi = 1000, units = "mm")
+
+## Combine plots
+g_figure2 <- plot_grid(g_loo_pred_obs, g_accuracy_within_env1, 
+                       ncol = 1, rel_heights = c(1, 0.35), labels = letters[1:2], label_size = 8,
+                       align = "v", axis = "lr")
+
+## Save
+ggsave(filename = "figure2_draft1.jpg", plot = g_figure2, path = fig_dir,
+       width = 8.7, height = 15, dpi = 1000, units = "cm")
 
 
+
+
+
+
+## Remove plant height ##
+
+
+# Split by trait and Plot
+g_loo_pred_obs_list <- loo_pred_obs_df %>%
+  filter(trait != "PlantHeight") %>%
+  split(.$trait) %>%
+  map(~{
+    # Extract annotations
+    ann_df <- distinct(.x, trait, pop, ability_all) %>%
+      mutate(annotation = paste0("r[MP]==", ability_all))
+    
+    ggplot(.x, aes(x = pred_complete, y = value, color = leave_one_group)) +
+      geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
+      geom_point(size = 0.2) +
+      geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
+                parse = TRUE, vjust = -1, hjust = 1.2, size = 1.5) +
+      scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
+      scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
+      scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
+      facet_grid(trait1 ~ pop, switch = "y", labeller = labeller(trait1 = label_parsed, pop = f_validation_replace)) +
+      theme_genetics(base_size = 6) +
+      theme(strip.placement = "outside", strip.background = element_blank())
+  })
+
+
+# Combine the plots
+g_loo_pred_obs <- g_loo_pred_obs_list %>%
+  modify_at(-1, ~. + theme(strip.text.x = element_blank())) %>%
+  map(~. + theme(axis.title = element_blank())) %>%
+  plot_grid(plotlist = ., ncol = 1, align = "hv") %>%
+  add_sub(plot = ., label = "Predicted phenotypic value", size = 6, vjust = -1) %>%
+  plot_grid(textGrob(label = "Observed phenotypic value", rot = 90, gp = gpar(fontsize = 6)), ., rel_widths = c(0.03, 1))
+
+
+# Remove plant height from g_accuracy_within_env
+accuracy_within_env_toplot3 <- filter(accuracy_within_env_toplot2, trait != "PlantHeight")
+g_accuracy_within_env1 <- accuracy_within_env_toplot %>%
+  filter(trait != "PlantHeight") %>%
+  ggplot(aes(x = trait1, color = model, fill = model, group = group)) +
+  # jitter points
+  geom_jitter(aes(y = ability), position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.9), 
+              size = 0.1, color = "grey85") +
+  # Pointrange
+  geom_linerange(data = accuracy_within_env_toplot3, aes(ymin = lower, ymax = upper), position = position_dodge(0.9), lwd = 0.25) +
+  geom_linerange(data = accuracy_within_env_toplot3, aes(ymin = q25, ymax = q75), position = position_dodge(0.9), lwd = 0.75) +
+  geom_point(data = accuracy_within_env_toplot3, aes(y = ability_mean), position = position_dodge(0.9), size = 1) +
+  scale_x_discrete(name = NULL) +
+  scale_y_continuous(name = expression('Prediction accuracy'~r[MP]), breaks = pretty) +
+  scale_fill_manual(name = "Model", values = model_colors, labels = f_model_replace,
+                    guide = guide_legend(label.position = "left", title = NULL)) +
+  scale_color_manual(name = "Model", values = model_colors, labels = f_model_replace,
+                     guide = guide_legend(label.position = "left", title = NULL)) +
+  facet_grid(type ~ pop, switch = "y", labeller = labeller(pop = f_validation_replace)) +
+  theme_genetics(base_size = 6) +
+  theme(strip.background = element_blank(), strip.placement = "outside", axis.line.x = element_blank(),
+        legend.text.align = 1, legend.position = c(0.89, 0.95), legend.key.size = unit(0.4, "line"),
+        legend.title.align = 1, legend.background = element_rect(fill = alpha("white", 0)),
+        legend.text = element_text(size = 5), legend.key.height = unit(0.3, "line")) +
+  theme(axis.title = element_blank(), strip.text.y = element_text(color = "white"))
+
+# Add text grob
+g_accuracy_within_env2 <- plot_grid(textGrob(label = expression('Prediction accuracy'~r[MP]), rot = 90, gp = gpar(fontsize = 6)), 
+                                    g_accuracy_within_env1, 
+                                    rel_widths = c(0.03, 1))  
+
+## Combine plots
+g_figure2 <- plot_grid(g_loo_pred_obs, g_accuracy_within_env2, 
+                       ncol = 1, rel_heights = c(1, 0.30), labels = letters[1:2], label_size = 8,
+                       align = "v", axis = "lr")
+
+## Save
+ggsave(filename = "figure2_draft2.jpg", plot = g_figure2, path = fig_dir,
+       width = 8.7, height = 15, dpi = 1000, units = "cm")
 
 
 
@@ -1470,7 +1329,7 @@ for (plotList in split(concurrent_features_heatmap_plots, concurrent_features_he
 load(file.path(result_dir, "full_model_variance_analysis.RData"))
 
 # Collapse if a list
-if (is.list(pheno_variance_analysis)) {
+if (!is.data.frame(pheno_variance_analysis)) {
   pheno_variance_analysis <- pheno_variance_analysis %>% 
     subset(., sapply(., is.data.frame)) %>%
     bind_rows()

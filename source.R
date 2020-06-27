@@ -163,19 +163,14 @@ trait_sign <- tibble(trait = traits, sign = c(1, -1, -1, 1, -1))
 
 
 ## A vector to rename models
-model_replace <- c("model1" = "g", "model2_id" = "g + E", "model2_cov" = "g + w", 
-                   "model3_id" = "g + E + gE", "model3_cov" = "g + w + gu", "model3_cov1" = "g + w + gw")
-
-## Models to present
-# model_present <- model_replace[str_detect(names(model_replace), "_", negate = TRUE)]
-model_present <- model_replace
+model_replace <- c("model1" = "g", "model2_id" = "g + e", "model2_cov" = "g + e", 
+                   "model3_id" = "g + e + (ge)", "model3_cov" = "g + e + (ge)", "model3_cov1" = "g + e + (ge)")
 
 
 f_model_replace <- function(x) model_replace[x]
-f_model_replace2 <- function(x) model_present[x]
 # f_model_replace <- function(x) paste0("M", toupper(str_extract(x, "[0-9]{1}[a-z]{0,1}")))
 # Vector to rename validation schemes
-f_validation_replace <- function(x) str_replace_all(x, c("tp" = "Cross-validation", "vp" = "Offspring validation"))
+f_validation_replace <- function(x) str_replace_all(x, c("tp" = "Tested genotypes", "vp" = "Untested offspring genotypes"))
 f_pop_replace <- function(x) str_replace_all(x, c("all" = "All", "tp" = "FP", "vp" = "OP"))
 # Replace type
 f_type_replace <- function(x) c("loeo" = "New environment", "lolo" = "New location", "loyo" = "New year")[x]

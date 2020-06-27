@@ -1810,7 +1810,7 @@ genomewide_prediction2 <- function(x, model.list, K, E, KE) {
   GI <- kronecker(X = K, Y = I, make.dimnames = TRUE)
   
   ## Define an expression that fits the model
-  fit_mmer_exp <- expression({
+  fit_mmer_exp <- expression({ 
     model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
                       data = train, date.warning = FALSE, verbose = TRUE, getPEV = TRUE)
   })
@@ -1861,26 +1861,6 @@ genomewide_prediction2 <- function(x, model.list, K, E, KE) {
       
       ## Random effects
       rand_eff <- list(`u:line_name` = cbind(u = model_fit$u, pev = model_fit$u.SE^2))
-      
-    } else if (mod == "model2_fr") {
-      
-      mf <- model.frame(formula = reformulate(c("line_name", covariate_list$main), response = "value"), data = train)
-      y <- model.response(mf)
-      # Covariates
-      X <- model.matrix(reformulate(termlabels = covariate_list$main), data = mf)
-      # If X is not full rank, drop the last term
-      while (qr(crossprod(X))$rank < ncol(X)) X <- X[,-ncol(X)]
-      
-      Z <- model.matrix(~ -1 + line_name, data = mf)
-      
-      model_fit <- mixed.solve(y = y, Z = Z, K = K, X = X, SE = TRUE)
-      
-      ## Matrices of fixed and random effects
-      fixed_eff <- as.matrix(model_fit$beta)
-
-      ## Random effects
-      rand_eff <- list(`u:line_name` = c(model_fit$u))
-      
       
       # All other models use SOMMER
     } else {
@@ -1943,6 +1923,8 @@ genomewide_prediction2 <- function(x, model.list, K, E, KE) {
           
         }
          
+        
+        
         ## Fixed effects
         fixed_eff <- coef(model_fit) %>%
           select(term = Effect, estimate = Estimate) %>%
