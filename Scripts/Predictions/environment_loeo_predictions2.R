@@ -136,7 +136,8 @@ covariates_tomodel <- feature_selection_df %>%
   mutate(covariates = map(covariates, "covariates")) %>%
   # nest
   group_by(trait) %>% 
-  nest(.key = "model_covariates")
+  nest(.key = "model_covariates") %>%
+  ungroup()
 
 
 # Generate skeleton train/test sets for LOEO
@@ -240,59 +241,59 @@ loeo_predictions_out <- data_train_test1 %>%
       prediction_out_features <- unnest(covariates_use, out)
       
       
-      ##############
-      ##############
-      
-      # Use stepwise covariates for E and all covariates for GxE
-      # Subset models
-      models_run <- lapply(X = model.list, "[", c("model3_cov_all"))
-      # Get covariates
-      covariates_use <- covariates_row %>%
-        select(-direction) %>%
-        unite(feature_selection_model, feature_selection, model) %>%
-        filter(feature_selection_model %in% c("rfa_cv_adhoc_model2", "all_model3")) %>%
-        spread(feature_selection_model, covariates) %>%
-        mutate(out = list(NULL))
-      
-      # Iterate over rows
-      for (r in seq_len(nrow(covariates_use))) {
-        
-        # Covariate data source
-        src <- covariates_use$source[r]
-        
-        # List of covariates
-        covariate_list <- list(
-          main = str_subset(string = covariates_use$rfa_cv_adhoc_model2[[1]], pattern = "line_name:", negate = TRUE),
-          interaction = str_remove(str_subset(string = covariates_use$all_model3[[1]], pattern = "line_name:"), "line_name:")
-        )
-        
-        # Create a matrix of scaled and centered covariates
-        covariate_mat <- ec_tomodel_scaled[[src]] %>%
-          filter(environment %in% levels(row$train[[1]]$site1)) %>%
-          select(., environment, unique(unlist(covariate_list))) %>%
-          as.data.frame() %>%
-          column_to_rownames("environment") %>%
-          as.matrix()
-        
-        ## Environmental relationship matrices
-        Emain <- Env_mat(x = covariate_mat[,covariate_list$main, drop = FALSE], method = "Jarq")
-        Eint <- Env_mat(x = covariate_mat[,covariate_list$int, drop = FALSE], method = "Jarq")
-
-        # run predictions
-        prediction_out_cov <- genomewide_prediction2(x = row, model.list = models_run, K = K, E = Emain, KE = Eint)
-        
-        # Add to df
-        covariates_use$out[[r]] <- prediction_out_cov$prediction_out
-        
-      }
-      
-      prediction_out_model3_cov_all <- unnest(covariates_use, out) %>%
-        mutate(feature_selection = "rfa_cv_adhoc") %>% 
-        select(source, feature_selection, trait, model, prediction)
-      
-      ###################
-      
-      ###################
+      # ##############
+      # ##############
+      # 
+      # # Use stepwise covariates for E and all covariates for GxE
+      # # Subset models
+      # models_run <- lapply(X = model.list, "[", c("model3_cov_all"))
+      # # Get covariates
+      # covariates_use <- covariates_row %>%
+      #   select(-direction) %>%
+      #   unite(feature_selection_model, feature_selection, model) %>%
+      #   filter(feature_selection_model %in% c("rfa_cv_adhoc_model2", "all_model3")) %>%
+      #   spread(feature_selection_model, covariates) %>%
+      #   mutate(out = list(NULL))
+      # 
+      # # Iterate over rows
+      # for (r in seq_len(nrow(covariates_use))) {
+      #   
+      #   # Covariate data source
+      #   src <- covariates_use$source[r]
+      #   
+      #   # List of covariates
+      #   covariate_list <- list(
+      #     main = str_subset(string = covariates_use$rfa_cv_adhoc_model2[[1]], pattern = "line_name:", negate = TRUE),
+      #     interaction = str_remove(str_subset(string = covariates_use$all_model3[[1]], pattern = "line_name:"), "line_name:")
+      #   )
+      #   
+      #   # Create a matrix of scaled and centered covariates
+      #   covariate_mat <- ec_tomodel_scaled[[src]] %>%
+      #     filter(environment %in% levels(row$train[[1]]$site1)) %>%
+      #     select(., environment, unique(unlist(covariate_list))) %>%
+      #     as.data.frame() %>%
+      #     column_to_rownames("environment") %>%
+      #     as.matrix()
+      #   
+      #   ## Environmental relationship matrices
+      #   Emain <- Env_mat(x = covariate_mat[,covariate_list$main, drop = FALSE], method = "Jarq")
+      #   Eint <- Env_mat(x = covariate_mat[,covariate_list$int, drop = FALSE], method = "Jarq")
+      # 
+      #   # run predictions
+      #   prediction_out_cov <- genomewide_prediction2(x = row, model.list = models_run, K = K, E = Emain, KE = Eint)
+      #   
+      #   # Add to df
+      #   covariates_use$out[[r]] <- prediction_out_cov$prediction_out
+      #   
+      # }
+      # 
+      # prediction_out_model3_cov_all <- unnest(covariates_use, out) %>%
+      #   mutate(feature_selection = "rfa_cv_adhoc") %>% 
+      #   select(source, feature_selection, trait, model, prediction)
+      # 
+      # ###################
+      # 
+      # ###################
       
       # ## Combine and return the predictions
       # out[[i]] <- mutate(bind_rows(prediction_out_id$prediction_out, prediction_out_features, prediction_out_model3_cov_all), 
