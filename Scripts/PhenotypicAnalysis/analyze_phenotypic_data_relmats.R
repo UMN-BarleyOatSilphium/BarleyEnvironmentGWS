@@ -214,6 +214,133 @@ environment_pheno_variance_analysis <- pheno_variance_analysis_out
 
 
 
+## If working locally, load the results to complete unfitted models
+if (startsWith(repo_dir, "C:/")) {
+  pheno_variance_analysis1 <- bind_rows(environment_pheno_variance_analysis)
+  
+  # Find the results with 1 row- these are errors
+  which_errors <- map_lgl(pheno_variance_analysis1$results, ~nrow(.) == 1)
+  
+  # If any, refit them
+  if (any(which_errors)) {
+    
+    pheno_variance_analysis_refit <- pheno_variance_analysis1[which_errors,,drop = FALSE] %>%
+      left_join(., select(bind_rows(data_to_model_split), -features)) %>%
+      mutate(results = list(NULL))
+    
+    # Iterate over rows
+    for (i in seq_len(nrow(pheno_variance_analysis_refit))) {
+      
+      row <- pheno_variance_analysis_refit[i,]
+      
+      # Trait
+      tr <- row$trait
+      data <- droplevels(row$data[[1]])
+      genotypes <- levels(data$line_name)
+      environments <- levels(data$environment)
+      covariates <- row$features[[1]]
+      
+      # Separate covariates into main effect or interaction
+      covariate_list <- tibble(term = unique(covariates)) %>%
+        mutate(class = ifelse(str_detect(term, ":"), "interaction", "main"),
+               covariate = str_remove(term, "line_name:")) %>%
+        split(.$class) %>%
+        map("covariate")
+      
+      
+      # Create or subset relationship matrices
+      K_use <- K[genotypes, genotypes]
+      Zg <- model.matrix(~ -1 + line_name, data)
+      Emain <- Eint2 <- Env_mat(x = covariate_mat[environments, covariate_list$main, drop = FALSE], method = "Jarq")
+      Eint <- Env_mat(x = covariate_mat[environments, covariate_list$int, drop = FALSE], method = "Jarq")
+      # Replace with diagonal matrix if NA
+      if (all(is.na(Eint))) {
+        Eint[] <- 0
+        diag(Eint) <- 1
+        no_gxe_cov <- TRUE
+        
+      } else {
+        no_gxe_cov <- FALSE
+        
+      }
+      
+      Ze <- model.matrix(~ -1 + environment, data)
+      KE <- tcrossprod(Zg %*% K_use, Zg) * tcrossprod(Ze %*% Eint, Ze)
+      dimnames(KE) <- replicate(2, data$gxe, simplify = FALSE)
+      
+      ## Sommer
+      model_stdout <- capture.output({
+        model_try <- try( {
+          fit_mmer <- mmer(fixed = value ~ 1,
+                           random = ~ line_name + vs(line_name_cov, Gu = K_use) + environment + vs(environment_cov, Gu = Emain) +
+                             gxe + vs(gxe_cov, Gu = KE),
+                           data = data, verbose = TRUE)
+        }, silent = TRUE) })
+      
+      
+      
+      # Retry with fewer iterations if singular
+      if (class(model_try) == "try-error" | any(grepl(pattern = "singular", x = model_stdout))) {
+        
+        # Parse the monitor for iterations
+        model_monitor <- read_table(head(model_stdout, -1))
+        
+        # Select 1 iteration fewer
+        iter_max <- max(model_monitor$iteration) - 1
+        
+          
+        # refit the model
+        fit_mmer <- mmer(fixed = value ~ 1, 
+                         random = ~ line_name + vs(line_name_cov, Gu = K_use) + environment + vs(environment_cov, Gu = Emain) +
+                           gxe + vs(gxe_cov, Gu = KE),
+                         data = data, verbose = TRUE, iter = iter_max)
+        
+      }
+          
+      
+      # Get the variance components; asemble into a tibble
+      varcomp_df <- fit_mmer$sigma %>%
+        map_dbl(~.) %>%
+        tibble(term = names(.), variance = .) %>%
+        mutate(term = str_remove_all(term, "u:"),
+               source = str_remove_all(term, "_cov")) %>%
+        group_by(source) %>%
+        mutate(total_source_variance = sum(variance)) %>%
+        ungroup() %>%
+        mutate(variance_prop = variance / total_source_variance,
+               note = list(NULL))
+      
+      # Add to the df
+      pheno_variance_analysis_refit$results[[i]] <- varcomp_df
+      
+    } # end the loop
+    
+    # Add the results to the original df
+    pheno_variance_analysis2 <- bind_rows(
+      pheno_variance_analysis1[!which_errors,,drop = FALSE],
+      pheno_variance_analysis_refit
+    ) %>% select(-data, -core)
+    
+    
+  }
+  
+  environment_pheno_variance_analysis <- pheno_variance_analysis2
+  
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # Location-specific -------------------------------------------------------
@@ -403,106 +530,128 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
 location_pheno_variance_analysis <- pheno_variance_analysis_out
 
 
-
-
-
-
-# ## If working locally, load the results to complete unfitted models
-# if (startsWith(repo_dir, "C:/")) {
-#   pheno_variance_analysis1 <- bind_rows(pheno_variance_analysis)
-#   
-#   # Find the results with 1 row- these are errors
-#   which_errors <- map_lgl(pheno_variance_analysis1$results, ~nrow(.) == 1)
-#   
-#   # If any, refit them
-#   if (any(which_errors)) {
-#     
-#     pheno_variance_analysis_refit <- pheno_variance_analysis1[which_errors,,drop = FALSE] %>%
-#       left_join(., select(bind_rows(data_to_model_split), -features)) %>%
-#       mutate(results = list(NULL))
-#     
-#     # Iterate over rows
-#     for (i in seq_len(nrow(pheno_variance_analysis_refit))) {
-#       
-#       row <- pheno_variance_analysis_refit[i,]
-#       
-#       # Trait
-#       tr <- row$trait
-#       data <- droplevels(row$data[[1]])
-#       genotypes <- levels(data$line_name)
-#       environments <- levels(data$environment)
-#       covariates <- row$features[[1]]
-#       
-#       # Separate covariates into main effect or interaction
-#       covariate_list <- tibble(term = unique(covariates)) %>% 
-#         mutate(class = ifelse(str_detect(term, ":"), "interaction", "main"),
-#                covariate = str_remove(term, "line_name:")) %>%
-#         split(.$class) %>% 
-#         map("covariate")
-#       
-#       
-#       # Create or subset relationship matrices
-#       K_use <- K[genotypes, genotypes]
-#       Zg <- model.matrix(~ -1 + line_name, data)
-#       Emain <- Eint2 <- Env_mat(x = covariate_mat[environments, covariate_list$main, drop = FALSE], method = "Jarq")
-#       Eint <- Env_mat(x = covariate_mat[environments, covariate_list$int, drop = FALSE], method = "Jarq")
-#       # Replace with diagonal matrix if NA
-#       if (all(is.na(Eint))) { 
-#         Eint[] <- 0
-#         diag(Eint) <- 1 
-#         no_gxe_cov <- TRUE
-#         
-#       } else {
-#         no_gxe_cov <- FALSE
-#         
-#       }
-#       
-#       Ze <- model.matrix(~ -1 + environment, data)
-#       KE <- tcrossprod(Zg %*% K_use, Zg) * tcrossprod(Ze %*% Eint, Ze)
-#       dimnames(KE) <- replicate(2, data$gxe, simplify = FALSE)
-#       
-#       ## Sommer
-#       model_stdout <- capture.output({ 
-#         model_try <- try( {
-#           fit_mmer <- mmer(fixed = value ~ 1, 
-#                            random = ~ line_name + vs(line_name_cov, Gu = K_use) + environment + vs(environment_cov, Gu = Emain) +
-#                              gxe + vs(gxe_cov, Gu = KE),
-#                            data = data, verbose = TRUE) 
-#         }, silent = TRUE) })
-#       
-#       
-#       # Get the variance components; asemble into a tibble
-#       varcomp_df <- fit_mmer$sigma %>% 
-#         map_dbl(~.) %>% 
-#         tibble(term = names(.), variance = .) %>% 
-#         mutate(term = str_remove_all(term, "u:"), 
-#                source = str_remove_all(term, "_cov")) %>%
-#         group_by(source) %>%
-#         mutate(total_source_variance = sum(variance)) %>%
-#         ungroup() %>%
-#         mutate(variance_prop = variance / total_source_variance,
-#                note = list(NULL))
-#       
-#       # Add to the df
-#       pheno_variance_analysis_refit$results[[i]] <- varcomp_df
-#       
-#     } # end the loop
-#     
-#     # Add the results to the original df
-#     pheno_variance_analysis2 <- bind_rows(
-#       pheno_variance_analysis1[!which_errors,,drop = FALSE],
-#       pheno_variance_analysis_refit
-#     ) %>% select(-data, -core)
-#     
-#     
-#   }
-#   
-#   pheno_variance_analysis <- pheno_variance_analysis2  
-#   
-#   
-# }
-
+## If working locally, load the results to complete unfitted models
+if (startsWith(repo_dir, "C:/")) {
+  pheno_variance_analysis1 <- bind_rows(location_pheno_variance_analysis)
+  
+  # Find the results with 1 row- these are errors
+  which_errors <- map_lgl(pheno_variance_analysis1$results, ~nrow(.) == 1)
+  
+  # If any, refit them
+  if (any(which_errors)) {
     
+    pheno_variance_analysis_refit <- pheno_variance_analysis1[which_errors,,drop = FALSE] %>%
+      left_join(., select(bind_rows(data_to_model_split), -features)) %>%
+      mutate(results = list(NULL))
+    
+    # Iterate over rows
+    for (i in seq_len(nrow(pheno_variance_analysis_refit))) {
+      
+      row <- pheno_variance_analysis_refit[i,]
+      
+      # Trait
+      tr <- row$trait
+      data <- droplevels(row$data[[1]])
+      genotypes <- levels(data$line_name)
+      locations <- levels(data$location)
+      covariates <- row$features[[1]]
+      
+      # Separate covariates into main effect or interaction
+      covariate_list <- tibble(term = unique(covariates)) %>%
+        mutate(class = ifelse(str_detect(term, ":"), "interaction", "main"),
+               covariate = str_remove(term, "line_name:")) %>%
+        split(.$class) %>%
+        map("covariate")
+      
+      
+      # Create or subset relationship matrices
+      K_use <- K[genotypes, genotypes]
+      Zg <- model.matrix(~ -1 + line_name, data)
+      Emain <- Eint2 <- Env_mat(x = covariate_mat[locations, covariate_list$main, drop = FALSE], method = "Jarq")
+      Eint <- Env_mat(x = covariate_mat[locations, covariate_list$int, drop = FALSE], method = "Jarq")
+      # Replace with diagonal matrix if NA
+      if (all(is.na(Eint))) {
+        Eint[] <- 0
+        diag(Eint) <- 1
+        no_gxe_cov <- TRUE
+        
+      } else {
+        no_gxe_cov <- FALSE
+        
+      }
+      
+      Ze <- model.matrix(~ -1 + location, data)
+      KE <- tcrossprod(Zg %*% K_use, Zg) * tcrossprod(Ze %*% Eint, Ze)
+      dimnames(KE) <- replicate(2, data$gxl, simplify = FALSE)
+      
+      ## Sommer
+      model_stdout <- capture.output({
+        model_try <- try( {
+          fit_mmer <- mmer(fixed = value ~ 1,
+                           random = ~ line_name + vs(line_name_cov, Gu = K_use) + location + vs(location_cov, Gu = Emain) +
+                             gxl + vs(gxl_cov, Gu = KE),
+                           data = data, verbose = TRUE)
+        }, silent = TRUE) })
+      
+      
+      
+      # Retry with fewer iterations if singular
+      if (class(model_try) == "try-error" | any(grepl(pattern = "singular", x = model_stdout))) {
+        
+        # Parse the monitor for iterations
+        model_monitor <- read_table(head(model_stdout, -1))
+        
+        # Select 1 iteration fewer
+        iter_max <- max(model_monitor$iteration) - 1
+        
+        ## Stop if iter_max == 0
+        if (iter_max == 0) {
+          # Add to the df
+          pheno_variance_analysis_refit$results[[i]] <- tibble(term = "Convergency error")
+          next
+          
+        }
+        
+        
+        # refit the model
+        fit_mmer <- mmer(fixed = value ~ 1,
+                         random = ~ line_name + vs(line_name_cov, Gu = K_use) + location + vs(location_cov, Gu = Emain) +
+                           gxl + vs(gxl_cov, Gu = KE),
+                         data = data, verbose = TRUE, iter = iter_max)
+        
+      }
+      
+      
+      # Get the variance components; asemble into a tibble
+      varcomp_df <- fit_mmer$sigma %>%
+        map_dbl(~.) %>%
+        tibble(term = names(.), variance = .) %>%
+        mutate(term = str_remove_all(term, "u:"),
+               source = str_remove_all(term, "_cov")) %>%
+        group_by(source) %>%
+        mutate(total_source_variance = sum(variance)) %>%
+        ungroup() %>%
+        mutate(variance_prop = variance / total_source_variance,
+               note = list(NULL))
+      
+      # Add to the df
+      pheno_variance_analysis_refit$results[[i]] <- varcomp_df
+      
+    } # end the loop
+    
+    # Add the results to the original df
+    pheno_variance_analysis2 <- bind_rows(
+      pheno_variance_analysis1[!which_errors,,drop = FALSE],
+      pheno_variance_analysis_refit
+    ) %>% select(-data, -core)
+    
+    
+  }
+  
+  location_pheno_variance_analysis <- pheno_variance_analysis2
+  
+}
+
 
 # Save the df
 save("environment_pheno_variance_analysis", "location_pheno_variance_analysis", 

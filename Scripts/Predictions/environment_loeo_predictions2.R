@@ -295,11 +295,11 @@ loeo_predictions_out <- data_train_test1 %>%
       # 
       # ###################
       
-      # ## Combine and return the predictions
-      # out[[i]] <- mutate(bind_rows(prediction_out_id$prediction_out, prediction_out_features, prediction_out_model3_cov_all), 
-      #                    train_n = list(train_n)) %>% unnest(train_n)
-      out[[i]] <- mutate(bind_rows(prediction_out_features, prediction_out_model3_cov_all), 
+      ## Combine and return the predictions
+      out[[i]] <- mutate(bind_rows(prediction_out_id$prediction_out, prediction_out_features),
                          train_n = list(train_n)) %>% unnest(train_n)
+      # out[[i]] <- mutate(bind_rows(prediction_out_features, prediction_out_model3_cov_all), 
+      #                    train_n = list(train_n)) %>% unnest(train_n)
       
       
       ## Notify user
