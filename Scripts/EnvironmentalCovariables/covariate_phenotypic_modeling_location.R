@@ -15,11 +15,10 @@
 repo_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/S2MET_Predictions_Models/"
 source(file.path(repo_dir, "source_MSI.R"))
 
-
-## Add new packages to load
-pkgs <- union(pkgs, c("modelr", "broom", "lme4", "car", "patchwork", "caret"))
-# Load these packages
-invisible(lapply(X = pkgs, library, character.only = TRUE))
+library(modelr)
+library(broom)
+library(lme4)
+library(car)
 
 ## significance level
 alpha <- 0.05
@@ -97,69 +96,58 @@ historical_timeframe_selection <- S2_MET_loc_BLUEs_tomodel %>%
   left_join(., bind_rows(historical_ec_tomodel_centered_use), by = "location") %>%
   group_by(trait, time_frame) %>%
   nest() %>%
-  ungroup()
+  ungroup() %>%
+  # Output list
+  mutate(out = list(NULL))
 
 
-# Split and parallelize
-historical_timeframe_selection_out <- historical_timeframe_selection %>%
-  assign_cores(df = ., n_core = n_cores, split = TRUE) %>%
-  coreApply(X = ., FUN = function(core_df) {
-    
-    # Vector to store output
-    out <- vector("list", length = nrow(core_df))
-    
-    # Iterate over rows of core_df
-    for (i in seq_along(out)) {
-      
-      row <- core_df[i,]
-      
-      # Factorize
-      df1 <- mutate_at(row$data[[1]], vars(line_name, location), ~fct_contr_sum(as.factor(.)))
-      
-      loo_indices <- df1 %>%
-        group_by(location) %>%
-        crossv_loo_grouped() %>%
-        pull(train) %>%
-        map("idx")
-      
-      # 1. Fit a base model
-      base_fit <- lm(value ~ 1 + line_name, data = df1)
-      covariates_use <- subset(trait_covariate_df, trait == row$trait, covariate, drop = TRUE)
-      
-      ## Recursive feature addition ##
-      ## Main effect
-      
-      # 2. Define the scope
-      scope <- list(lower = formula(base_fit), upper = reformulate(c("line_name", covariates_use), response = "value"))
-      # Run rfa
-      rfa_out <- rfa_loo(object = base_fit, data = df1, scope = scope, metric = "RMSE", index = loo_indices, env.col = "location")
-      
-      ## Interactions
-      # 1. Fit a base model
-      base_fit_int <- update(base_fit, formula = reformulate(rfa_out$optVariables, response = "value"))
-      # 2. Define the scope
-      scope <- list(lower = formula(base_fit_int), 
-                    upper = reformulate(c(rfa_out$optVariables, paste0("line_name:", covariates_use)), response = "value"))
-      # Run rfa
-      rfa_out_int <- rfa_loo(object = base_fit_int, data = df1, scope = scope, metric = "RMSE", 
-                             index = loo_indices, env.col = "location")
-      
-      ## Create a tibble
-      out[[i]] <- tibble(
-        feat_sel_type = "rfa_cv",
-        model = c("model2", "model3"),
-        adhoc = list(rfa_out, rfa_out_int),
-      )
-      
-    }
-    
-    # Add out to core_df and return
-    core_df %>% 
-      mutate(out = out) %>% 
-      unnest(out)
-    
-  }) %>% bind_rows()
-    
+# Iterate over rows
+for (i in seq_len(nrow(historical_timeframe_selection))) {
+  
+  row <- historical_timeframe_selection[i,]
+  
+  # Factorize
+  df1 <- mutate_at(row$data[[1]], vars(line_name, location), ~fct_contr_sum(as.factor(.)))
+  
+  loo_indices <- df1 %>%
+    group_by(location) %>%
+    crossv_loo_grouped() %>%
+    pull(train) %>%
+    map("idx")
+  
+  # 1. Fit a base model
+  base_fit <- lm(value ~ 1 + line_name, data = df1)
+  covariates_use <- subset(trait_covariate_df, trait == row$trait, covariate, drop = TRUE)
+  
+  ## Recursive feature addition ##
+  ## Main effect
+  
+  # 2. Define the scope
+  scope <- list(lower = formula(base_fit), upper = reformulate(c("line_name", covariates_use), response = "value"))
+  # Run rfa
+  rfa_out <- rfa_loo(object = base_fit, data = df1, scope = scope, metric = "RMSE", index = loo_indices, env.col = "location")
+  
+  ## Interactions
+  # 1. Fit a base model
+  base_fit_int <- update(base_fit, formula = reformulate(rfa_out$optVariables, response = "value"))
+  # 2. Define the scope
+  scope <- list(lower = formula(base_fit_int), 
+                upper = reformulate(c(rfa_out$optVariables, paste0("line_name:", covariates_use)), response = "value"))
+  # Run rfa
+  rfa_out_int <- rfa_loo(object = base_fit_int, data = df1, scope = scope, metric = "RMSE", 
+                         index = loo_indices, env.col = "location")
+  
+  ## Create a tibble
+  historical_timeframe_selection$out[[i]] <- tibble(
+    feat_sel_type = "rfa_cv",
+    model = c("model2", "model3"),
+    adhoc = list(rfa_out, rfa_out_int),
+  )
+  
+}
+
+historical_timeframe_selection_out <- unnest(historical_timeframe_selection, out)
+
 
 # Save these results
 save("historical_timeframe_selection_out", file = file.path(result_dir, "historical_covariate_timeframe_selection.RData"))
