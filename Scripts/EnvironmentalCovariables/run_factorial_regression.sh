@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#PBS -l walltime=08:00:00,mem=48gb,nodes=1:ppn=8
-#PBS -N factorial_regression
+#PBS -l walltime=04:00:00,mem=24gb,nodes=1:ppn=8
+#PBS -N historical_ec_timeframe_selection
 #PBS -M neyha001@umn.edu
 #PBS -m abe
 #PBS -r n
@@ -12,6 +12,9 @@ cd /panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/S2MET_Predictions_Mode
 module load R/3.5.2_mkl
 
 # Factorial regression samples
-Rscript covariate_phenotypic_modeling_sample.R
+# Rscript covariate_phenotypic_modeling_sample.R
 
+
+# Run the historical covariate timeframe selection
+Rscript covariate_phenotypic_modeling_location.R
 

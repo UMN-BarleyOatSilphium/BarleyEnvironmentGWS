@@ -378,7 +378,7 @@ ggsave(filename = "figure1_draft.jpg", plot = g_fig1, path = fig_dir,
 
 
 
-# Figure 2. LOO prediction accuracy ---------------------------------------
+# Figure 2. LOEO prediction accuracy ---------------------------------------
 
 
 # Load the compiled prediction results
@@ -444,18 +444,44 @@ ggsave(filename = "figure2_partA_draft.jpg", plot = g_loo_pred_obs, path = fig_d
 
 ## Part B - accuracy within environments - LOEO
 
+
+## First output a table of the average accuracy (and range)
+within_environment_prediction_accuracy_table <- within_environment_prediction_accuracy %>%
+  filter(type == "loeo", model != "model3_cov1") %>%
+  group_by(trait, model, pop, selection) %>%
+  summarize_at(vars(bias, accuracy), list(~mean, ~min, ~max)) %>%
+  ungroup() %>%
+  mutate_at(vars(contains("bias")), ~. * 100) %>%
+  # create annotation
+  mutate_at(vars(matches("^bias|^accuracy")), ~formatC(x = signif(., 2), digits = 2, width = 2, format = "f")) %>%
+  mutate(accuracy = paste0(accuracy_mean, " (", accuracy_min, ", ", accuracy_max, ")"),
+         bias = paste0(bias_mean, "% (", bias_min, ", ", bias_max, ")")) %>%
+  mutate(trait = str_add_space(trait), model = f_model_replace(model), selection = f_ec_selection_replace(selection),
+         validation = f_validation_replace(pop)) %>%
+  select(trait, model, selection, validation, accuracy, bias) %>%
+  arrange(validation, trait, model, selection) %>%
+  rename_all(str_to_title) %>%
+  rename(`EC Set` = Selection)
+
+# Save
+write_csv(x = within_environment_prediction_accuracy_table, 
+          path = file.path(fig_dir, "within_environment_accuracy_bias_table.csv"))
+
+
+
+
+
 ## Plot
-accuracy_within_env_toplot <- within_site_prediction_accuracy_summ %>%
+accuracy_within_env_toplot <- within_environment_prediction_accuracy %>%
   filter(type == "loeo") %>%
   filter(model %in% c("model1", "model2_cov", "model3_cov"), selection %in% c("none", "rfa_cv_adhoc")) %>%
   # Add individual points
-  left_join(., predictive_ability) %>%
   mutate(trait1 = paste0(abbreviate(str_add_space(trait), 2), "\n(n = ", nGroup+1, ")")) %>%
   unite(group, trait, model, pop, remove = FALSE)
   
 # Plot option 1: boxplot
 g_accuracy_within_env <- accuracy_within_env_toplot %>%
-  ggplot(aes(x = trait1, y = ability, fill = model, group = group)) +
+  ggplot(aes(x = trait1, y = accuracy, fill = model, group = group)) +
   # jitter points
   geom_jitter(position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.9), size = 0.01) +
   geom_boxplot(position = position_dodge(0.9), alpha = 0.5, outlier.shape = NA, lwd = 0.2) +
@@ -477,9 +503,9 @@ accuracy_within_env_toplot2 <- accuracy_within_env_toplot %>%
   do({
     df <- .
     # Get ranges from boxplot
-    bp <- boxplot(x = df$ability, plot = FALSE)
+    bp <- boxplot(x = df$accuracy, plot = FALSE)
     # Return a tibble
-    bind_cols(distinct(df, ability_mean), 
+    bind_cols(summarize(df, accuracy_mean = mean(accuracy)), 
               as_tibble(setNames(object = as.list(bp$stats), nm = c("lower", "q25", "median", "q75", "upper"))) )
   }) %>% ungroup()
 
@@ -489,12 +515,12 @@ accuracy_within_env_toplot2 <- accuracy_within_env_toplot %>%
 g_accuracy_within_env <- accuracy_within_env_toplot %>%
   ggplot(aes(x = trait1, color = model, fill = model, group = group)) +
   # jitter points
-  geom_jitter(aes(y = ability), position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.9), 
+  geom_jitter(aes(y = accuracy), position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.9), 
               size = 0.1, color = "grey85") +
   # Pointrange
   geom_linerange(data = accuracy_within_env_toplot2, aes(ymin = lower, ymax = upper), position = position_dodge(0.9), lwd = 0.25) +
   geom_linerange(data = accuracy_within_env_toplot2, aes(ymin = q25, ymax = q75), position = position_dodge(0.9), lwd = 0.75) +
-  geom_point(data = accuracy_within_env_toplot2, aes(y = ability_mean), position = position_dodge(0.9), size = 1) +
+  geom_point(data = accuracy_within_env_toplot2, aes(y = accuracy_mean), position = position_dodge(0.9), size = 1) +
   scale_x_discrete(name = NULL) +
   scale_y_continuous(name = expression('Prediction accuracy'~r[MP]), breaks = pretty) +
   scale_fill_manual(name = "Model", values = model_colors, labels = f_model_replace,
@@ -526,9 +552,6 @@ g_figure2 <- plot_grid(g_loo_pred_obs, g_accuracy_within_env1,
 ## Save
 ggsave(filename = "figure2_draft1.jpg", plot = g_figure2, path = fig_dir,
        width = 8.7, height = 15, dpi = 1000, units = "cm")
-
-
-
 
 
 
@@ -606,6 +629,181 @@ g_figure2 <- plot_grid(g_loo_pred_obs, g_accuracy_within_env2,
 ## Save
 ggsave(filename = "figure2_draft2.jpg", plot = g_figure2, path = fig_dir,
        width = 8.7, height = 15, dpi = 1000, units = "cm")
+
+
+
+# Figure 3. External environment prediction accuracy ---------------------------------------
+
+
+## Part A - plot predicted/observed phenotypes for each trait and by target population
+## for model 3 with stepwise covariates
+
+ext_env_pred_obs_df <- predictions_df %>%
+  filter(type == "env_external") %>%
+  filter(model == "model3_cov", selection == "rfa_cv_adhoc") %>%
+  # Add annotations
+  left_join(., across_site_prediction_accuracy_annotation) %>%
+  # convert grain yield to Mg/ha
+  mutate_at(vars(value, pred_complete), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
+  # Add trait units
+  # mutate(trait = paste0("atop('", str_add_space(trait), "',(", trait_units1[trait], "))"))
+  mutate(trait1 = paste0("'", abbreviate(str_add_space(trait), 2), "'~(", trait_units1[trait], ")"))
+
+# Split by trait and Plot
+g_ext_env_pred_obs_list <- ext_env_pred_obs_df %>%
+  split(.$trait) %>%
+  map(~{
+    # Extract annotations
+    ann_df <- distinct(.x, trait, pop, ability_all) %>%
+      mutate(annotation = paste0("r[MP]==", ability_all))
+    
+    ggplot(.x, aes(x = pred_complete, y = value, color = leave_one_group)) +
+      geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
+      geom_point(size = 0.2) +
+      geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
+                parse = TRUE, vjust = -1, hjust = 1.2, size = 1.5) +
+      scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
+      scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
+      scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
+      facet_grid(trait1 ~ ., switch = "y", labeller = labeller(trait1 = label_parsed)) +
+      theme_genetics(base_size = 6) +
+      theme(strip.placement = "outside", strip.background = element_blank())
+  })
+
+
+# Combine the plots
+g_loo_pred_obs <- g_loo_pred_obs_list %>%
+  modify_at(-1, ~. + theme(strip.text.x = element_blank())) %>%
+  map(~. + theme(axis.title = element_blank())) %>%
+  plot_grid(plotlist = ., ncol = 1, align = "hv") %>%
+  add_sub(plot = ., label = "Predicted phenotypic value", size = 6, vjust = -1) %>%
+  plot_grid(textGrob(label = "Observed phenotypic value", rot = 90, gp = gpar(fontsize = 6)), ., rel_widths = c(0.03, 1))
+
+
+# Save
+ggsave(filename = "figure2_partA_draft.jpg", plot = g_loo_pred_obs, path = fig_dir,
+       height = 120, width = 80, units = "mm", dpi = 1000)
+
+
+## Part B - accuracy within environments - LOEO
+
+
+## First output a table of the average accuracy (and range)
+within_environment_prediction_accuracy_table <- within_environment_prediction_accuracy %>%
+  filter(type == "loeo", model != "model3_cov1") %>%
+  group_by(trait, model, pop, selection) %>%
+  summarize_at(vars(bias, accuracy), list(~mean, ~min, ~max)) %>%
+  ungroup() %>%
+  mutate_at(vars(contains("bias")), ~. * 100) %>%
+  # create annotation
+  mutate_at(vars(matches("^bias|^accuracy")), ~formatC(x = signif(., 2), digits = 2, width = 2, format = "f")) %>%
+  mutate(accuracy = paste0(accuracy_mean, " (", accuracy_min, ", ", accuracy_max, ")"),
+         bias = paste0(bias_mean, "% (", bias_min, ", ", bias_max, ")")) %>%
+  mutate(trait = str_add_space(trait), model = f_model_replace(model), selection = f_ec_selection_replace(selection),
+         validation = f_validation_replace(pop)) %>%
+  select(trait, model, selection, validation, accuracy, bias) %>%
+  arrange(validation, trait, model, selection) %>%
+  rename_all(str_to_title) %>%
+  rename(`EC Set` = Selection)
+
+# Save
+write_csv(x = within_environment_prediction_accuracy_table, 
+          path = file.path(fig_dir, "within_environment_accuracy_bias_table.csv"))
+
+
+
+
+
+## Plot
+accuracy_within_env_toplot <- within_environment_prediction_accuracy %>%
+  filter(type == "loeo") %>%
+  filter(model %in% c("model1", "model2_cov", "model3_cov"), selection %in% c("none", "rfa_cv_adhoc")) %>%
+  # Add individual points
+  mutate(trait1 = paste0(abbreviate(str_add_space(trait), 2), "\n(n = ", nGroup+1, ")")) %>%
+  unite(group, trait, model, pop, remove = FALSE)
+
+# Plot option 1: boxplot
+g_accuracy_within_env <- accuracy_within_env_toplot %>%
+  ggplot(aes(x = trait1, y = accuracy, fill = model, group = group)) +
+  # jitter points
+  geom_jitter(position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.9), size = 0.01) +
+  geom_boxplot(position = position_dodge(0.9), alpha = 0.5, outlier.shape = NA, lwd = 0.2) +
+  scale_x_discrete(name = NULL) +
+  scale_y_continuous(name = expression('Prediction accuracy'~r[MP]), breaks = pretty) +
+  scale_fill_manual(name = "Model", values = model_colors, labels = f_model_replace,
+                    guide = guide_legend(label.position = "left", title = NULL)) +
+  facet_grid(type ~ pop, switch = "y", labeller = labeller(pop = f_validation_replace)) +
+  theme_genetics(base_size = 6) +
+  theme(strip.background = element_blank(), strip.placement = "outside", axis.line.x = element_blank(),
+        legend.text.align = 1, legend.position = c(0.89, 0.95), legend.key.size = unit(0.4, "line"),
+        legend.title.align = 1, legend.background = element_rect(fill = alpha("white", 0)),
+        legend.text = element_text(size = 5), legend.key.height = unit(0.3, "line")) +
+  theme(axis.title = element_blank(), strip.text = element_text(color = "white"))
+
+
+accuracy_within_env_toplot2 <- accuracy_within_env_toplot %>%
+  group_by(type, group, trait, trait1, model, pop, selection) %>%
+  do({
+    df <- .
+    # Get ranges from boxplot
+    bp <- boxplot(x = df$accuracy, plot = FALSE)
+    # Return a tibble
+    bind_cols(summarize(df, accuracy_mean = mean(accuracy)), 
+              as_tibble(setNames(object = as.list(bp$stats), nm = c("lower", "q25", "median", "q75", "upper"))) )
+  }) %>% ungroup()
+
+
+
+# Option 2: point and line range
+g_accuracy_within_env <- accuracy_within_env_toplot %>%
+  ggplot(aes(x = trait1, color = model, fill = model, group = group)) +
+  # jitter points
+  geom_jitter(aes(y = accuracy), position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.9), 
+              size = 0.1, color = "grey85") +
+  # Pointrange
+  geom_linerange(data = accuracy_within_env_toplot2, aes(ymin = lower, ymax = upper), position = position_dodge(0.9), lwd = 0.25) +
+  geom_linerange(data = accuracy_within_env_toplot2, aes(ymin = q25, ymax = q75), position = position_dodge(0.9), lwd = 0.75) +
+  geom_point(data = accuracy_within_env_toplot2, aes(y = accuracy_mean), position = position_dodge(0.9), size = 1) +
+  scale_x_discrete(name = NULL) +
+  scale_y_continuous(name = expression('Prediction accuracy'~r[MP]), breaks = pretty) +
+  scale_fill_manual(name = "Model", values = model_colors, labels = f_model_replace,
+                    guide = guide_legend(label.position = "left", title = NULL)) +
+  scale_color_manual(name = "Model", values = model_colors, labels = f_model_replace,
+                     guide = guide_legend(label.position = "left", title = NULL)) +
+  facet_grid(type ~ pop, switch = "y", labeller = labeller(pop = f_validation_replace)) +
+  theme_genetics(base_size = 6) +
+  theme(strip.background = element_blank(), strip.placement = "outside", axis.line.x = element_blank(),
+        legend.text.align = 1, legend.position = c(0.89, 0.95), legend.key.size = unit(0.4, "line"),
+        legend.title.align = 1, legend.background = element_rect(fill = alpha("white", 0)),
+        legend.text = element_text(size = 5), legend.key.height = unit(0.3, "line")) +
+  theme(axis.title = element_blank(), strip.text.y = element_text(color = "white"))
+
+# Add text grob
+g_accuracy_within_env1 <- plot_grid(textGrob(label = expression('Prediction accuracy'~r[MP]), rot = 90, gp = gpar(fontsize = 6)), 
+                                    g_accuracy_within_env, 
+                                    rel_widths = c(0.03, 1))  
+
+## Save
+ggsave(filename = "figure2_partB_draft.jpg", plot = g_accuracy_within_env1, path = fig_dir,
+       width = 80, height = 40, dpi = 1000, units = "mm")
+
+## Combine plots
+g_figure2 <- plot_grid(g_loo_pred_obs, g_accuracy_within_env1, 
+                       ncol = 1, rel_heights = c(1, 0.35), labels = letters[1:2], label_size = 8,
+                       align = "v", axis = "lr")
+
+## Save
+ggsave(filename = "figure2_draft1.jpg", plot = g_figure2, path = fig_dir,
+       width = 8.7, height = 15, dpi = 1000, units = "cm")
+
+
+
+
+
+
+
+
+
 
 
 
@@ -688,6 +886,12 @@ concurrent_features_count %>%
   write_csv(x = ., path = file.path(fig_dir, "concurrent_environmental_covariate.csv"))
 
 # Polish as a supplemental table
+
+
+
+
+
+
 
 
 
@@ -1365,27 +1569,27 @@ write_csv(x = across_site_prediction_table, path = file.path(fig_dir, "loeo_acro
 load(file.path(result_dir, "full_model_variance_analysis.RData"))
 
 # Collapse if a list
-if (!is.data.frame(pheno_variance_analysis)) {
-  pheno_variance_analysis <- pheno_variance_analysis %>% 
+if (!is.data.frame(environment_pheno_variance_analysis)) {
+  environment_pheno_variance_analysis <- environment_pheno_variance_analysis %>% 
     subset(., sapply(., is.data.frame)) %>%
     bind_rows()
 }
 
 # Unnest results
-pheno_variance_analysis1 <- pheno_variance_analysis %>%
+environment_pheno_variance_analysis1 <- environment_pheno_variance_analysis %>%
   # Make a note as to whether any GxE covariates were included
   mutate(any_gxe_cov = map_lgl(features, ~any(str_detect(., "line_name:"))) | feat_sel_type == "all") %>%
   unnest(results)
 
 ## Calculate the total variance and calculate the proportion explained by each source
-pheno_variance_analysis2 <- pheno_variance_analysis1 %>%
+environment_pheno_variance_analysis2 <- environment_pheno_variance_analysis1 %>%
   group_by(trait, population, feat_sel_type) %>%
   mutate(total_variance = sum(variance), prop_total_variance = variance / total_variance) %>%
   rename(prop_source_variance = variance_prop) %>%
   ungroup()
 
 ## Clean up for a table
-pheno_variance_analysis_table <- pheno_variance_analysis2 %>%
+environment_pheno_variance_analysis_table <- environment_pheno_variance_analysis2 %>%
   mutate(feat_sel_type = ifelse(feat_sel_type == "rfa_cv", "rfa_cv_adhoc", feat_sel_type)) %>%
   select(trait, population, covariate_set = feat_sel_type, any_gxe_cov, source, term, prop_source_variance, prop_total_variance) %>%
   mutate(trait = str_add_space(trait), population = f_pop_replace(population), covariate_set = f_ec_selection_replace(covariate_set),
@@ -1398,7 +1602,7 @@ pheno_variance_analysis_table <- pheno_variance_analysis2 %>%
 
 
 # Calculate difference in variance explained
-pheno_variance_analysis_table %>%
+environment_pheno_variance_analysis_table %>%
   rename_all(make.names) %>%
   select(-Any.Gxe.Cov, -Prop.Total.Variance) %>%
   filter(Population == "FP", str_detect(Term, "Covariates")) %>%
@@ -1409,8 +1613,62 @@ pheno_variance_analysis_table %>%
 
 
 # Output table
-write_csv(x = pheno_variance_analysis_table, path = file.path(fig_dir, "full_model_phenotypic_variance_analysis.csv"))
+write_csv(x = environment_pheno_variance_analysis_table, path = file.path(fig_dir, "full_model_phenotypic_variance_analysis.csv"))
 
+
+
+
+
+
+# Supplemental Table XX - full model phenotypic variance analysis for locations ---------
+
+# Collapse if a list
+if (!is.data.frame(location_pheno_variance_analysis)) {
+  location_pheno_variance_analysis <- location_pheno_variance_analysis %>% 
+    subset(., sapply(., is.data.frame)) %>%
+    bind_rows()
+}
+
+# Unnest results
+location_pheno_variance_analysis1 <- location_pheno_variance_analysis %>%
+  # Make a note as to whether any GxE covariates were included
+  mutate(any_gxe_cov = map_lgl(features, ~any(str_detect(., "line_name:"))) | feat_sel_type == "all") %>%
+  unnest(results)
+
+## Calculate the total variance and calculate the proportion explained by each source
+location_pheno_variance_analysis2 <- location_pheno_variance_analysis1 %>%
+  group_by(trait, population, feat_sel_type) %>%
+  mutate(total_variance = sum(variance), prop_total_variance = variance / total_variance) %>%
+  rename(prop_source_variance = variance_prop) %>%
+  ungroup()
+
+## Clean up for a table
+location_pheno_variance_analysis_table <- location_pheno_variance_analysis2 %>%
+  mutate(feat_sel_type = ifelse(feat_sel_type == "rfa_cv", "rfa_cv_adhoc", feat_sel_type)) %>%
+  select(trait, population, covariate_set = feat_sel_type, any_gxe_cov, source, term, prop_source_variance, prop_total_variance) %>%
+  mutate(trait = str_add_space(trait), population = f_pop_replace(population), covariate_set = f_ec_selection_replace(covariate_set),
+         source = str_replace_all(source, c("line_name" = "G", "location" = "L", "gxl" = "G x L", "units" = "Residuals")),
+         term = str_replace_all(term, c("line_name" = "G", "location" = "L", "gxl" = "G x L", "units" = "Residuals")),
+         term = str_replace_all(term, c("G_cov" = "Markers", "G x L_cov" = "Markers x Covariates",  "L_cov" = "Covariates"))) %>%
+  mutate_at(vars(contains("prop")), ~formatC(x = signif(., 2), digits = 2, width = 2, format = "f")) %>%
+  arrange(trait, population, covariate_set) %>%
+  rename_all(~str_to_title(str_replace_all(., "_", " ")))
+
+
+# Calculate difference in variance explained
+location_pheno_variance_analysis_table %>%
+  rename_all(make.names) %>%
+  select(-Any.Gxe.Cov, -Prop.Total.Variance) %>%
+  filter(Population == "FP", str_detect(Term, "Covariates")) %>%
+  {full_join(x = filter(., Covariate.Set == "Stepwise"), y = filter(., Covariate.Set != "Stepwise"),
+             by = c("Trait", "Population", "Source", "Term"))} %>%
+  mutate_at(vars(contains("Prop")), parse_number) %>%
+  mutate(prop_diff = Prop.Source.Variance.x - Prop.Source.Variance.y)
+
+
+# Output table
+write_csv(x = location_pheno_variance_analysis_table, 
+          path = file.path(fig_dir, "full_model_phenotypic_variance_analysis_location.csv"))
 
 
 
