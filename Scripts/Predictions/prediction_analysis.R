@@ -76,7 +76,7 @@ predictions_df <- prediction_list %>%
          pop = ifelse(line_name %in% tp, "tp", "vp")) %>%
   select(-which(names(.) %in% c(".id", "core", "trait1"))) %>%
   # Coalesce columns
-  mutate(leave_one_group = site1, nGroup = nSite) %>%
+  mutate(leave_one_group = site, nGroup = nSite) %>%
   select(-which(names(.) %in% c("environment", "location", "nLoc", "nEnv", "loc1", "env1", "nSite", "site1", "source")))
 
 
@@ -86,21 +86,25 @@ predictive_ability <- predictions_df %>%
   group_by(trait, model, pop, type, leave_one_group, selection) %>%
   # First calculate accuracy per environment
   mutate(ability = cor(pred_complete, value), 
+         bias = bias(obs = value, pred = pred_complete),
          rmse = sqrt(mean((value - pred_complete)^2))) %>% # Bias as percent deviation from observed
   group_by(trait, model, pop, type, selection) %>%
   # Next calculate accuracy across all environments
   mutate(ability_all = cor(pred_complete, value), 
+         bias_all = bias(obs = value, pred = pred_complete),
          rmse_all = sqrt(mean((value - pred_complete)^2))) %>% # Bias as percent deviation from observed
   # Now summarize across all
   group_by(trait, model, pop, type, leave_one_group, selection) %>%
-  summarize_at(vars(ability, rmse, ability_all, rmse_all, nObs, nGroup), mean) %>%
+  summarize_at(vars(ability, bias, rmse, ability_all, bias_all, rmse_all, nObs, nGroup), mean) %>%
   ungroup()
 
 
-# ## Adjust ability using heritability
-# loo_prediction_accuracy <- loo_predictive_ability %>%
-#   left_join(., env_trait_herit, by = c("leave_one_group" = "environment")) %>%
-#   mutate(accuracy = ability / sqrt(heritability))
+## Adjust ability using heritability
+within_environment_prediction_accuracy <- predictive_ability %>%
+  filter(type %in% c("loeo", "env_external")) %>%
+  select(-contains("_all")) %>%
+  left_join(., env_trait_herit, by = c("trait","leave_one_group" = "environment")) %>%
+  mutate(accuracy = ability / sqrt(heritability))
 
 
 
@@ -113,8 +117,7 @@ predictive_ability %>%
   facet_grid(trait ~ type + pop)
 
 predictions_df %>%
-  filter(trait == "GrainYield", type == "loeo", selection == "rfa_cv_adhoc") %>%
-  filter(selection != "concurrent_rfa_cv_adhoc") %>%
+  filter(type == "loeo", trait == "TestWeight", selection != "none") %>%
   ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
   geom_abline(slope = 1, intercept = 0) +
   geom_point(size = 2) +
@@ -131,82 +134,24 @@ predictive_ability %>%
 
 
 
-# Calculate predictive ability over all observations; bootstrap to get a confidence
-# interval; also calculate RMSE
-accuracy_rmse_all <- predictive_ability %>% 
-  distinct(trait, model, pop, type, selection, ability_all, rmse_all)
+# Calculate predictive ability over all observations; also calculate RMSE
+accuracy_bias_all <- predictive_ability %>% 
+  distinct(trait, model, pop, type, selection, ability_all, bias_all)
 
 # First create annotation df
-across_site_prediction_accuracy_annotation <- accuracy_rmse_all %>%
-  mutate_at(vars(ability_all, rmse_all), ~formatC(., width = 3, digits = 2, format = "f")) %>%
-  mutate(annotation = paste0("r[MP]==", ability_all, "*','~RMSE==", rmse_all))
+across_site_prediction_accuracy_annotation <- accuracy_bias_all %>%
+  mutate(bias_all = bias_all * 100) %>%
+  mutate_at(vars(ability_all, bias_all), ~formatC(., width = 3, digits = 2, format = "f")) %>%
+  mutate(annotation = paste0("r[MP]==", ability_all, "*','~Bias==", bias_all, "%"))
 
 
-
-### Summarize accuracy within each environment ###
-
-
-## Create a function list for calculating quantiles
-q <- c(0.25, 0.5, 0.75)
-# Function vector
-q_funs <- c(map(q, ~partial(quantile, probs = .x, na.rm = TRUE)), partial(mean, na.rm = TRUE)) %>%
-  set_names(., c("q25", "median", "q75", "mean"))
-
-
-## Summarize mean and range
-within_site_prediction_accuracy_summ <- predictive_ability %>%
-  group_by(type, trait, model, pop, selection) %>%
-  summarize_at(vars(ability, rmse), funs(!!!q_funs)) %>%
-  ungroup()
 
 
 
 ## Save everything
 save("predictions_df", "predictive_ability", "across_site_prediction_accuracy_annotation",
-     "within_site_prediction_accuracy_summ", 
+     "within_environment_prediction_accuracy", 
      file = file.path(result_dir, "prediction_accuracy_compiled.RData"))
-
-
-
-
-
-
-
-## Create a table
-
-# Report the mean (and range) in predictive ability across environments for each
-# validation scheme, population, and type
-loo_prediction_accuracy_table <- loo_prediction_accuracy_summ %>% 
-  mutate_at(vars(contains("ability")), ~formatC(., digits = 2, width = 2, format = "g")) %>%
-  mutate(annotation = paste0(ability_mean, " (", ability_lower, ", ", ability_upper, ")")) %>%
-  # mutate(annotation = paste0(ability_wmean, " (", ability_min, ", ", ability_max, ")")) %>%
-  # Rename
-  mutate(model = f_model_replace(model),
-         pop = f_pop_replace(pop),
-         type = toupper(type)) %>%
-  select(trait, type, model, pop, annotation) %>%
-  spread(model, annotation) %>%
-  arrange(trait, pop, type)
-
-write_csv(x = loo_prediction_accuracy_table, path = file.path(fig_dir, "loo_prediction_accuracy_table.csv"))
-
-## Report accuracy for POV
-pov_loo_prediction_accuracy_table <- loo_prediction_accuracy_table %>%
-  filter(pop == "POV00") %>%
-  select(trait, type, unname(model_present)) %>%
-  mutate(type = f_type_replace(tolower(type)))
-write_csv(x = pov_loo_prediction_accuracy_table, path = file.path(fig_dir, "pov_loo_prediction_accuracy_table.csv"))
-
-
-
-
-
-
-
-
-
-
-
 
 
 
