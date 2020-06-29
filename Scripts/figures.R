@@ -617,6 +617,10 @@ ggsave(filename = "figure2_draft2.jpg", plot = g_figure2, path = fig_dir,
 # Supplemental figures -------------------
 
 
+## REMEMBER TO ORGANIZE THIS SECTION ##
+
+
+
 ## Number and overlap of covariates in the analyses ##
 
 # Load the data
@@ -1316,6 +1320,38 @@ for (plotList in split(concurrent_features_heatmap_plots, concurrent_features_he
   
 }
 
+
+
+
+
+# Supplemental Table XX - LOEO predictive ability across environments ----------
+
+across_site_prediction_table <- across_site_prediction_accuracy_annotation %>%
+  filter(type == "loeo", selection != "stepAIC_adhoc", model != "model3_cov1") %>%
+  select(trait, model, pop, selection, ability_all, rmse_all) %>%
+  # Edit variables
+  mutate(trait = str_add_space(trait),
+         model = f_model_replace(model),
+         pop = f_validation_replace(pop),
+         selection = f_ec_selection_replace(selection),
+         selection = fct_relevel(selection, "None", after = Inf),
+         annotation = paste0(ability_all, " (", rmse_all, ")")) %>%
+  select(-contains("_all")) %>%
+  spread(model, annotation) %>%
+  arrange(pop, trait, selection) %>%
+  rename(Trait = trait, Validation = pop, `EC Set` = selection)
+
+write_csv(x = across_site_prediction_table, path = file.path(fig_dir, "loeo_across_site_prediction_accuracy.csv"))
+  
+
+
+
+
+
+
+
+
+# Supplemental Table XX - LOO predictive ability within environments ----------
 
 
 

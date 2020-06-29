@@ -26,7 +26,8 @@ library(parallel)
 
 ## Number of cores
 # n_core <- detectCores()
-n_core <- 12
+# n_core <- 12
+n_core <- 8
 
 # Source of covariates
 source_use <- "daymet"
@@ -34,18 +35,18 @@ source_use <- "daymet"
 # time_frame to use for the location relationship matrix
 time_frame_use <- "time_frame5_2010_2014"
 
+# If re-running predictions, should all be re-run?
+rerun_all <- FALSE
+
+
+
 ## Load covariate data
 load(file.path(result_dir, "concurrent_historical_covariables.RData"))
 
 ## Load the factorial regression results
 load(file.path(result_dir, "feature_selection_results.RData"))
 
-## For either environments or locations, fit the models:
-## 
-## model1: G + r
-## model2: G + E (L) + r
-## model3: G + E (L) + GE (GL) + r
-## 
+
 
 
 ## Create a list of model formulas
@@ -155,8 +156,35 @@ loeo_train_test <- data_to_model %>%
   # Combine with the different covariate sets
   left_join(., covariates_tomodel)
 
-## Assign cores and split
+
+
+## Use previous runs to determine which scenarios to predict ##
+
+if (!rerun_all) {
+  # Read in the data
+  load(file.path(result_dir, "loeo_predictions_fact_reg.RData"))
+  
+  # Find those scenarios that failed to run
+  if (!is.data.frame(loeo_predictions_out)) {
+    loeo_predictions_out <- loeo_predictions_out %>%
+      subset(., !sapply(., is.null)) %>%
+      bind_rows()
+  }
+  
+  # Which scenarios were already run?
+  scenarios_ran <- select(loeo_predictions_out, trait, site, .id)
+  # Which need to be run?
+  scenarios_torun <- anti_join(select(loeo_train_test, trait, site, .id), scenarios_ran)
+  
+} else {
+  scenarios_torun <- select(loeo_train_test, trait, site, .id)
+    
+}
+
+
+## Pull the scenarios to run, assign cores and split
 data_train_test1 <- loeo_train_test %>%
+  inner_join(scenarios_torun, .) %>%
   assign_cores(df = ., n_core = n_core, split = TRUE)
 
 
