@@ -144,6 +144,9 @@ for (i in seq_len(nrow(historical_timeframe_selection))) {
     adhoc = list(rfa_out, rfa_out_int),
   )
   
+  # Notify
+  cat("Stepwise selection for trait", row$trait, "with timeframe", row$time_frame, "complete.")
+  
 }
 
 historical_timeframe_selection_out <- unnest(historical_timeframe_selection, out)
