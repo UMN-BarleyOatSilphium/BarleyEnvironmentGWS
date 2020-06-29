@@ -632,7 +632,135 @@ ggsave(filename = "figure2_draft2.jpg", plot = g_figure2, path = fig_dir,
 
 
 
-# Figure 3. External environment prediction accuracy ---------------------------------------
+
+# Figure 3. Location-specific predictions ---------------------------------
+
+## Parts A and B: timeframe search results
+
+# Load the search results
+load(file.path(result_dir, "historical_covariate_timeframe_selection.RData"))
+
+# Extract results
+historical_timeframe_selection_out1 <- historical_timeframe_selection_out %>%
+  mutate(stepwise_results = map(adhoc, "finalResults") %>% map(as.list) %>% map(as_tibble)) %>%
+  unnest(stepwise_results) %>%
+  # Parse timeframe
+  mutate(time_frame_type = str_extract(time_frame, "time_frame|window"),
+         time_frame = str_remove(time_frame, "time_frame|window")) %>%
+  separate(time_frame, c("length", "start_year", "end_year"), sep = "_") %>%
+  mutate_at(vars(length, contains("year")), parse_guess)
+
+## TESTING ONLY ##
+
+# Randomly generate results
+historical_timeframe_selection_out1 <- historical_timeframe_selection_out1 %>%
+  mutate(R2 = runif(n = nrow(.)),
+         rand_mean = case_when(
+           trait == "GrainProtein" ~ 12,
+           trait == "GrainYield" ~ 4000,
+           trait == "HeadingDate" ~ 50,
+           trait == "PlantHeight" ~ 60,
+           trait == "TestWeight" ~ 600
+         ),
+         RMSE = map_dbl(rand_mean, ~abs(rnorm(n = 1, mean = 0, sd = sqrt(.)))),
+         MSE = RMSE^2) %>%
+  select(-rand_mean)
+
+##################
+
+# Colors for traits
+trait_colors <- setNames(neyhart_palette("umn2", 5), sort(traits))
+
+# Get a range for scaling by trait
+y_trait_range <- historical_timeframe_selection_out1 %>% 
+  filter(model == "model3") %>%
+  group_by(trait) %>%
+  do(breaks = pretty(.$RMSE)) %>%
+  ungroup()
+
+# Plot modifier
+g_mod <- list(
+  geom_line(lwd = 0.25),
+  scale_color_manual(values = trait_colors, guide = FALSE),
+  facet_grid(trait ~ ., switch = "y", scales = "free_y", 
+             labeller = labeller(trait = function(x) abbreviate(str_add_space(x), 2))),
+  theme_genetics(base_size = 4),
+  theme(strip.placement = "outside")
+)
+
+## Plot timeframe results
+historical_timeframe_selection_out1_toplot <- historical_timeframe_selection_out1 %>%
+  filter(time_frame_type == "time_frame", model == "model3")
+  
+g_timeframe_analysis_list <- historical_timeframe_selection_out1_toplot %>%
+  group_by(trait) %>%
+  do(plot = {
+    df <- .
+    breaks <- subset(y_trait_range, trait == unique(df$trait), breaks, drop = TRUE)[[1]]
+    
+    ggplot(data = df, aes(x = length, y = RMSE, color = trait)) +
+      # Add minimum for each trait
+      geom_point(data = top_n(x = df, n = 1, wt = -RMSE), size = 0.3) +
+      scale_y_continuous(breaks = breaks, limits = range(breaks)) +
+      scale_x_continuous(name = "Historical data years (before 2015)", trans = "reverse") +
+      g_mod
+    
+  }) %>% ungroup()
+  
+## Plot window results
+historical_window_selection_out1_toplot <- historical_timeframe_selection_out1 %>%
+  filter(time_frame_type == "window", model == "model3") %>%
+  mutate(length = fct_inseq(as.factor(length)))
+
+g_window_analysis_list <- historical_window_selection_out1_toplot %>%
+  group_by(trait) %>%
+  do(plot = {
+    df <- .
+    breaks <- subset(y_trait_range, trait == unique(df$trait), breaks, drop = TRUE)[[1]]
+    
+    ggplot(data = df, aes(x = end_year, y = RMSE, color = trait, lty = length)) +
+      # Add minimum for each trait
+      geom_point(data = top_n(x = df, n = 1, wt = -RMSE), size = 0.3) +
+      scale_y_continuous(breaks = breaks, limits = range(breaks)) +
+      scale_x_continuous(breaks = pretty, name = "End year of window") +
+      scale_linetype_discrete(name = "Window length (yrs)") +
+      g_mod +
+      theme(legend.position = c(0.15, 0.95), legend.direction = "horizontal")
+    
+  }) %>% ungroup()
+
+# Combine plots
+g_timeframe_analysis <- plot_grid(plotlist = g_timeframe_analysis_list$plot %>%
+                                    map(~. + theme(axis.title.y = element_blank())) %>%
+                                    modify_at(-length(.), ~. + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+                                                                 axis.line.x = element_blank(), axis.ticks.x = element_blank())),
+                                  ncol = 1, align = "v", rel_heights = c(rep(0.7, 4), 1))
+
+g_window_analysis <- plot_grid(plotlist = g_window_analysis_list$plot %>%
+                                 map(~. + theme(axis.title.y = element_blank(), strip.text.y = element_blank(),
+                                                axis.text.y = element_blank(), axis.line.y = element_blank(), 
+                                                axis.ticks.y = element_blank())) %>%
+                                 modify_at(-length(.), ~. + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+                                                                  axis.line.x = element_blank(), axis.ticks.x = element_blank())) %>%
+                                 modify_at(-1, ~. + theme(legend.position = "none")),
+                               ncol = 1, align = "v", rel_heights = c(rep(0.7, 4), 1))
+
+# Combine plot
+g_time_frame_combine <- plot_grid(g_timeframe_analysis, g_window_analysis)
+
+# Save
+ggsave(filename = "figure3_partA_draft1.jpg", plot = g_time_frame_combine, path = fig_dir,
+       height = 4, width = 6, units = "cm", dpi = 2000)
+
+
+
+
+
+
+
+
+
+# Figure 4. External environment prediction accuracy ---------------------------------------
 
 
 ## Part A - plot predicted/observed phenotypes for each trait and by target population

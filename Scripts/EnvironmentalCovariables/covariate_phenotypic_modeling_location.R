@@ -91,7 +91,7 @@ trait_covariate_df <- historical_ec_tomodel_centered_use %>%
   ) 
 
 
-# CReate a setup df
+# Create a setup df
 historical_timeframe_selection <- S2_MET_loc_BLUEs_tomodel %>%
   left_join(., bind_rows(historical_ec_tomodel_centered_use), by = "location") %>%
   group_by(trait, time_frame) %>%
@@ -125,17 +125,30 @@ for (i in seq_len(nrow(historical_timeframe_selection))) {
   # 2. Define the scope
   scope <- list(lower = formula(base_fit), upper = reformulate(c("line_name", covariates_use), response = "value"))
   # Run rfa
-  rfa_out <- rfa_loo(object = base_fit, data = df1, scope = scope, metric = "RMSE", index = loo_indices, env.col = "location")
+  rfa_out <- try(rfa_loo(object = base_fit, data = df1, scope = scope, metric = "RMSE", 
+                         index = loo_indices, env.col = "location"))
   
-  ## Interactions
-  # 1. Fit a base model
-  base_fit_int <- update(base_fit, formula = reformulate(rfa_out$optVariables, response = "value"))
-  # 2. Define the scope
-  scope <- list(lower = formula(base_fit_int), 
-                upper = reformulate(c(rfa_out$optVariables, paste0("line_name:", covariates_use)), response = "value"))
-  # Run rfa
-  rfa_out_int <- rfa_loo(object = base_fit_int, data = df1, scope = scope, metric = "RMSE", 
-                         index = loo_indices, env.col = "location")
+  # If try is error, set rfa_out and rfa_out_int both as null
+  if (class(rfa_out) == "try-error") {
+    rfa_out <- rfa_out_int <- NULL
+    
+    # else proceed
+  } else {
+    
+    ## Interactions
+    # 1. Fit a base model
+    base_fit_int <- update(base_fit, formula = reformulate(rfa_out$optVariables, response = "value"))
+    # 2. Define the scope
+    scope <- list(lower = formula(base_fit_int), 
+                  upper = reformulate(c(rfa_out$optVariables, paste0("line_name:", covariates_use)), response = "value"))
+    # Run rfa
+    rfa_out_int <- try(rfa_loo(object = base_fit_int, data = df1, scope = scope, metric = "RMSE", 
+                               index = loo_indices, env.col = "location"))
+    
+    # Set rfa_out_int to null if error
+    if (class(rfa_out_int) == "try-error") rfa_out_int <- NULL
+    
+  }
   
   ## Create a tibble
   historical_timeframe_selection$out[[i]] <- tibble(
@@ -145,7 +158,7 @@ for (i in seq_len(nrow(historical_timeframe_selection))) {
   )
   
   # Notify
-  cat("Stepwise selection for trait", row$trait, "with timeframe", row$time_frame, "complete.")
+  cat("Stepwise selection for trait", row$trait, "with timeframe", row$time_frame, "complete.\n")
   
 }
 
