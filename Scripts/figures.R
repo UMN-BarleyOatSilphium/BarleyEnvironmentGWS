@@ -18,6 +18,9 @@ library(ggrepel)
 library(ggsn)
 library(lubridate)
 
+# Set subfigure labels
+subfigure_labels <- LETTERS
+
 
 
 # Figure 1: map, crop model output, generation of covariates --------------
@@ -105,7 +108,7 @@ g_map_alt <- ggplot(data = north_america, aes(x = long, y = lat, group = group))
         legend.text = element_text(size = 5), legend.key.height = unit(0.5, "lines"), legend.key.width = unit(0.25, "lines"))
 
 # Save the map
-ggsave(filename = "map_of_experiments.jpg", plot = g_map_alt, path = fig_dir,
+ggsave(filename = "figure1_partA_draft1.jpg", plot = g_map_alt, path = fig_dir,
        height = 3, width = 4.5, dpi = 500)
 
 # ## Add an adjacent table
@@ -262,7 +265,7 @@ cgm_toplot_growth_stage_weather_summary <- bind_rows(
 
 # Simple subplot label df
 g_weather_subplot_label <- tibble(timeframe = c("concurrent", "historical"), variable = f_covariate_replace(covariates_plot[1]), 
-                                  label = letters[2:3], dap = min(cgm_toplot_growth_stage_weather_historical$dap))
+                                  label = subfigure_labels[2:3], dap = min(cgm_toplot_growth_stage_weather_historical$dap))
 
 
 ## Plot of both concurrent and historical mean (plus individual year) data
@@ -340,7 +343,7 @@ g_weather_stages <- plot_grid(
   g_weather_concurrent_historical + theme(legend.position = "none", axis.title.x = element_blank(),
                                           axis.text.x = element_blank()), 
   g_growth_stages + theme(strip.text.x = element_blank()),
-  ncol = 1, align = "v", axis = "lr", rel_heights = c(1, 0.25), labels = letters[2:3], label_size = 8)
+  ncol = 1, align = "v", axis = "lr", rel_heights = c(1, 0.25), labels = subfigure_labels[2:3], label_size = 8)
 
 
 
@@ -359,12 +362,12 @@ g_map_alt1 <- g_map_alt1 +
   theme(legend.position = c(0.88, 0.20))
   
 
-g_fig1 <- plot_grid(g_map_alt1, g_weather_stages, ncol = 1, labels = letters[1], label_size = 8,
+g_fig1 <- plot_grid(g_map_alt1, g_weather_stages, ncol = 1, labels = subfigure_labels[1], label_size = 8,
                     rel_heights = c(0.4, 1))
 
 # Save
 ggsave(filename = "figure1_draft.jpg", plot = g_fig1, path = fig_dir, 
-       width = 88, height = 115, units = "mm", dpi = 1000)
+       width = 8.7, height = 11, units = "cm", dpi = 1000)
 
 
 
@@ -432,7 +435,7 @@ g_loo_pred_obs_list <- loo_pred_obs_df %>%
 g_loo_pred_obs <- g_loo_pred_obs_list %>%
   modify_at(-1, ~. + theme(strip.text.x = element_blank())) %>%
   map(~. + theme(axis.title = element_blank())) %>%
-  plot_grid(plotlist = ., ncol = 1, align = "hv") %>%
+  plot_grid(plotlist = ., ncol = 1, align = "v", rel_heights = c(1, rep(0.85, length(.) - 1))) %>%
   add_sub(plot = ., label = "Predicted phenotypic value", size = 6, vjust = -1) %>%
   plot_grid(textGrob(label = "Observed phenotypic value", rot = 90, gp = gpar(fontsize = 6)), ., rel_widths = c(0.03, 1))
 
@@ -479,25 +482,6 @@ accuracy_within_env_toplot <- within_environment_prediction_accuracy %>%
   mutate(trait1 = paste0(abbreviate(str_add_space(trait), 2), "\n(n = ", nGroup+1, ")")) %>%
   unite(group, trait, model, pop, remove = FALSE)
   
-# Plot option 1: boxplot
-g_accuracy_within_env <- accuracy_within_env_toplot %>%
-  ggplot(aes(x = trait1, y = accuracy, fill = model, group = group)) +
-  # jitter points
-  geom_jitter(position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.9), size = 0.01) +
-  geom_boxplot(position = position_dodge(0.9), alpha = 0.5, outlier.shape = NA, lwd = 0.2) +
-  scale_x_discrete(name = NULL) +
-  scale_y_continuous(name = expression('Prediction accuracy'~r[MP]), breaks = pretty) +
-  scale_fill_manual(name = "Model", values = model_colors, labels = f_model_replace,
-                    guide = guide_legend(label.position = "left", title = NULL)) +
-  facet_grid(type ~ pop, switch = "y", labeller = labeller(pop = f_validation_replace)) +
-  theme_genetics(base_size = 6) +
-  theme(strip.background = element_blank(), strip.placement = "outside", axis.line.x = element_blank(),
-        legend.text.align = 1, legend.position = c(0.89, 0.95), legend.key.size = unit(0.4, "line"),
-        legend.title.align = 1, legend.background = element_rect(fill = alpha("white", 0)),
-        legend.text = element_text(size = 5), legend.key.height = unit(0.3, "line")) +
-  theme(axis.title = element_blank(), strip.text = element_text(color = "white"))
-
-
 accuracy_within_env_toplot2 <- accuracy_within_env_toplot %>%
   group_by(type, group, trait, trait1, model, pop, selection) %>%
   do({
@@ -522,7 +506,7 @@ g_accuracy_within_env <- accuracy_within_env_toplot %>%
   geom_linerange(data = accuracy_within_env_toplot2, aes(ymin = q25, ymax = q75), position = position_dodge(0.9), lwd = 0.75) +
   geom_point(data = accuracy_within_env_toplot2, aes(y = accuracy_mean), position = position_dodge(0.9), size = 1) +
   scale_x_discrete(name = NULL) +
-  scale_y_continuous(name = expression('Prediction accuracy'~r[MP]), breaks = pretty) +
+  scale_y_continuous(name = , breaks = pretty) +
   scale_fill_manual(name = "Model", values = model_colors, labels = f_model_replace,
                     guide = guide_legend(label.position = "left", title = NULL)) +
   scale_color_manual(name = "Model", values = model_colors, labels = f_model_replace,
@@ -536,9 +520,9 @@ g_accuracy_within_env <- accuracy_within_env_toplot %>%
   theme(axis.title = element_blank(), strip.text.y = element_text(color = "white"))
 
 # Add text grob
-g_accuracy_within_env1 <- plot_grid(textGrob(label = expression('Prediction accuracy'~r[MP]), rot = 90, gp = gpar(fontsize = 6)), 
-                                    g_accuracy_within_env, 
-                                    rel_widths = c(0.03, 1))  
+g_accuracy_within_env1 <- plot_grid(textGrob(label = expression('Within-environment'~italic(r[MG])), 
+                                             rot = 90, gp = gpar(fontsize = 6)), 
+                                    g_accuracy_within_env, rel_widths = c(0.03, 1))  
 
 ## Save
 ggsave(filename = "figure2_partB_draft.jpg", plot = g_accuracy_within_env1, path = fig_dir,
@@ -546,89 +530,14 @@ ggsave(filename = "figure2_partB_draft.jpg", plot = g_accuracy_within_env1, path
 
 ## Combine plots
 g_figure2 <- plot_grid(g_loo_pred_obs, g_accuracy_within_env1, 
-                       ncol = 1, rel_heights = c(1, 0.35), labels = letters[1:2], label_size = 8,
-                       align = "v", axis = "lr")
+                       ncol = 1, rel_heights = c(1, 0.35), labels = subfigure_labels[1:2], label_size = 8)
 
 ## Save
 ggsave(filename = "figure2_draft1.jpg", plot = g_figure2, path = fig_dir,
-       width = 8.7, height = 15, dpi = 1000, units = "cm")
+       width = 8.0, height = 14, dpi = 1000, units = "cm")
 
 
 
-## Remove plant height ##
-
-
-# Split by trait and Plot
-g_loo_pred_obs_list <- loo_pred_obs_df %>%
-  filter(trait != "PlantHeight") %>%
-  split(.$trait) %>%
-  map(~{
-    # Extract annotations
-    ann_df <- distinct(.x, trait, pop, ability_all) %>%
-      mutate(annotation = paste0("r[MP]==", ability_all))
-    
-    ggplot(.x, aes(x = pred_complete, y = value, color = leave_one_group)) +
-      geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
-      geom_point(size = 0.2) +
-      geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
-                parse = TRUE, vjust = -1, hjust = 1.2, size = 1.5) +
-      scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
-      scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
-      scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
-      facet_grid(trait1 ~ pop, switch = "y", labeller = labeller(trait1 = label_parsed, pop = f_validation_replace)) +
-      theme_genetics(base_size = 6) +
-      theme(strip.placement = "outside", strip.background = element_blank())
-  })
-
-
-# Combine the plots
-g_loo_pred_obs <- g_loo_pred_obs_list %>%
-  modify_at(-1, ~. + theme(strip.text.x = element_blank())) %>%
-  map(~. + theme(axis.title = element_blank())) %>%
-  plot_grid(plotlist = ., ncol = 1, align = "hv") %>%
-  add_sub(plot = ., label = "Predicted phenotypic value", size = 6, vjust = -1) %>%
-  plot_grid(textGrob(label = "Observed phenotypic value", rot = 90, gp = gpar(fontsize = 6)), ., rel_widths = c(0.03, 1))
-
-
-# Remove plant height from g_accuracy_within_env
-accuracy_within_env_toplot3 <- filter(accuracy_within_env_toplot2, trait != "PlantHeight")
-g_accuracy_within_env1 <- accuracy_within_env_toplot %>%
-  filter(trait != "PlantHeight") %>%
-  ggplot(aes(x = trait1, color = model, fill = model, group = group)) +
-  # jitter points
-  geom_jitter(aes(y = ability), position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.9), 
-              size = 0.1, color = "grey85") +
-  # Pointrange
-  geom_linerange(data = accuracy_within_env_toplot3, aes(ymin = lower, ymax = upper), position = position_dodge(0.9), lwd = 0.25) +
-  geom_linerange(data = accuracy_within_env_toplot3, aes(ymin = q25, ymax = q75), position = position_dodge(0.9), lwd = 0.75) +
-  geom_point(data = accuracy_within_env_toplot3, aes(y = ability_mean), position = position_dodge(0.9), size = 1) +
-  scale_x_discrete(name = NULL) +
-  scale_y_continuous(name = expression('Prediction accuracy'~r[MP]), breaks = pretty) +
-  scale_fill_manual(name = "Model", values = model_colors, labels = f_model_replace,
-                    guide = guide_legend(label.position = "left", title = NULL)) +
-  scale_color_manual(name = "Model", values = model_colors, labels = f_model_replace,
-                     guide = guide_legend(label.position = "left", title = NULL)) +
-  facet_grid(type ~ pop, switch = "y", labeller = labeller(pop = f_validation_replace)) +
-  theme_genetics(base_size = 6) +
-  theme(strip.background = element_blank(), strip.placement = "outside", axis.line.x = element_blank(),
-        legend.text.align = 1, legend.position = c(0.89, 0.95), legend.key.size = unit(0.4, "line"),
-        legend.title.align = 1, legend.background = element_rect(fill = alpha("white", 0)),
-        legend.text = element_text(size = 5), legend.key.height = unit(0.3, "line")) +
-  theme(axis.title = element_blank(), strip.text.y = element_text(color = "white"))
-
-# Add text grob
-g_accuracy_within_env2 <- plot_grid(textGrob(label = expression('Prediction accuracy'~r[MP]), rot = 90, gp = gpar(fontsize = 6)), 
-                                    g_accuracy_within_env1, 
-                                    rel_widths = c(0.03, 1))  
-
-## Combine plots
-g_figure2 <- plot_grid(g_loo_pred_obs, g_accuracy_within_env2, 
-                       ncol = 1, rel_heights = c(1, 0.30), labels = letters[1:2], label_size = 8,
-                       align = "v", axis = "lr")
-
-## Save
-ggsave(filename = "figure2_draft2.jpg", plot = g_figure2, path = fig_dir,
-       width = 8.7, height = 15, dpi = 1000, units = "cm")
 
 
 
@@ -650,23 +559,6 @@ historical_timeframe_selection_out1 <- historical_timeframe_selection_out %>%
   separate(time_frame, c("length", "start_year", "end_year"), sep = "_") %>%
   mutate_at(vars(length, contains("year")), parse_guess)
 
-## TESTING ONLY ##
-
-# Randomly generate results
-historical_timeframe_selection_out1 <- historical_timeframe_selection_out1 %>%
-  mutate(R2 = runif(n = nrow(.)),
-         rand_mean = case_when(
-           trait == "GrainProtein" ~ 12,
-           trait == "GrainYield" ~ 4000,
-           trait == "HeadingDate" ~ 50,
-           trait == "PlantHeight" ~ 60,
-           trait == "TestWeight" ~ 600
-         ),
-         RMSE = map_dbl(rand_mean, ~abs(rnorm(n = 1, mean = 0, sd = sqrt(.)))),
-         MSE = RMSE^2) %>%
-  select(-rand_mean)
-
-##################
 
 # Colors for traits
 trait_colors <- setNames(neyhart_palette("umn2", 5), sort(traits))
@@ -675,7 +567,7 @@ trait_colors <- setNames(neyhart_palette("umn2", 5), sort(traits))
 y_trait_range <- historical_timeframe_selection_out1 %>% 
   filter(model == "model3") %>%
   group_by(trait) %>%
-  do(breaks = pretty(.$RMSE)) %>%
+  do(breaks = pretty(.$RMSE, 3)) %>%
   ungroup()
 
 # Plot modifier
@@ -684,8 +576,8 @@ g_mod <- list(
   scale_color_manual(values = trait_colors, guide = FALSE),
   facet_grid(trait ~ ., switch = "y", scales = "free_y", 
              labeller = labeller(trait = function(x) abbreviate(str_add_space(x), 2))),
-  theme_genetics(base_size = 4),
-  theme(strip.placement = "outside")
+  theme_genetics(base_size = 6),
+  theme(strip.placement = "outside", strip.background = element_blank())
 )
 
 ## Plot timeframe results
@@ -710,7 +602,8 @@ g_timeframe_analysis_list <- historical_timeframe_selection_out1_toplot %>%
 ## Plot window results
 historical_window_selection_out1_toplot <- historical_timeframe_selection_out1 %>%
   filter(time_frame_type == "window", model == "model3") %>%
-  mutate(length = fct_inseq(as.factor(length)))
+  mutate(length = fct_inseq(as.factor(length))) %>%
+  mutate_at(vars(contains("year")), ~ymd(paste0(., "0101")))
 
 g_window_analysis_list <- historical_window_selection_out1_toplot %>%
   group_by(trait) %>%
@@ -722,10 +615,12 @@ g_window_analysis_list <- historical_window_selection_out1_toplot %>%
       # Add minimum for each trait
       geom_point(data = top_n(x = df, n = 1, wt = -RMSE), size = 0.3) +
       scale_y_continuous(breaks = breaks, limits = range(breaks)) +
-      scale_x_continuous(breaks = pretty, name = "End year of window") +
+      # scale_x_continuous(breaks = pretty, name = "End year of window") +
+      scale_x_date(date_breaks = "5 year", date_labels = "%Y", name = "End year of window") +
       scale_linetype_discrete(name = "Window length (yrs)") +
       g_mod +
-      theme(legend.position = c(0.15, 0.95), legend.direction = "horizontal")
+      theme(legend.position = c(0.25, 0.95), legend.direction = "horizontal", legend.key.width = unit(0.5, "line"),
+            legend.background = element_rect(fill = alpha("white", 0)))
     
   }) %>% ungroup()
 
@@ -746,11 +641,12 @@ g_window_analysis <- plot_grid(plotlist = g_window_analysis_list$plot %>%
                                ncol = 1, align = "v", rel_heights = c(rep(0.7, 4), 1))
 
 # Combine plot
-g_time_frame_combine <- plot_grid(g_timeframe_analysis, g_window_analysis)
+g_time_frame_combine <- plot_grid(g_timeframe_analysis, g_window_analysis, labels = subfigure_labels[1:2],
+                                  label_size = 8, nrow = 1, rel_widths = c(1, 0.85))
 
 # Save
 ggsave(filename = "figure3_partA_draft1.jpg", plot = g_time_frame_combine, path = fig_dir,
-       height = 4, width = 6, units = "cm", dpi = 2000)
+       height = 6, width = 6, units = "cm", dpi = 2000)
 
 
 

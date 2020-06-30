@@ -31,14 +31,15 @@ n_core <- 12
 # Source of covariates
 source_use <- "daymet"
 
-# time_frame to use for the location relationship matrix
-time_frame_use <- "time_frame5_2010_2014"
-
 ## Load covariate data
 load(file.path(result_dir, "concurrent_historical_covariables.RData"))
 
 ## Load the factorial regression results
 load(file.path(result_dir, "feature_selection_results.RData"))
+
+## Data.frame of timeframes to use per trait
+time_frame_use_df <- historical_feature_selection %>%
+  distinct(trait, time_frame)
 
 ## For either environments or locations, fit the models:
 ## 
@@ -92,8 +93,8 @@ S2_MET_loc_BLUEs <- S2_MET_BLUEs %>%
 
 ## Pull out location covariates to use
 loc_ec_tomodel_scaled <-  historical_ec_tomodel_timeframe_scaled %>%
-  subset(., grepl(pattern = time_frame_use, x = names(.)))
-
+  bind_rows() %>%
+  filter(source == source_use, time_frame %in% unique(time_frame_use_df$time_frame))
 
 # Leave-one-out -----------------------------------------------
 
@@ -120,7 +121,7 @@ historical_fact_reg_feature_selection <- historical_fact_reg_feature_selection %
   mutate(feat_sel_type = ifelse(str_detect(feat_sel_type, "apriori"), "apriori", feat_sel_type))
 
 historical_feature_selection <- historical_feature_selection %>%
-  gather(selection_type, covariates, adhoc, adhoc_nosoil) %>% 
+  gather(selection_type, covariates, adhoc) %>% 
   unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>%
   mutate(model = case_when(model == "model2" ~ "model4", model == "model3" ~ "model5"))
 
@@ -133,11 +134,15 @@ concurrent_feature_selection <- concurrent_feature_selection %>%
 
 
 # Combine feature selection df
-feature_selection_df <- bind_rows(historical_fact_reg_feature_selection, historical_feature_selection)
+feature_selection_df <- bind_rows(historical_fact_reg_feature_selection, 
+                                  mutate(historical_feature_selection, source = "daymet")) %>%
+  select(-contains("time_frame"))
   
 # A vector of all covariates
-covariates_by_source_df <- tibble(source = map_chr(map(loc_ec_tomodel_scaled, "source"), unique),
-                                  covariates = map(loc_ec_tomodel_scaled, ~names(.)[-1:-3]))
+covariates_by_source_df <- tibble(source = map_chr(map(historical_ec_tomodel_timeframe_scaled, "source"), unique),
+                                  covariates = map(historical_ec_tomodel_timeframe_scaled, ~names(.)[-1:-3])) %>%
+  group_by(source) %>% slice(1) %>% ungroup()
+  
 # Data.frame with all covariates
 all_covariates_df <- crossing(covariates_by_source_df, trait = traits, feature_selection = "all", 
                               model = c("model4", "model5")) %>% 
@@ -205,6 +210,8 @@ lolo_predictions_out <- data_train_test1 %>%
       row <- core_df[i,]
       # Get covariates
       covariates_row <- row$model_covariates[[1]]
+      # Get the timeframe for this trait
+      time_frame_use <- subset(time_frame_use_df, trait == row$trait, time_frame, drop = TRUE)
       
       # Record the number of environment and observations used for training
       train_n <- summarize(row$train[[1]], nSite = n_distinct(site), nObs = n())
@@ -246,8 +253,8 @@ lolo_predictions_out <- data_train_test1 %>%
         
         # Create a matrix of scaled and centered covariates
         covariate_mat <- loc_ec_tomodel_scaled %>%
-          subset(., grepl(pattern = covariates_use$source[r], x = names(.))) %>% .[[1]] %>%
-          filter(location %in% levels(row$train[[1]]$site1)) %>%
+          filter(time_frame == time_frame_use,
+                 location %in% levels(row$train[[1]]$site1)) %>%
           select(., location, unique(unlist(covariate_list))) %>%
           as.data.frame() %>%
           column_to_rownames("location") %>%
@@ -341,6 +348,8 @@ loc_external_predictions_out <- loc_external_train_val1 %>%
       row <- core_df[i,]
       # Get covariates
       covariates_row <- row$model_covariates[[1]]
+      # Get the timeframe for this trait
+      time_frame_use <- subset(time_frame_use_df, trait == row$trait, time_frame, drop = TRUE)
       
       # Record the number of sites and observations used for training
       train_n <- summarize(row$train[[1]], nSite = n_distinct(site), nObs = n())
@@ -382,8 +391,8 @@ loc_external_predictions_out <- loc_external_train_val1 %>%
         
         # Create a matrix of scaled and centered covariates
         covariate_mat <- loc_ec_tomodel_scaled %>%
-          subset(., grepl(pattern = covariates_use$source[r], x = names(.))) %>% .[[1]] %>%
-          filter(location %in% levels(row$train[[1]]$site1)) %>%
+          filter(time_frame == time_frame_use,
+                 location %in% levels(row$train[[1]]$site1)) %>%
           select(., location, unique(unlist(covariate_list))) %>%
           as.data.frame() %>%
           column_to_rownames("location") %>%
