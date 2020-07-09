@@ -27,12 +27,6 @@ file_list <- list.files(result_dir, pattern = "fact_reg.RData$", full.names = TR
 object_list <- unlist(lapply(file_list, load, envir = .GlobalEnv))
 
 
-## Filter loeo results
-loeo_predictions_out <- loeo_predictions_out %>% 
-  subset(., map_lgl(., is_tibble)) %>%
-  bind_rows()
-
-
 ## Significant level
 alpha <- 0.05
 
@@ -42,11 +36,6 @@ alpha <- 0.05
 # model3: y = G + E + GE + r
 # model4: y = G + L + r
 # model5: y = G + L + GL + r
-
-
-# Color scheme for models
-model_colors <- paletteer_d(package = "ggsci", palette = "default_nejm", n = length(model_replace)) %>%
-  setNames(., names(model_replace))
 
 
 
@@ -77,7 +66,9 @@ predictions_df <- prediction_list %>%
   select(-which(names(.) %in% c(".id", "core", "trait1"))) %>%
   # Coalesce columns
   mutate(leave_one_group = site, nGroup = nSite) %>%
-  select(-which(names(.) %in% c("environment", "location", "nLoc", "nEnv", "loc1", "env1", "nSite", "site1", "source")))
+  select(-which(names(.) %in% c("environment", "location", "nLoc", "nEnv", "loc1", "env1", "nSite", "site1", "source"))) %>%
+  # Subset trait-site combinations that are relevant
+  inner_join(distinct(select(gather(distinct(S2_MET_BLUEs, trait, environment, location), var, site, -trait), -var)), .)
 
 
 
@@ -99,6 +90,18 @@ predictive_ability <- predictions_df %>%
   ungroup()
 
 
+## Drop crookston as a location and recalculate location prediction accuracy for grain yield
+predictions_df %>%
+  filter(type == "lolo", leave_one_group != "Crookston", trait == "GrainYield") %>%
+  group_by(trait, model, pop, type, selection) %>%
+  # Next calculate accuracy across all environments
+  summarize(ability_all = cor(pred_complete, value), 
+            bias_all = bias(obs = value, pred = pred_complete),
+            rmse_all = sqrt(mean((value - pred_complete)^2))) %>%
+  as.data.frame()
+  
+
+
 ## Adjust ability using heritability
 within_environment_prediction_accuracy <- predictive_ability %>%
   filter(type %in% c("loeo", "env_external")) %>%
@@ -108,19 +111,29 @@ within_environment_prediction_accuracy <- predictive_ability %>%
 
 
 
+
+
 ## Quick plot of accuracy across all data points
 predictive_ability %>%
-  filter(type %in% c("lolo", "loeo")) %>%
+  filter(type %in% c("lolo", "loeo"), selection != "stepAIC_adhoc") %>%
   distinct(trait, model, pop, type, selection, ability_all, rmse_all) %>%
   ggplot(aes(x = model, y = ability_all, fill = selection)) +
   geom_col(position = position_dodge(0.9)) +
   facet_grid(trait ~ type + pop)
 
+## Print some predictive abilities
+predictive_ability %>%
+  filter(type == "lolo", str_detect(model, "model3"), pop == "tp") %>%
+  select(trait, model, selection, contains("_all")) %>%
+  distinct() %>%
+  as.data.frame()
+
+
 predictions_df %>%
-  filter(type == "loeo", trait == "TestWeight", selection != "none") %>%
+  filter(type == "lolo", trait == "GrainProtein", !selection %in% c("none", "concurrent_rfa_cv_adhoc")) %>%
   ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
   geom_abline(slope = 1, intercept = 0) +
-  geom_point(size = 2) +
+  geom_point(size = 0.5) +
   scale_color_discrete(guide = FALSE) +
   facet_grid(type + selection ~ model + pop) +
   theme_presentation2(10)

@@ -30,8 +30,6 @@ load(file.path(result_dir, "concurrent_historical_covariables.RData"))
 # Set the number of cores
 n_cores <- 8
 
-# time_frame to use for the location relationship matrix
-time_frame_use <- "time_frame5_2010_2014"
 
 # Simple function to return input.
 f_return <- function(x) x
@@ -356,7 +354,7 @@ S2_MET_loc_BLUEs <- S2_MET_BLUEs %>%
 
 ## Pull out location covariates to use
 loc_ec_tomodel_scaled <-  historical_ec_tomodel_timeframe_scaled %>%
-  subset(., grepl(pattern = time_frame_use, x = names(.)))
+  subset(., grepl(pattern = "daymet", x = names(.)))
 
 
 data_to_model <- S2_MET_loc_BLUEs %>% 
@@ -371,7 +369,8 @@ data_to_model <- S2_MET_loc_BLUEs %>%
 
 # Convert model 2/3 to 4/5
 historical_feature_selection <- historical_feature_selection %>% 
-  mutate(model = str_replace_all(model, c("model2" = "model4", "model3" = "model5")))
+  mutate(model = str_replace_all(model, c("model2" = "model4", "model3" = "model5")),
+         source = "daymet")
 
 ## Assemble covariates to model
 covariates_to_model <- historical_fact_reg_feature_selection %>% 
@@ -381,16 +380,8 @@ covariates_to_model <- historical_fact_reg_feature_selection %>%
   mutate(features = map(features, "optVariables") %>% map(~setdiff(x = ., y = "line_name"))) %>%
   filter(source == "daymet", model == "model5") %>%
   select(trait, feat_sel_type, features) %>%
-  bind_rows(., tibble(trait = traits, 
-                      feat_sel_type = "all", features = list(names(loc_ec_tomodel_scaled$daymet.time_frame5_2010_2014)[-1:-3])))
+  bind_rows(., tibble(trait = traits, feat_sel_type = "all", features = list(names(loc_ec_tomodel_scaled[[1]])[-1:-3])) )
 
-
-# Matrix of covariates
-covariate_mat <- loc_ec_tomodel_scaled$daymet.time_frame5_2010_2014 %>%
-  as.data.frame() %>%
-  select(-source, -time_frame) %>%
-  column_to_rownames("location") %>%
-  as.matrix()
 
 
 ## Create a results df
@@ -418,6 +409,8 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
     genotypes <- levels(data$line_name)
     locations <- levels(data$location)
     covariates <- row$features[[1]]
+    # Get the time_frame corresponding to this trait
+    time_frame_use <- unique(subset(historical_feature_selection, trait == tr, time_frame, drop = TRUE))
     
     # Separate covariates into main effect or interaction
     covariate_list <- tibble(term = unique(covariates)) %>% 
@@ -425,6 +418,13 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
              covariate = str_remove(term, "line_name:")) %>%
       split(.$class) %>% 
       map("covariate")
+    
+    # Create a covariate matrix
+    covariate_mat <- loc_ec_tomodel_scaled[[which(grepl(pattern = time_frame_use, x = names(loc_ec_tomodel_scaled)))]] %>%
+      as.data.frame() %>%
+      select(-source, -time_frame) %>%
+      column_to_rownames("location") %>%
+      as.matrix()
     
     
     # Create or subset relationship matrices

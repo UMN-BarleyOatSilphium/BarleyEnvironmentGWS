@@ -88,11 +88,6 @@ S2_MET_BLUEs_tomodel <- S2_MET_BLUEs %>%
   mutate_at(vars(location, year, environment, line_name), as.factor)
 
 
-# Get the residuals variance within each environment
-S2_MET_varR_tomodel <- s2_metadata %>%
-  filter(trial %in% unique(S2_MET_BLUEs_tomodel$trial), trait %in% traits) %>%
-  select(trial, trait, varR)
-
 # Group by trait and fit the multi-environment model
 # Fit models in the TP and the TP + VP
 
@@ -120,23 +115,28 @@ for (i in seq_len(nrow(stage_two_fits))) {
   # Edit factors
   df1 <- df %>%
     droplevels() %>%
-    mutate_at(vars(location, year, line_name), fct_contr_sum) %>%
+    mutate_at(vars(environment, line_name), fct_contr_sum) %>%
     mutate(wts = std_error^2)
   
   # Random model
   fit_lmer <- lmer(formula = value ~ 1 + (1|environment) + (1|line_name) + (1|line_name:environment),
                    data = df1, control = lmer_control, weights = wts)
   
+  # Adjust with fixed environments
+  fit_lmer2 <- lmer(formula = value ~ 1 + environment + (1|line_name) + (1|line_name:environment),
+                    data = df1, control = lmer_control, weights = wts)
+  
   # Ranova
   fit_ranova <- lmerTest::ranova(model = fit_lmer)
   
   ## Return the model
-  stage_two_fits$out[[i]] <- tibble(fit = list(fit_lmer), ranova = list(fit_ranova))
+  stage_two_fits$out[[i]] <- tibble(fit_rand = list(fit_lmer), fit_env_fixed = list(fit_lmer2),
+                                    ranova = list(fit_ranova))
   
 }
 
 stage_two_fits1 <- unnest(stage_two_fits, out) %>%
-  mutate(var_comp = map(fit, ~as.data.frame(VarCorr(.))), 
+  mutate(var_comp = map(fit_rand, ~as.data.frame(VarCorr(.))), 
          ranova = map(ranova, tidy))
 
 
@@ -173,6 +173,27 @@ stage_two_fits2_varcomp1 %>%
          population = ifelse(population == "all", "All", toupper(population))) %>%
   rename_all(str_to_title) %>%
   write_csv(x = ., path = file.path(fig_dir, "variance_components_table.csv"))
+
+
+## Calculate environmental means
+stage_two_fits_env_mean <- stage_two_fits1 %>%
+  mutate(coef = map(fit_env_fixed, ~as.data.frame(summary(.)$coef) %>% rownames_to_column(., "term") %>%
+                      mutate(environment = str_remove(term, "environment"))),
+         coef = map2(coef, fit_env_fixed, ~add_row(.x, environment = last(levels(model.frame(.y)$environment)),
+                                                   Estimate = -sum(tail(.x$Estimate, -1))) %>%
+                       mutate(mean = Estimate + Estimate[1]) %>% filter(environment != "(Intercept)") %>% 
+                       select(environment, mean)) ) %>%
+  unnest(coef) %>% rename(pheno_mean = mean)
+
+## Calculate range for the TP
+stage_two_fits_env_mean %>%
+  filter(population == "tp") %>%
+  group_by(trait) %>%
+  summarize_at(vars(pheno_mean), list(~min, ~mean, ~max))
+
+
+
+
 
 
 
