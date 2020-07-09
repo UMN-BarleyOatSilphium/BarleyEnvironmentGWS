@@ -13,11 +13,10 @@ library(tidyverse)
 
 ```
 
-# S2MET
+# S2MET Genomewide Predictions Across Environments
 
 ## Description
 
-Project repository for the spring two-row (**S2**) barley multi-environment trial (**MET**) project. This project will look at the impact of genotype-by-environment interaction when performing genomewide prediction. The project includes a panel of 183 training population lines, 50 validation population lines, and 9 repeated checks.
 
 ## Script Order
 
@@ -45,7 +44,6 @@ Prediction
 ## Software version
 
 *R* version `r paste0(version$major, ".", version$minor)` was used to complete analyses in this project.
-
 
 The following packages (with version information) were used to complete this project:
 

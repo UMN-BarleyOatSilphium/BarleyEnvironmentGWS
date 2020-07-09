@@ -117,10 +117,10 @@ S2_MET_BLUEs <- s2_tidy_BLUE %>%
   filter(!(environment == "HNY16" & trait == "GrainYield"),
          !(environment == "EON17" & trait == "HeadingDate"),
          !(environment == "KNY16" & trait == "TestWeight"),
-         !(location == "Charlottetown" & trait == "HeadingDate")) %>%
+         !(location %in% c("Charlottetown", "Alburgh", "Grande_rhonde_valley") & trait == "HeadingDate"),
+         !(trait %in% c("PlantHeight", "TestWeight") & location %in% c("Grande_rhonde_valley")) ) %>%
   # Rename and reorder
   select(trial, environment, location, year, trait, line_name, value, std_error = std.error)
-
 
 ## Separate environments into those for training/testing and those for external validation
 train_test_env <- S2_MET_BLUEs %>% 
@@ -164,7 +164,9 @@ trait_sign <- tibble(trait = traits, sign = c(1, -1, -1, 1, -1))
 
 ## A vector to rename models
 model_replace <- c("model1" = "g", "model2_id" = "g + e", "model2_cov" = "g + e", 
-                   "model3_id" = "g + e + (ge)", "model3_cov" = "g + e + (ge)", "model3_cov1" = "g + e + (ge)")
+                   "model3_id" = "g + e + (ge)", "model3_cov" = "g + e + (ge)", "model3_cov1" = "g + e + (ge)",
+                   "model4_id" = "g + l", "model4_cov" = "g + l", "model5_id" = "g + l + (gl)", 
+                   "model5_cov" = "g + l + (gl)", "model5_cov1" = "g + l + (gl)")
 
 
 f_model_replace <- function(x) model_replace[x]
@@ -173,10 +175,12 @@ f_model_replace <- function(x) model_replace[x]
 f_validation_replace <- function(x) str_replace_all(x, c("tp" = "Tested genotypes", "vp" = "Untested offspring genotypes"))
 f_pop_replace <- function(x) str_replace_all(x, c("all" = "All", "tp" = "FP", "vp" = "OP"))
 # Replace type
-f_type_replace <- function(x) c("loeo" = "New environment", "lolo" = "New location", "loyo" = "New year")[x]
+f_type_replace <- function(x) c("loeo" = "New environment", "lolo" = "New location", "loyo" = "New year",
+                                "env_external" = "Holdout environment", "loc_external" = "Holdout location")[x]
 # Replace ec selection
-f_ec_selection_replace <- function(x)  c("rfa_cv_adhoc" = "Stepwise", "stepAIC_adhoc" = "stepAIC", 
-                                         "apriori" = "Literature", "all" = "All", "none" = "None")[x]
+f_ec_selection_replace <- function(x)  c("rfa_cv_adhoc" = "StepwiseCV", "stepAIC_adhoc" = "StepwiseAIC", 
+                                         "concurrent_rfa_cv_adhoc" = "Concurrent StepwiseCV", "apriori" = "Literature", 
+                                         "all" = "All", "none" = "None")[x]
 f_growth_stage_replace <- function(x) 
   c("early_vegetative" = "EV", "late_vegetative" = "LV", "heading" = "HD", "flowering" = "FL", "grain_fill" = "GF")[x]
 
