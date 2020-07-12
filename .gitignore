@@ -12,3 +12,5 @@ Data/*.RData
 *.o[0-9]*
 Rplots.pdf
 Scripts/archive/*
+TODO.md
+*.dat
