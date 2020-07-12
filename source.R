@@ -44,6 +44,7 @@ load(file.path(pheno_dir, "S2_tidy_BLUE.RData"))
 # Load the trial metadata
 trial_info <- read_csv(file = file.path(meta_dir, "trial_metadata.csv")) %>%
   filter(population %in% c("s2tp", "s2c1", "s2c1r", "s2met"), type == "spy") %>%
+  filter(year >= 2015) %>%
   ## Replace Ithaca1 and Ithaca2 with Ithaca
   mutate(location = str_replace_all(location, "Ithaca1|Ithaca2", "Ithaca"))
 
@@ -57,7 +58,7 @@ entry_list <- read_excel(file.path(data_dir, "project_entries.xlsx"))
 
 # Grab the entry names that are not checks
 tp <- subset(entry_list, Class == "S2TP", Line, drop = T)
-tp <- setdiff(tp, "07MT-10") # Remove hullness line
+tp <- setdiff(tp, c("07MT-10")) # Remove hullness line and what appears to be a duplicate
 vp <- subset(entry_list, Class == "S2C1R", Line, drop = T)
 
 
@@ -100,6 +101,8 @@ env_trait_herit <- s2_metadata %>%
   filter(trait %in% traits) %>%
   filter(., heritability >= 0.10)
 
+## 3 trait-trials were removed
+
 
 ## Filter the S2 tidy blues for S2MET
 S2_MET_BLUEs <- s2_tidy_BLUE %>%
@@ -121,6 +124,8 @@ S2_MET_BLUEs <- s2_tidy_BLUE %>%
          !(trait %in% c("PlantHeight", "TestWeight") & location %in% c("Grande_rhonde_valley")) ) %>%
   # Rename and reorder
   select(trial, environment, location, year, trait, line_name, value, std_error = std.error)
+
+# 10 more trait-trials removed
 
 ## Separate environments into those for training/testing and those for external validation
 train_test_env <- S2_MET_BLUEs %>% 

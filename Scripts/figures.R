@@ -21,6 +21,8 @@ library(ggdendro)
 
 # Set subfigure labels
 subfigure_labels <- LETTERS
+# Subfigure label size
+subfigure_label_size <- 9
 
 # Set resolution
 dpi_use <- 2000
@@ -28,6 +30,11 @@ dpi_use <- 2000
 
 # Define heat colors
 heat_colors <- wesanderson::wes_palette("Zissou1", n = 5)[c(1,3,5)]
+
+# Base font size
+base_font_size <- 6
+# Base geom text size
+base_geom_text_size <- base_font_size * (5/14)
 
 
 
@@ -49,21 +56,20 @@ trait_experiment_summary <- S2_MET_BLUEs %>%
 # Get the map data for canada
 canada <- map_data("world", "Canada")
 
-# Download map data for US by county
-usa_county <- map_data(map = "county")
+canada <- rnaturalearth::ne_states(country = "canada") %>%
+  tidy(x = ., region = "name_en") %>%
+  mutate(group = as.numeric(as.factor(group)))
+
 # Download state data
-usa_state <- map_data(map = "state")
+usa_state <- as_tibble(map_data(map = "state"))
 
 # Adjust the groups in the states
 usa_state <- usa_state %>%
   mutate(group = group + max(canada$group))
 
-# Adjust the groups in the counties
-usa_county <- usa_county %>%
-  mutate(group = group + max(usa_state$group))
 
 # Tidy and combine
-north_america <- bind_rows(usa_state, usa_county, canada)
+north_america <- bind_rows(usa_state, canada)
 
 
 ## Now create labels for each location (as a combination of all environments)
@@ -96,49 +102,133 @@ long_limit <- c(-117, -63)
 lat_limit <- c(39, 49)
 
 ## Different version of the map - grey
-g_map_alt <- ggplot(data = north_america, aes(x = long, y = lat, group = group)) +
+g_map_v1 <- ggplot(data = north_america, aes(x = long, y = lat, group = group)) +
   geom_polygon(fill = "grey85") +
   geom_polygon(data = canada, fill = NA, color = "white", lwd = 0.3) + # Add canada
   geom_polygon(data = usa_state, aes(x = long, y = lat, group = group), fill = NA, color = "white", lwd = 0.3) +
   geom_point(data = use_loc_info_toplot1, aes(x = longitude, y = latitude, group = location, shape = set), size = 3.5) +
   geom_text_repel(data = use_loc_info_toplot1, aes(x = longitude, y = latitude, group = location, label = location),
-                  size = 2, hjust = 0.5, nudge_x = ifelse(use_loc_info_toplot1$location == "Bozeman", 3, -1), segment.size = 0.2, 
+                  size = 1.75, hjust = 0.5, nudge_x = ifelse(use_loc_info_toplot1$location == "Bozeman", 3, -1), segment.size = 0.2, 
                   point.padding = unit(2, "pt"), min.segment.length = 1) +
   geom_text(data = use_loc_info_toplot1, aes(x = longitude, y = latitude, group = location, label = nExperiments), size = 2, 
             color = ifelse(use_loc_info_toplot1$location == "Arlington", "black", "white")) +
-  coord_fixed(ratio = 1.5, xlim = long_limit, ylim = lat_limit) +
+  coord_map(xlim = long_limit, ylim = lat_limit) +
   scale_shape_manual(name = NULL, values = c(16, 15), guide = guide_legend(label.position = "left", override.aes = list(size = 2))) +
   scale_x_continuous(breaks = NULL, name = NULL, labels = NULL) + 
   scale_y_continuous(breaks = NULL, name = NULL, labels = NULL) +
   theme_classic(base_size = 8) +
   theme(panel.background = element_blank(), panel.grid = element_blank(), 
-        panel.border = element_rect(colour = "black", fill = alpha("white", 0)), axis.line = element_blank(),
-        legend.position = c(0.90, 0.20), legend.text.align = 1, legend.background = element_rect(fill = alpha("white", 0)),
+        panel.border = element_rect(colour = "black", fill = alpha("white", 0)), axis.line = element_blank())
+
+
+
+
+
+## Add visualization of genetic relationships using principal coordinate analysis
+
+# First perform multi-dimensional scaling
+K_mds <- cmdscale(d = dist(K), k = 2, eig = TRUE)
+
+# Get the variance explained by each PCo
+K_pco_varprop <- K_mds$eig %>% 
+  {. / sum(.)} %>% 
+  {. * 100} %>% 
+  round(2) %>% 
+  formatC(., digits = 2, format = "f") %>%
+  str_c(str_c("PCo", seq_along(.)), " (", ., "%)") %>%
+  set_names(str_c("PCo", seq_along(.)))
+
+# Convert to DF and annotate
+K_pco_df <- K_mds$points %>% 
+  as.data.frame() %>% 
+  `row.names<-`(., row.names(K)) %>%
+  `colnames<-`(., str_c("PCo", seq(ncol(.)))) %>%
+  rownames_to_column("line_name") %>% 
+  left_join(., select(entry_list, line_name = Line, class = Class, program = Program, parent = `Parent?`)) %>%
+  arrange(desc(class), program, line_name) %>%
+  mutate(class = ifelse(class == "S2TP", "tp", "vp"), program = fct_inorder(program),
+         parent = case_when(parent == "TRUE" ~ "parent", parent == "FALSE" ~ "nonparent", TRUE ~ "offspring"))
+
+# Color scheme for populations
+pop_colors <- setNames(object = c(neyhart_palette("umn1", n = 4), neyhart_palette("umn2")[c(5, 8)]), nm = levels(K_pco_df$program))
+
+# Create the visualization
+g_popstr <- K_pco_df %>% 
+  ggplot(aes(x = PCo1, y = PCo2, fill = program, color = program)) + 
+  # Plot non-parents and offspring
+  geom_point(data = filter(K_pco_df, parent != "parent"), 
+             shape = ifelse(subset(K_pco_df, parent != "parent")$parent == "nonparent", 16, 17), size = 0.7) +
+  # Plot parents
+  geom_point(data = filter(K_pco_df, parent == "parent"), shape = 21, color = "black", size = 0.7) +
+  # scale_x_continuous(name = K_pco_varprop[1], breaks = pretty, limits = c(min(K_pco_df$PCo1)*1.65, max(K_pco_df$PCo1))) +
+  scale_x_continuous(name = K_pco_varprop[1], breaks = pretty) +
+  scale_y_continuous(name = K_pco_varprop[2], breaks = pretty, position = "right") +
+  scale_color_manual(name = NULL, values = pop_colors, drop = FALSE) +
+  scale_fill_manual(guide = FALSE, values = pop_colors, drop = FALSE) +
+  theme_genetics(base_size = base_font_size) +
+  theme(legend.position = "none", plot.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)),
+        panel.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)))
+
+# Save this
+ggsave(filename = "fig_sXX_population_structure.jpg", plot = g_popstr, path = fig_dir,
+       height = 2.5, width = 3, dpi = dpi_use)
+
+
+# New limits
+long_limit <- c(-123, -63)
+lat_limit <- c(30, 50)
+
+## Create a df of states with population colors
+usa_state1 <- usa_state %>%
+  mutate(fill = case_when(
+    region == "idaho" ~ pop_colors["AB"],
+    region == "montana" ~ pop_colors["MT"],
+    region == "north dakota" ~ pop_colors["N2"],
+    region == "washington" ~ pop_colors["WA"],
+  ))
+
+
+## Different projection
+g_map_v2 <- ggplot(data = north_america, aes(x = long, y = lat, group = group)) +
+  geom_polygon(fill = "white") +
+  geom_polygon(data = canada, fill = NA, color = "grey85", lwd = 0.3) + # Add canada
+  geom_polygon(data = usa_state1, aes(x = long, y = lat, group = group), fill = alpha(usa_state1$fill, 0.75), color = "grey85", lwd = 0.3) +
+  geom_point(data = use_loc_info_toplot1, aes(x = longitude, y = latitude, group = location, shape = set), size = 2.75) +
+  geom_text_repel(data = use_loc_info_toplot1, aes(x = longitude, y = latitude, group = location, label = location),
+                  size = base_geom_text_size, hjust = 0.5, nudge_x = ifelse(use_loc_info_toplot1$location == "Buffalo County", -3, 0), 
+                  segment.size = 0.2) +
+  geom_text(data = use_loc_info_toplot1, aes(x = longitude, y = latitude, group = location, label = nExperiments), 
+            size = base_geom_text_size, color = ifelse(use_loc_info_toplot1$location == "Arlington", "black", "white")) +
+  coord_map(projection = "bonne", lat0 = 50, xlim = long_limit, ylim = lat_limit) +
+  scale_shape_manual(name = NULL, values = c(16, 15), guide = guide_legend(label.position = "left", override.aes = list(size = 2))) +
+  scale_x_continuous(breaks = NULL, name = NULL, labels = NULL) + 
+  scale_y_continuous(breaks = NULL, name = NULL, labels = NULL) +
+  theme_classic(base_size = base_font_size) +
+  theme(panel.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)), panel.grid = element_blank(),
+        panel.border = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)), axis.line = element_blank(),
+        plot.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)), legend.position = c(0.20, 0.20),
+        legend.text.align = 1,
         legend.text = element_text(size = 5), legend.key.height = unit(0.5, "lines"), legend.key.width = unit(0.25, "lines"))
 
+# Save this
+ggsave(filename = "fig1_partA_draft2.jpg", plot = g_map_v2, path = fig_dir,
+       height = 5, width = 8.7, units = "cm", dpi = dpi_use)
+    
+          
+## Combine plots
+layout <- c(
+  area(t = 1, l = 1, b = 10, r = 8),
+  area(t = 3, l = 7, b = 10, r = 9)
+)
 
-## Add a simple bar chart of the number of environments/locations per trait
+g_pop_map <- plot_grid(g_map_v2, labels = subfigure_labels[1], label_size = subfigure_label_size) + 
+  plot_grid(g_popstr, labels = subfigure_labels[2], label_size = subfigure_label_size, label_x = 0.9)+ 
+  plot_layout(design = layout)
 
-## Determine the number of environments per trait
-trait_env_breakdown <- S2_MET_BLUEs %>% 
-  # Assign environment by train/test or external and split
-  mutate(env_set = ifelse(environment %in% train_test_env, "Train/test", "Holdout"),
-         env_set = as.factor(env_set)) %>%
-  arrange(trait, env_set) %>%
-  group_by(trait, env_set) %>%
-  summarize_at(vars(location, year, environment), n_distinct) %>%
-  mutate(y = ifelse(env_set == "Holdout", last(environment) + (environment / 2), environment / 2))
+# Save this
+ggsave(filename = "fig1_partAB_draft1.jpg", plot = g_pop_map, path = fig_dir,
+       height = 6, width = 12, units = "cm", dpi = dpi_use)
 
-# Plot
-g_trait_env_count <- trait_env_breakdown %>%
-  ggplot(aes(x = trait, y = environment, fill = env_set)) +
-  geom_col() +
-  geom_text(aes(y = y, label = environment), size = 2) +
-  scale_fill_manual(name = NULL, values = neyhart_palette("umn2")[c(8, 9)]) +
-  scale_x_discrete(labels = function(x) abbreviate(str_add_space(x), 2), name = NULL) +
-  scale_y_continuous(breaks = pretty, name = "Environments") +
-  theme_genetics(base_size = 6) +
-  theme(legend.position = c(0.10, 0.90))
 
 
 
@@ -163,7 +253,7 @@ covariate_variable_unit <- setNames(c(rep("degree*C", 4), "mm", "MJ~m^-2"), name
 ## Function for renaming a covariate
 f_covariate_replace <- function(x) paste0("'", covariate_rename[x], "'~(", covariate_variable_unit[x], ")")
 # Function for renaming timeframe
-f_timeframe_replace <- function(x) c("concurrent" = "Environment-concurrent", "historical" = "Historical location average")[x]
+f_timeframe_replace <- function(x) c("concurrent" = "In-season", "historical" = "Historical location average")[x]
 
 
 ## Plot Bozeman and Columbus (Wooster)
@@ -348,13 +438,13 @@ g_growth_stages <- cgm_toplot_growth_stage_times %>%
                color = cgm_locations_color[cgm_toplot_growing_season$location], lwd = 0.5, inherit.aes = FALSE) +
   # Annotation for growth stages
   geom_text(data = subset(cgm_toplot_growth_stage_times_summary, y == 1),
-            aes(x = (min + max) / 2, y = y - 1, label = f_growth_stage_replace(as.character(stage))), size = 1.5) +
+            aes(x = (min + max) / 2, y = y - 1, label = f_growth_stage_replace(as.character(stage))), size = base_geom_text_size) +
   facet_grid(type ~ timeframe, labeller = labeller(type = str_add_space, timeframe = f_timeframe_replace), 
              switch = "y", scales = "free_x", space = "free_x") +
   scale_color_manual(values = growth_stage_color, guide = FALSE) +
   scale_y_continuous(limits = c(-0.5, 2.5)) +
   scale_x_continuous(breaks = pretty, name = "Days after planting date") +
-  theme_genetics(base_size = 6) +
+  theme_genetics(base_size = base_font_size) +
   theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), strip.background = element_blank(),
         axis.title.y = element_blank(), axis.line.y = element_blank())
 
@@ -370,42 +460,20 @@ g_growth_stages <- cgm_toplot_growth_stage_times %>%
 g_weather_stages <- plot_grid(
   g_growth_stages + theme(axis.text.x = element_blank(), axis.title.x = element_blank()),
   g_weather_concurrent_historical + theme(legend.position = "none", strip.text.x = element_blank()), 
-  ncol = 1, align = "v", axis = "lr", rel_heights = c(0.20, 1), labels = subfigure_labels[2:3], label_size = 8,
+  ncol = 1, align = "v", axis = "lr", rel_heights = c(0.25, 1), labels = subfigure_labels[3:4], label_size = subfigure_label_size,
   label_y = c(1, 1.03), label_x = 0.01)
 
 
-
-## Highlight locations with color in the map
-map_location_colors <- setdiff(g_map_alt$layers[[4]]$data$location, names(cgm_locations_color)) %>%
-  setNames(rep("black", length(.)), .) %>%
-  c(., cgm_locations_color)
-# New map plot
-g_map_alt1 <- g_map_alt
-g_map_alt1$layers <- g_map_alt1$layers[-5]
-g_map_alt1 <- g_map_alt1 +
-  geom_text_repel(data = use_loc_info_toplot1, 
-                  aes(x = longitude, y = latitude, group = location, label = location, color = location),
-                  size = 2, hjust = 0.5, nudge_x = ifelse(use_loc_info_toplot1$location == "Bozeman", 3, -1), segment.size = 0.2, 
-                  point.padding = unit(2, "pt"), min.segment.length = 1) +
-  scale_color_manual(values = map_location_colors, guide = FALSE) +
-  theme(legend.position = c(0.88, 0.20))
-  
-## Save map and environment count separately
-# Save the map
-ggsave(filename = "figure1_partA_draft1.jpg", plot = g_map_alt1, path = fig_dir,
-       width = 8.7, height = 0.35 * 11, unit = "cm", dpi = dpi_use)
-
-ggsave(filename = "figure1_partB_draft1.jpg", plot = g_trait_env_count, path = fig_dir,
-       width = 2.7, height = 0.35 * 11, unit = "cm", dpi = dpi_use)
-
-
-
-g_fig1 <- plot_grid(g_map_alt1, g_weather_stages, ncol = 1, labels = subfigure_labels[1], label_size = 8,
-                    label_y = 0.93, label_x = 0.01, rel_heights = c(0.35, 1))
+## Combine plots
+g_fig1 <- ( g_pop_map / g_weather_stages ) + plot_layout(heights = c(0.5, 1))
 
 # Save
 ggsave(filename = "figure1_map_growth_stage_example.jpg", plot = g_fig1, path = fig_dir, 
-       width = 8.7, height = 11, units = "cm", dpi = dpi_use)
+       width = 12, height = 14, units = "cm", dpi = dpi_use)
+
+# Save as vector-based
+ggsave(filename = "figure1_map_growth_stage_example.svg", plot = g_fig1, path = fig_dir, 
+       width = 12, height = 14, units = "cm", dpi = 300)
 
 
 
@@ -418,8 +486,7 @@ ggsave(filename = "figure1_map_growth_stage_example.jpg", plot = g_fig1, path = 
 
 
 
-
- # Figure 2. LOEO prediction accuracy ---------------------------------------
+# Figure 2. LOEO prediction accuracy ---------------------------------------
 
 
 # Load the compiled prediction results
