@@ -170,9 +170,8 @@ for (i in seq_len(nrow(historical_timeframe_selection))) {
   
   ## Create a tibble
   historical_timeframe_selection$out[[i]] <- tibble(
-    feat_sel_type = "rfa_cv",
-    model = c("model2", "model3"),
-    adhoc = list(rfa_out, rfa_out_int),
+    model = c("model4", "model5"),
+    covariates = list(rfa_out, rfa_out_int),
   )
   
   # Notify
