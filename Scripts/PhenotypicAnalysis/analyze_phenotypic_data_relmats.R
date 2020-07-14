@@ -34,7 +34,7 @@ n_cores <- 8
 f_return <- function(x) x
 
 
-# Environment-specific ----------------------------------------------------
+# Fit models ----------------------------------------------------
 
 
 
@@ -144,7 +144,9 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
     
     # Trait
     tr <- row$trait
-    data <- droplevels(row$data[[1]])
+    data <- droplevels(row$data[[1]]) %>%
+      # Center and scale
+      mutate(value_scaled = as.numeric(scale(value)))
     genotypes <- levels(data$line_name)
     sites <- levels(data$site)
     covariates <- row$features[[1]]
@@ -202,27 +204,21 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
     KE <- tcrossprod(Zg %*% K_use, Zg) * tcrossprod(Ze %*% Eint, Ze)
     dimnames(KE) <- replicate(2, data$gxs, simplify = FALSE)
     
-    # ## Sommer
-    # model_stdout <- capture.output({ 
-    #   model_try <- try( {
-    #     fit_mmer <- mmer(fixed = value ~ 1, 
-    #                      random = ~ line_name + vs(line_name_cov, Gu = K_use) + location + vs(location_cov, Gu = Emain) +
-    #                        gxl + vs(gxl_cov, Gu = KE),
-    #                      data = data, verbose = TRUE, method = "AI") 
-    #   }, silent = TRUE) })
+    ## Sommer
+    model_stdout <- capture.output({
+      model_try <- try( {
+        fit_mmer <- mmer(fixed = value_scaled ~ 1,
+                         random = ~ line_name + vs(line_name_cov, Gu = K_use) + site + vs(site_cov, Gu = Emain) +
+                           gxs + vs(gxs_cov, Gu = KE),
+                         data = data, verbose = TRUE, method = "NR", tolparinv = 1e-1)
+      }, silent = TRUE) })
     
-    ## BGLR
-    ## Try BGLR
-    fit_bglr <- BGLR(y = data$value, verbose = FALSE, burnIn = 2000, nIter = 12000, saveAt = bglr_prefix,
-                     ETA = list( genoK = list(X = Zg, K = K_use, model = "BRR"), genoI = list(X = Zg, K = diag(ncol(Zg)), model = "BRR"),
-                                 siteK = list(X = Ze, K = Emain, model = "BRR"), siteI = list(X = Ze, K = diag(ncol(Ze)), model = "BRR"),
-                                 gxsK = list(X = Zge, K = KE, model = "BRR"), gxsI = list(X = Zge, K = diag(ncol(Zge)), model = "BRR")
-                     ) )
-    
-    ## Extract variance components and tidy
-    varcomp_df <- c(map_dbl(fit_bglr$ETA, "varB"), Residuals = fit_bglr$varE) %>% 
+    # Get the variance components; asemble into a tibble
+    varcomp_df <- fit_mmer$sigma %>%
+      map_dbl(~.) %>%
       tibble(term = names(.), variance = .) %>%
-      mutate(source = str_remove_all(term, "[KI]$")) %>%
+      mutate(term = str_remove_all(term, "u:"),
+             source = str_remove_all(term, "_cov")) %>%
       group_by(source) %>%
       mutate(total_source_variance = sum(variance)) %>%
       ungroup() %>%
@@ -230,18 +226,27 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
              note = list(NULL))
     
     
-      
-    # # Get the variance components; asemble into a tibble
-    # varcomp_df <- fit_mmer$sigma %>% 
-    #   map_dbl(~.) %>% 
-    #   tibble(term = names(.), variance = .) %>% 
-    #   mutate(term = str_remove_all(term, "u:"), 
-    #          source = str_remove_all(term, "_cov")) %>%
+    # ## BGLR
+    # ## Try BGLR
+    # fit_bglr <- BGLR(y = data$value_scaled, verbose = FALSE, burnIn = 2000, nIter = 12000, saveAt = bglr_prefix,
+    #                  ETA = list( genoK = list(X = Zg, K = K_use, model = "BRR"), genoI = list(X = Zg, K = diag(ncol(Zg)), model = "BRR"),
+    #                              siteK = list(X = Ze, K = Emain, model = "BRR"), siteI = list(X = Ze, K = diag(ncol(Ze)), model = "BRR"),
+    #                              gxsK = list(X = Zge, K = KE, model = "BRR"), gxsI = list(X = Zge, K = diag(ncol(Zge)), model = "BRR")
+    #                  ) )
+    # 
+    # ## Extract variance components and tidy
+    # varcomp_df <- c(map_dbl(fit_bglr$ETA, "varB"), Residuals = fit_bglr$varE) %>% 
+    #   tibble(term = names(.), variance = .) %>%
+    #   mutate(source = str_remove_all(term, "[KI]$")) %>%
     #   group_by(source) %>%
     #   mutate(total_source_variance = sum(variance)) %>%
     #   ungroup() %>%
     #   mutate(variance_prop = variance / total_source_variance,
     #          note = list(NULL))
+    # 
+    
+      
+
     
     
     # Return

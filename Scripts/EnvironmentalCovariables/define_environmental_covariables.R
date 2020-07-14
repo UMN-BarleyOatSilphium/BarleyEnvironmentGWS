@@ -253,7 +253,6 @@ growth_stage_covariates %>%
 growth_stage_covariates1 <- growth_stage_covariates %>%
   ## Remove heading as a growth stage
   filter(stage != "heading") %>%
-  ## Only use TP environments
   inner_join(., env_trials, by = "trial") %>% 
   select(-trial) %>%
   gather(covariate, value, -environment, -stage, -source) %>%
@@ -263,7 +262,6 @@ growth_stage_covariates1 <- growth_stage_covariates %>%
   spread(covariate, value)
 
 soil_covariates1 <- soil_covariates %>%
-  ## Only use TP environments
   inner_join(., env_trials, by = "trial") %>%
   select(-trial)
 
@@ -289,8 +287,7 @@ ec_select1 <- ec_select_summ %>%
 
 ### Covariate diagnostics ###
 
-# Remove mean temperature, which is a linear combination of two other variables
-ec_select2 <- ec_select1 # %>% select(-matches("tmean"))
+ec_select2 <- ec_select1
 
 ## Test for normality using ks test
 ec_tomodel_normality <- ec_select2 %>%
@@ -406,7 +403,6 @@ growth_stage_covariates1 <- growth_stage_covariates %>%
          ## Replace Columbus with Wooster
          location = ifelse(location == "Columbus", "Wooster", location)) %>%
   select(-trial) %>%
-  ## Only use TP environments
   inner_join(., loc_trials, by = "location") %>% 
   # Filter for years before those observed in the S2MET project
   filter(year < min(S2_MET_BLUEs$year)) %>%
@@ -417,7 +413,6 @@ soil_covariates1 <- soil_covariates %>%
   mutate(location = str_replace_all(location, "Ithaca1|Ithaca2", "Ithaca"),
          ## Replace Columbus with Wooster
          location = ifelse(location == "Columbus", "Wooster", location)) %>%
-  ## Only use TP environments
   inner_join(., loc_trials, by = "location") %>%
   gather(covariate, value, -trial, -location) %>%
   left_join(distinct(growth_stage_covariates1, year, trial, location), .) %>%

@@ -38,6 +38,9 @@ S2_MET_BLUEs_tomodel <- S2_MET_BLUEs %>%
          environment %in% train_test_env) %>% # only model train/test environments
   mutate_at(vars(line_name, environment), as.factor)
 
+# Vector of covariate names
+covariate_names <- names(ec_tomodel_centered$daymet)[-1:-2]
+
 
 # Modeling ----------------------------------------------------------------
 
@@ -46,7 +49,7 @@ S2_MET_BLUEs_tomodel <- S2_MET_BLUEs %>%
 
 
 # Create a data.frame of covariates per trait
-trait_covariate_df <- crossing(trait = traits, covariate = reduce(map(ec_tomodel_centered, ~names(.)[-1:-2]), union)) %>%
+trait_covariate_df <- crossing(trait = traits, covariate = covariate_names) %>%
   filter(
     !(str_detect(covariate, "bulk_density")),
     !(trait == "HeadingDate" & str_detect(covariate, "flowering|grain_fill")),
@@ -157,7 +160,10 @@ concurrent_fact_reg <- S2_MET_BLUEs_tomodel %>%
 concurrent_fact_reg_feature_selection <- concurrent_fact_reg %>%
   mutate(feat_sel_type = "stepAIC", direction = "both") %>%
   filter(str_detect(model, "base", negate = TRUE)) %>%
-  mutate_at(vars(apriori, adhoc, adhoc_nosoil), ~map(., ~list(optVariables = attr(terms(.x), "term.labels"))))
+  mutate_at(vars(apriori, adhoc, adhoc_nosoil), ~map(., ~list(optVariables = attr(terms(.x), "term.labels")))) %>%
+  gather(selection_type, covariates, apriori, adhoc, adhoc_nosoil) %>% 
+  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>% 
+  mutate(feat_sel_type = ifelse(str_detect(feat_sel_type, "apriori"), "apriori", feat_sel_type))
   
   
 
@@ -207,53 +213,25 @@ for (i in seq_len(nrow(concurrent_feature_selection_list))) {
     
 }
 
-concurrent_feature_selection <- unnest(concurrent_feature_selection_list, out)
+concurrent_feature_selection <- unnest(concurrent_feature_selection_list, out) %>%
+  gather(selection_type, covariates, adhoc, adhoc_nosoil) %>% 
+  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_")
 
 
-
-# ## Use a genetic algorithm to find ideal models
-# 
-# concurrent_genalg_features_list <- S2_MET_BLUEs_tomodel %>%
-#   crossing(., source = names(ec_tomodel_centered)) %>%
-#   group_by(trait, source) %>%
-#   nest() %>%
-#   mutate(out = list(NULL))
-# 
-# for (i in seq_len(nrow(concurrent_genalg_features_list))) {
-#   
-#   df <- concurrent_genalg_features_list$data[[i]] %>%
-#     mutate(trait = concurrent_genalg_features_list$trait[i])
-#   src <- concurrent_genalg_features_list$source[i]
-#   
-#   # Factorize
-#   df1 <- df %>%
-#     # filter(location != "Aberdeen") %>%
-#     droplevels() %>%
-#     left_join(., ec_tomodel_centered[[src]], by = "environment") %>%
-#     mutate_at(vars(line_name, environment), ~fct_contr_sum(as.factor(.)))
-#   
-#   
-#   loo_indices <- df1 %>%
-#     group_by(environment) %>%
-#     crossv_loo_grouped() %>%
-#     pull(train) %>%
-#     map("idx")
-#   
-#   ## Recursive feature addition
-#   rfa_out_df <- select_features_met(data = df1, env.col = "environment", search.method = "hill.climb")
-#   
-#   concurrent_genalg_features_list$out[[i]] <- bind_rows(rfa_out_df)
-#   
-# }
-# 
-# concurrent_genalg_features <- unnest(concurrent_genalg_features_list, out)
-# 
+## Create a data.frame of all covariates
+concurrent_all_features <- trait_covariate_df %>%
+  group_by(trait) %>% 
+  nest(.key = "covariates") %>% 
+  mutate(covariates = map(covariates, "covariate")) %>%
+  crossing(., source = names(ec_tomodel_centered), feat_sel_type = "all", model = c("model2", "model3")) %>%
+  mutate(covariates = modify_if(covariates, model == "model3", ~c(., paste0("line_name:", .))),
+         covariates = map(covariates, ~list(optVariables = .)))
+           
 
 
 ## Save
 
-save("concurrent_feature_selection", 
-     "concurrent_fact_reg_feature_selection",
+save("concurrent_feature_selection",  "concurrent_fact_reg_feature_selection", "concurrent_all_features", 
      file = file.path(result_dir, "concurrent_feature_selection_results.RData"))
 
 

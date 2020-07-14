@@ -1905,43 +1905,71 @@ ggsave(filename = "figure_sXX_external_location_across_site_prediction_accuracy.
 # Load the full model analysis results
 load(file.path(result_dir, "full_model_variance_analysis.RData"))
 
-# Collapse if a list
-if (!is.data.frame(environment_pheno_variance_analysis)) {
-  environment_pheno_variance_analysis <- environment_pheno_variance_analysis %>% 
-    subset(., sapply(., is.data.frame)) %>%
-    bind_rows()
-}
-
-# Unnest results
-environment_pheno_variance_analysis1 <- environment_pheno_variance_analysis %>%
-  # Make a note as to whether any GxE covariates were included
-  mutate(any_gxe_cov = map_lgl(features, ~any(str_detect(., "line_name:"))) | feat_sel_type == "all") %>%
+pheno_variance_analysis1 <- pheno_variance_analysis_out %>%
+  # Make a note as to whether any interaction covariates were included
+  mutate(any_int_cov = map_lgl(features, ~any(str_detect(., "line_name:"))) | feat_sel_type == "all") %>%
   unnest(results)
 
-## Calculate the total variance and calculate the proportion explained by each source
-environment_pheno_variance_analysis2 <- environment_pheno_variance_analysis1 %>%
-  group_by(trait, population, feat_sel_type) %>%
-  mutate(total_variance = sum(variance), prop_total_variance = variance / total_variance) %>%
-  rename(prop_source_variance = variance_prop) %>%
-  ungroup()
+# Calculate proportions of total phenotypic variance
+pheno_variance_analysis2 <- pheno_variance_analysis1 %>%
+  group_by(trait, population, analysis, feat_sel_type) %>%
+  mutate(total_variance = sum(variance)) %>%
+  ungroup() %>%
+  mutate(source_prop_total_variance = total_source_variance / total_variance,
+         prop_total_variance  = variance / total_variance)
+  
 
-## Clean up for a table
-environment_pheno_variance_analysis_table <- environment_pheno_variance_analysis2 %>%
+
+## Environment ##
+# Clean up for a table
+env_pheno_variance_analysis <- pheno_variance_analysis2 %>%
+  filter(analysis == "environment") %>%
   mutate(feat_sel_type = ifelse(feat_sel_type == "rfa_cv", "rfa_cv_adhoc", feat_sel_type)) %>%
-  select(trait, population, covariate_set = feat_sel_type, any_gxe_cov, source, term, prop_source_variance, prop_total_variance) %>%
+  select(trait, population, covariate_set = feat_sel_type, any_int_cov, source, term, 
+         prop_source_variance = variance_prop, prop_total_variance, source_prop_total_variance) %>%
   mutate(trait = str_add_space(trait), population = f_pop_replace(population), covariate_set = f_ec_selection_replace(covariate_set),
-         source = str_replace_all(source, c("line_name" = "G", "environment" = "E", "gxe" = "G x E", "units" = "Residuals")),
-         term = str_replace_all(term, c("line_name" = "G", "environment" = "E", "gxe" = "G x E", "units" = "Residuals")),
-         term = str_replace_all(term, c("G_cov" = "Markers", "G x E_cov" = "Markers x Covariates",  "E_cov" = "Covariates"))) %>%
-  mutate_at(vars(contains("prop")), ~formatC(x = signif(., 2), digits = 2, width = 2, format = "f")) %>%
+         source = str_replace_all(source, c("geno" = "G", "site" = "E", "gxs" = "G x E", "units" = "Residuals")),
+         term = str_replace_all(term, c("geno" = "G", "site" = "E", "gxs" = "G x E", "units" = "Residuals")),
+         term = str_replace_all(term, c("GK" = "Markers", "G x EK" = "Markers x Covariates",  "EK" = "Covariates", "I" = "")))  %>%
+  # convert to factors
+  mutate_at(vars(term, source), fct_inorder)
+
+## Plot overall contributions to variance
+env_pheno_variance_analysis %>%
+  filter(covariate_set == "All") %>%
+  distinct(trait, population, source, source_prop_total_variance) %>%
+  # Create annotation
+  mutate_at(vars(contains("prop")), list(annotation = ~paste0(format_numbers(. * 100), "%"))) %>%
+  # Plot
+  ggplot(aes(x = population, y = source_prop_total_variance, fill = source)) +
+  geom_col() +
+  geom_text(aes(y = source_prop_total_variance, label = annotation), size = base_geom_text_size,
+            position = position_stack(vjust = 0.5)) +
+  scale_y_continuous(breaks = pretty, labels = scales::percent, name = "Percent variance explained") +
+  facet_grid(~ trait) +
+  theme_genetics(base_size = base_font_size)
+  
+
+## Plot variance explained by markers/covariates/etc.
+env_pheno_variance_analysis %>%
+  filter(term != "Residuals") %>%
+  ggplot(aes(x = source, y = prop_source_variance, fill = term)) +
+  geom_col() +
+  facet_grid(trait ~ population + covariate_set) +
+  theme_genetics(8)
+    
+
+# Create a table
+env_pheno_variance_analysis_table <- env_pheno_variance_analysis %>%
+  mutate_at(vars(contains("prop")), ~formatC(x = signif(., 2), digits = 2, width = 2, format = "fg")) %>%
   arrange(trait, population, covariate_set) %>%
   rename_all(~str_to_title(str_replace_all(., "_", " ")))
 
 
 # Calculate difference in variance explained
-environment_pheno_variance_analysis_diff <- environment_pheno_variance_analysis_table %>%
+environment_pheno_variance_analysis_diff <- env_pheno_variance_analysis_table %>%
   rename_all(make.names) %>%
-  select(-Any.Gxe.Cov, -Prop.Total.Variance) %>%
+  select(-Any.Int.Cov, -Prop.Total.Variance, -Source.Prop.Total.Variance) %>%
   filter(Population == "FP", str_detect(Term, "Covariates")) %>%
   {full_join(x = filter(., Covariate.Set == "StepwiseCV"), y = filter(., Covariate.Set != "StepwiseCV"),
              by = c("Trait", "Population", "Source", "Term"))} %>%
@@ -1968,45 +1996,60 @@ environment_pheno_variance_analysis_diff %>%
 
 # Supplemental Table XX - full model phenotypic variance analysis for locations ---------
 
-# Collapse if a list
-if (!is.data.frame(location_pheno_variance_analysis)) {
-  location_pheno_variance_analysis <- location_pheno_variance_analysis %>% 
-    subset(., sapply(., is.data.frame)) %>%
-    bind_rows()
-}
 
-# Unnest results
-location_pheno_variance_analysis1 <- location_pheno_variance_analysis %>%
-  # Make a note as to whether any GxE covariates were included
-  mutate(any_gxe_cov = map_lgl(features, ~any(str_detect(., "line_name:"))) | feat_sel_type == "all") %>%
-  unnest(results)
-
-## Calculate the total variance and calculate the proportion explained by each source
-location_pheno_variance_analysis2 <- location_pheno_variance_analysis1 %>%
-  group_by(trait, population, feat_sel_type) %>%
-  mutate(total_variance = sum(variance), prop_total_variance = variance / total_variance) %>%
-  rename(prop_source_variance = variance_prop) %>%
-  ungroup()
-
-## Clean up for a table
-location_pheno_variance_analysis_table <- location_pheno_variance_analysis2 %>%
+# Clean up for a table
+loc_pheno_variance_analysis <- pheno_variance_analysis2 %>%
+  filter(analysis == "location") %>%
   mutate(feat_sel_type = ifelse(feat_sel_type == "rfa_cv", "rfa_cv_adhoc", feat_sel_type)) %>%
-  select(trait, population, covariate_set = feat_sel_type, any_gxe_cov, source, term, prop_source_variance, prop_total_variance) %>%
+  select(trait, population, covariate_set = feat_sel_type, any_int_cov, source, term, 
+         prop_source_variance = variance_prop, prop_total_variance, source_prop_total_variance) %>%
   mutate(trait = str_add_space(trait), population = f_pop_replace(population), covariate_set = f_ec_selection_replace(covariate_set),
-         source = str_replace_all(source, c("line_name" = "G", "location" = "L", "gxl" = "G x L", "units" = "Residuals")),
-         term = str_replace_all(term, c("line_name" = "G", "location" = "L", "gxl" = "G x L", "units" = "Residuals")),
-         term = str_replace_all(term, c("G_cov" = "Markers", "G x L_cov" = "Markers x Covariates",  "L_cov" = "Covariates"))) %>%
-  mutate_at(vars(contains("prop")), ~formatC(x = signif(., 2), digits = 2, width = 2, format = "f")) %>%
+         source = str_replace_all(source, c("geno" = "G", "site" = "L", "gxs" = "G x L", "units" = "Residuals")),
+         term = str_replace_all(term, c("geno" = "G", "site" = "L", "gxs" = "G x L", "units" = "Residuals")),
+         term = str_replace_all(term, c("GK" = "Markers", "G x LK" = "Markers x Covariates",  "LK" = "Covariates", "I" = "")))  %>%
+  # convert to factors
+  mutate_at(vars(term, source), fct_inorder)
+
+## Plot overall contributions to variance
+loc_pheno_variance_analysis %>%
+  filter(covariate_set == "All") %>%
+  distinct(trait, population, source, source_prop_total_variance) %>%
+  # Create annotation
+  mutate_at(vars(contains("prop")), list(annotation = ~paste0(format_numbers(. * 100), "%"))) %>%
+  # Plot
+  ggplot(aes(x = population, y = source_prop_total_variance, fill = source)) +
+  geom_col() +
+  geom_text(aes(y = source_prop_total_variance, label = annotation), size = base_geom_text_size,
+            position = position_stack(vjust = 0.5)) +
+  scale_y_continuous(breaks = pretty, labels = scales::percent, name = "Percent variance explained") +
+  facet_grid(~ trait) +
+  theme_genetics(base_size = base_font_size)
+
+
+
+
+## Plot variance explained by markers/covariates/etc.
+loc_pheno_variance_analysis %>%
+  filter(term != "Residuals") %>%
+  ggplot(aes(x = source, y = prop_source_variance, fill = term)) +
+  geom_col() +
+  facet_grid(trait ~ population + covariate_set) +
+  theme_genetics(8)
+
+
+# Create a table
+loc_pheno_variance_analysis_table <- loc_pheno_variance_analysis %>%
+  mutate_at(vars(contains("prop")), ~formatC(x = signif(., 2), digits = 2, width = 2, format = "fg")) %>%
   arrange(trait, population, covariate_set) %>%
   rename_all(~str_to_title(str_replace_all(., "_", " ")))
 
 
 # Calculate difference in variance explained
-location_pheno_variance_analysis_table %>%
+loc_pheno_variance_analysis_table %>%
   rename_all(make.names) %>%
-  select(-Any.Gxe.Cov, -Prop.Total.Variance) %>%
+  select(-Any.Int.Cov, -Prop.Total.Variance, -Source.Prop.Total.Variance) %>%
   filter(Population == "FP", str_detect(Term, "Covariates")) %>%
-  {full_join(x = filter(., Covariate.Set == "Stepwise"), y = filter(., Covariate.Set != "Stepwise"),
+  {full_join(x = filter(., Covariate.Set == "StepwiseCV"), y = filter(., Covariate.Set != "StepwiseCV"),
              by = c("Trait", "Population", "Source", "Term"))} %>%
   mutate_at(vars(contains("Prop")), parse_number) %>%
   mutate(prop_diff = Prop.Source.Variance.x - Prop.Source.Variance.y)
