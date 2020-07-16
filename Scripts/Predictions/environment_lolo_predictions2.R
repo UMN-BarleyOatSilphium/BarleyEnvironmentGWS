@@ -355,7 +355,6 @@ loc_external_predictions_out <- loc_external_train_val1 %>%
       models_run <- lapply(X = model.list, "[", c("model2_cov", "model3_cov"))
       # Get covariates
       covariates_use <- covariates_row %>%
-        select(-direction) %>%
         spread(model, covariates) %>%
         mutate(out = list(NULL))
       
