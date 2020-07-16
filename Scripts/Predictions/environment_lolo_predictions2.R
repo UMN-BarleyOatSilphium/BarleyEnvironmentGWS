@@ -56,7 +56,6 @@ model_fixed_forms <- formulas(
   model2_cov = model1,
   model2_id = model1,
   model3_cov = model1,
-  model3_cov1 = model3_cov,
   model3_id = model1
 )
 
@@ -68,9 +67,9 @@ model_rand_forms <- formulas(
   model2_cov = add_predictors(model1, ~ vs(site1, Gu = E)),
   model2_id = add_predictors(model1, ~ vs(site1, Gu = I)),
   model3_cov = add_predictors(model2_cov, ~ vs(line_name:site1, Gu = GE)),
-  model3_cov1 = add_predictors(model2_cov, ~ vs(line_name:site1, Gu = GxE)),
   model3_id = add_predictors(model2_id, ~ vs(line_name:site1, Gu = GI))
 ) %>% map(~ formula(delete.response(terms(.)))) # Remove response
+
 
 # Combine into list
 model.list <- list(fixed = model_fixed_forms, random = model_rand_forms)
@@ -113,63 +112,45 @@ data_to_model <- S2_MET_loc_BLUEs %>%
   mutate(loc = location)
 
 
+# # Use the features identified in the environment-specific analysis
+# concurrent_feature_selection <- concurrent_feature_selection %>%
+#   gather(selection_type, covariates, adhoc, adhoc_nosoil) %>% 
+#   unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>%
+#   mutate(model = case_when(model == "model2" ~ "model4", model == "model3" ~ "model5"),
+#          feat_sel_type = paste0("concurrent_", feat_sel_type))
 
-## Adjust feature selection df
-historical_fact_reg_feature_selection <- historical_fact_reg_feature_selection %>%
-  gather(selection_type, covariates, apriori, adhoc, adhoc_nosoil) %>% 
-  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>% 
-  mutate(feat_sel_type = ifelse(str_detect(feat_sel_type, "apriori"), "apriori", feat_sel_type))
 
-historical_feature_selection <- historical_feature_selection %>%
-  gather(selection_type, covariates, adhoc) %>% 
-  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>%
-  mutate(model = case_when(model == "model2" ~ "model4", model == "model3" ~ "model5"))
 
-# Use the features identified in the environment-specific analysis
-concurrent_feature_selection <- concurrent_feature_selection %>%
-  gather(selection_type, covariates, adhoc, adhoc_nosoil) %>% 
-  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>%
-  mutate(model = case_when(model == "model2" ~ "model4", model == "model3" ~ "model5"),
-         feat_sel_type = paste0("concurrent_", feat_sel_type))
+
+# Remove soil variable from all variables
+historical_all_features <- historical_all_features %>%
+  mutate(covariates = map(covariates, ~modify_at(.x, "optVariables", ~str_subset(.x, "soil", negate = TRUE))), 
+         feat_sel_type = "all_nosoil") %>%
+  bind_rows(historical_all_features, .)
 
 
 # Combine feature selection df
-feature_selection_df <- bind_rows(historical_fact_reg_feature_selection, 
-                                  mutate(historical_feature_selection, source = "daymet")) %>%
+feature_selection_df <- bind_rows(historical_fact_reg_feature_selection, mutate(historical_feature_selection, source = "daymet"),
+                                  historical_all_features) %>%
   select(-contains("time_frame"))
-  
-# A vector of all covariates
-covariates_by_source_df <- tibble(source = map_chr(map(historical_ec_tomodel_timeframe_scaled, "source"), unique),
-                                  covariates = map(historical_ec_tomodel_timeframe_scaled, ~names(.)[-1:-3])) %>%
-  group_by(source) %>% slice(1) %>% ungroup()
-  
-# Data.frame with all covariates
-all_covariates_df <- crossing(covariates_by_source_df, trait = traits, feature_selection = "all", 
-                              model = c("model4", "model5")) %>% 
-  mutate(covariates = map2(covariates, model, ~ifelse(.y == "model4", list(.x), list(c(.x, paste0("line_name:", .x))))) %>%
-           map(1)) %>%
-  filter(source %in% source_use)
-
 
 
 # Reorganize covariate df
 covariates_tomodel <- feature_selection_df %>%
-  bind_rows(., concurrent_feature_selection) %>% # Add covariates selected in the concurrent analysis
+  # bind_rows(., concurrent_feature_selection) %>% # Add covariates selected in the concurrent analysis
   # Filter the source to use
   filter(source %in% source_use) %>%
+  # Do not use the AIC stepwise covariates
+  filter(str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
   rename(feature_selection = feat_sel_type) %>%
+  select(-direction) %>%
   mutate(covariates = map(covariates, "optVariables"),
-         covariates = modify_if(covariates, is.null, ~character(0)),
-         direction = ifelse(is.na(direction), "forward", direction)) %>%
-  # Add all covariates
-  bind_rows(., all_covariates_df) %>%
+         covariates = modify_if(covariates, is.null, ~character(0))) %>%
   unnest() %>%
   filter(covariates != "line_name") %>%
-  group_by(source, trait, feature_selection, model, direction) %>%
+  group_by(source, trait, feature_selection, model) %>%
   nest(.key = "covariates") %>%
   ungroup() %>%
-  # Do not use the no soil selections or pls
-  filter(str_detect(feature_selection, "nosoil|pls", negate = TRUE)) %>%
   # Collapse covariates
   mutate(covariates = map(covariates, "covariates")) %>%
   # nest
@@ -234,10 +215,9 @@ lolo_predictions_out <- data_train_test1 %>%
       
       ## Relationships for E
       # Subset models
-      models_run <- lapply(X = model.list, "[", c("model2_cov", "model3_cov", "model3_cov1"))
+      models_run <- lapply(X = model.list, "[", c("model2_cov", "model3_cov"))
       # Get covariates
       covariates_use <- covariates_row %>%
-        select(-direction) %>%
         spread(model, covariates) %>%
         mutate(out = list(NULL))
       
@@ -372,7 +352,7 @@ loc_external_predictions_out <- loc_external_train_val1 %>%
       
       ## Relationships for E and GxE
       # Subset models
-      models_run <- lapply(X = model.list, "[", c("model2_cov", "model3_cov", "model3_cov1"))
+      models_run <- lapply(X = model.list, "[", c("model2_cov", "model3_cov"))
       # Get covariates
       covariates_use <- covariates_row %>%
         select(-direction) %>%

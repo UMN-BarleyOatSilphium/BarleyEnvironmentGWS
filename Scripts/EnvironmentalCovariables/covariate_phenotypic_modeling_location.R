@@ -186,178 +186,193 @@ historical_timeframe_selection_out <- unnest(historical_timeframe_selection, out
 save("historical_timeframe_selection_out", file = file.path(result_dir, "historical_covariate_timeframe_selection.RData"))
 
 
-# 
-# 
-# ## Analyze the results ##
-# 
-# # What timeframe returns the lowest RMSE per trait?
-# historical_timeframe_selection_out1 <- historical_timeframe_selection_out %>%
-#   filter(model == "model3") %>%
-#   mutate(results = map(adhoc, "finalResults") %>% map(as.list) %>% map(as_tibble)) %>%
-#   unnest(results) %>%
-#   # Parse timeframe
-#   mutate(time_frame_type = str_extract(time_frame, "time_frame|window"),
-#          time_frame1 = str_remove(time_frame, "time_frame|window")) %>%
-#   separate(time_frame1, c("length", "start_year", "end_year"), sep = "_") %>%
-#   mutate_at(vars(length, contains("year")), parse_guess) %>%
-#   # Round the RMSE
-#   mutate_at(vars(RMSE, R2), ~round(., 5))
-# 
-# 
+
+
+
+# Analyze the results -----------------------------------------------------
+
+
+
+load(file.path(result_dir, "historical_covariate_timeframe_selection.RData"))
+
+# What timeframe returns the lowest RMSE per trait?
+historical_timeframe_selection_out1 <- historical_timeframe_selection_out %>%
+  filter(model == "model5") %>%
+  mutate(results = map(covariates, "finalResults") %>% map(as.list) %>% map(as_tibble),
+         nVariables = map(covariates, "optVariables") %>% map_dbl(., ~length(setdiff(., "line_name"))) ) %>%
+  unnest(results) %>%
+  # Parse timeframe
+  mutate(time_frame_type = str_extract(time_frame, "time_frame|window"),
+         time_frame1 = str_remove(time_frame, "time_frame|window")) %>%
+  separate(time_frame1, c("length", "start_year", "end_year"), sep = "_") %>%
+  mutate_at(vars(length, contains("year")), parse_guess) %>%
+  # Round the RMSE
+  mutate_at(vars(RMSE, R2), ~round(., 5))
+
+
+## Plot timeframes
+historical_timeframe_selection_out1 %>%
+  filter(time_frame_type == "time_frame") %>%
+  ggplot(aes(x = length, y = RMSE, color = feat_sel_type, size = nVariables)) +
+  geom_line() +
+  scale_x_reverse() +
+  facet_grid(trait ~ ., scales = "free_y") +
+  theme_presentation2()
+
+
+
 # ## First, display the results of the naive selection of time_frame5
 # historical_timeframe_selection_out1 %>%
 #   filter(time_frame == "time_frame5_2010_2014")
-# 
-# 
-# ## Find the the best, shortest, most recent timeframe based on RMSE
-# ## Timeframe
-# historical_timeframe_sorted_timeframe <- historical_timeframe_selection_out1 %>%
-#   filter(time_frame_type == "time_frame") %>%
-#   # Round the 
-#   split(.$trait) %>%
-#   map(~arrange(., RMSE, end_year, length))
-# 
-# ## Window
-# historical_timeframe_sorted_window <- historical_timeframe_selection_out1 %>%
-#   filter(time_frame_type == "window") %>%
-#   # Round the 
-#   split(.$trait) %>%
-#   map(~arrange(., RMSE, end_year, length))
-# 
-# 
-# ## Time frames appear to be best (or at least comparable to windows); use these 
-# historical_timeframe_best_timeframe <- historical_timeframe_sorted_timeframe %>%
-#   map(~filter(., length < 15)) %>% # USe a shorter length
-#   map_df(~slice(., 1))
-# 
-# 
-# ## These will be the feature selection covariates
-# historical_feature_selection <- historical_timeframe_selection_out %>%
-#   inner_join(., select(historical_timeframe_best_timeframe, trait, time_frame)) %>%
-#   select(-data) %>%
-#   gather(selection_type, covariates, adhoc, adhoc_nosoil) %>% 
-#   unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>%
-#   mutate(model = case_when(model == "model2" ~ "model4", model == "model3" ~ "model5"))
-#   
-# 
-# ## Use this timeframe for the apriori and stepwiseAIC procedures ## 
-# 
-# 
-# ## A priori covariates - quite minimal; each should have a citation 
-# ## 
-# ## HeadingDate - everything before flowering
-# ## 
-# ## PlantHeight - everything before grain fill
-# ##  
-# ## Grain yield, grain protein, and test weight
-# ## - Everything for plant height plus...
-# ## - Elevated temperature during grain fill (Passarella et al 2005)
-# ## - Drought during grain fill - (Savin and Nicholas  1996)
-# ## 
-# ## 
-# ## 
-# 
-# apriori_covariate_df <- trait_covariate_df %>%
-#   filter(str_detect(covariate, "soil", negate = TRUE)) %>%
-#   {bind_rows(
-#     filter(., trait %in% c("HeadingDate", "PlantHeight")),
-#     filter(., trait %in% c("GrainProtein", "GrainYield", "TestWeight"),
-#            covariate %in% c(subset(., trait == "PlantHeight", covariate, drop = TRUE), 
-#                             "grain_fill.tmean_mean", "grain_fill.water_balance_sum"))
-#   )}
-# 
-# 
-# historical_fact_reg <- S2_MET_loc_BLUEs_tomodel %>%
-#   crossing(., source = map_chr(historical_ec_tomodel_timeframe_centered, ~unique(pull(., "source")))) %>%
-#   left_join(., distinct(historical_feature_selection, trait, time_frame)) %>%
-#   group_by(trait, source, time_frame) %>%
-#   nest() %>%
-#   mutate(out = list(NULL))
-# 
-# for (i in seq_len(nrow(historical_fact_reg))) {
-# 
-#     df <- historical_fact_reg$data[[i]]
-#     df$trait <- historical_fact_reg$trait[i]
-# 
-#     # data source
-#     src <- historical_fact_reg$source[i]
-#     # time frame
-#     tf <- historical_fact_reg$time_frame[i]
-#     
-#     # Extract the covariates data to use
-#     historical_ec_tomodel_centered_use <- bind_rows(historical_ec_tomodel_timeframe_centered) %>%
-#       filter(source == src, time_frame == tf)
-# 
-#     # Factorize
-#     df1 <- df %>%
-#       droplevels() %>%
-#       left_join(., historical_ec_tomodel_centered_use, by = "location") %>%
-#       mutate_at(vars(line_name, location), ~fct_contr_sum(as.factor(.)))
-# 
-#     # Apriori
-#     ## Add covariates - filter
-#     covariates_use <- subset(apriori_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-#     apriori_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "apriori")
-# 
-#     # Ad hoc
-#     ## Add covariates - filter
-#     covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-#     adhoc_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
-# 
-#     # Ad hoc - without soil
-#     ## Add covariates - filter
-#     covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T),
-#                              covariate, drop = TRUE)
-#     adhoc_nosoil_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
-# 
-# 
-#     ## Return results
-#     historical_fact_reg$out[[i]] <- tibble(model = c("base", "base_alt", "model4", "model5"),
-#            apriori = apriori_out,
-#            adhoc = adhoc_out,
-#            adhoc_nosoil = adhoc_nosoil_out)
-# 
-# }
-# 
-# 
-# historical_fact_reg1 <- unnest(historical_fact_reg, out)
-# 
-# 
-# ## Prepare results for saving
-# historical_fact_reg_feature_selection <- historical_fact_reg1 %>%
-#   mutate(feat_sel_type = "stepAIC", direction = "forward") %>%
-#   filter(str_detect(model, "base", negate = TRUE)) %>%
-#   mutate_at(vars(apriori, adhoc, adhoc_nosoil), ~map(., ~list(optVariables = attr(terms(.x), "term.labels")))) %>%
-#   gather(selection_type, covariates, apriori, adhoc, adhoc_nosoil) %>% 
-#   unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>% 
-#   mutate(feat_sel_type = ifelse(str_detect(feat_sel_type, "apriori"), "apriori", feat_sel_type))
-# 
-# 
-# 
-# 
-# ## Create a data.frame of all covariates
-# historical_all_features <- trait_covariate_df %>%
-#   group_by(trait) %>% 
-#   nest(.key = "covariates") %>% 
-#   mutate(covariates = map(covariates, "covariate")) %>%
-#   crossing(., source = names(ec_tomodel_centered), feat_sel_type = "all", model = c("model4", "model5")) %>%
-#   mutate(covariates = modify_if(covariates, model == "model5", ~c(., paste0("line_name:", .))),
-#          covariates = map(covariates, ~list(optVariables = .)))
-# 
-# 
-# 
-# 
-# ## Save historical feature selection
-# save("historical_feature_selection", "historical_fact_reg_feature_selection", "historical_all_features",
-#      file = file.path(result_dir, "historical_feature_selection_results.RData"))
-# 
-# 
-# ## Reload the concurrent data and save everything together
-# load(file.path(result_dir, "concurrent_feature_selection_results.RData"))
-# 
-# save("concurrent_feature_selection", "historical_feature_selection",
-#      "concurrent_fact_reg_feature_selection", "historical_fact_reg_feature_selection",
-#      "concurrent_all_features", "historical_all_features",
-#      file = file.path(result_dir, "feature_selection_results.RData"))
-# 
-# 
+
+
+## Find the the best, shortest, most recent timeframe based on RMSE
+## Timeframe
+historical_timeframe_sorted_timeframe <- historical_timeframe_selection_out1 %>%
+  filter(time_frame_type == "time_frame") %>%
+  # Round the
+  split(.$trait) %>%
+  map(~arrange(., RMSE, end_year, length))
+
+## Window
+historical_timeframe_sorted_window <- historical_timeframe_selection_out1 %>%
+  filter(time_frame_type == "window") %>%
+  # Round the
+  split(.$trait) %>%
+  map(~arrange(., RMSE, end_year, length))
+
+
+## Time frames appear to be best (or at least comparable to windows); use these
+historical_timeframe_best_timeframe <- historical_timeframe_sorted_timeframe %>%
+  map(~filter(., length < 15)) %>% # USe a shorter length
+  map_df(~slice(., 1))
+
+
+## These will be the feature selection covariates
+historical_feature_selection <- historical_timeframe_selection_out %>%
+  inner_join(., select(historical_timeframe_best_timeframe, trait, time_frame)) %>%
+  select(-data) %>%
+  mutate(feat_sel_type = paste0("rfa_", feat_sel_type))
+
+
+## Use this timeframe for the apriori and stepwiseAIC procedures ##
+
+
+## A priori covariates - quite minimal; each should have a citation
+##
+## HeadingDate - everything before flowering
+##
+## PlantHeight - everything before grain fill
+##
+## Grain yield, grain protein, and test weight
+## - Everything for plant height plus...
+## - Elevated temperature during grain fill (Passarella et al 2005)
+## - Drought during grain fill - (Savin and Nicholas  1996)
+##
+##
+##
+
+apriori_covariate_df <- trait_covariate_df %>%
+  filter(str_detect(covariate, "soil", negate = TRUE)) %>%
+  {bind_rows(
+    filter(., trait %in% c("HeadingDate", "PlantHeight")),
+    filter(., trait %in% c("GrainProtein", "GrainYield", "TestWeight"),
+           covariate %in% c(subset(., trait == "PlantHeight", covariate, drop = TRUE),
+                            "grain_fill.tmean_mean", "grain_fill.water_balance_sum"))
+  )}
+
+
+historical_fact_reg <- S2_MET_loc_BLUEs_tomodel %>%
+  crossing(., source = map_chr(historical_ec_tomodel_timeframe_centered, ~unique(pull(., "source")))) %>%
+  left_join(., distinct(historical_feature_selection, trait, time_frame)) %>%
+  group_by(trait, source, time_frame) %>%
+  nest() %>%
+  mutate(out = list(NULL))
+
+for (i in seq_len(nrow(historical_fact_reg))) {
+
+    df <- historical_fact_reg$data[[i]]
+    df$trait <- historical_fact_reg$trait[i]
+
+    # data source
+    src <- historical_fact_reg$source[i]
+    # time frame
+    tf <- historical_fact_reg$time_frame[i]
+
+    # Extract the covariates data to use
+    historical_ec_tomodel_centered_use <- bind_rows(historical_ec_tomodel_timeframe_centered) %>%
+      filter(source == src, time_frame == tf)
+
+    # Factorize
+    df1 <- df %>%
+      droplevels() %>%
+      left_join(., historical_ec_tomodel_centered_use, by = "location") %>%
+      mutate_at(vars(line_name, location), ~fct_contr_sum(as.factor(.)))
+
+    # Apriori
+    ## Add covariates - filter
+    covariates_use <- subset(apriori_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+    apriori_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "apriori")
+
+    # Ad hoc
+    ## Add covariates - filter
+    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+    adhoc_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
+
+    # Ad hoc - without soil
+    ## Add covariates - filter
+    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T),
+                             covariate, drop = TRUE)
+    adhoc_nosoil_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
+
+
+    ## Return results
+    historical_fact_reg$out[[i]] <- tibble(model = c("base", "base_alt", "model4", "model5"),
+           apriori = apriori_out,
+           adhoc = adhoc_out,
+           adhoc_nosoil = adhoc_nosoil_out)
+
+}
+
+
+historical_fact_reg1 <- unnest(historical_fact_reg, out)
+
+
+## Prepare results for saving
+historical_fact_reg_feature_selection <- historical_fact_reg1 %>%
+  mutate(feat_sel_type = "stepAIC", direction = "forward") %>%
+  filter(str_detect(model, "base", negate = TRUE)) %>%
+  mutate_at(vars(apriori, adhoc, adhoc_nosoil), ~map(., ~list(optVariables = attr(terms(.x), "term.labels")))) %>%
+  gather(selection_type, covariates, apriori, adhoc, adhoc_nosoil) %>%
+  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>%
+  mutate(feat_sel_type = ifelse(str_detect(feat_sel_type, "apriori"), "apriori", feat_sel_type))
+
+
+
+
+## Create a data.frame of all covariates
+historical_all_features <- trait_covariate_df %>%
+  group_by(trait) %>%
+  nest(.key = "covariates") %>%
+  mutate(covariates = map(covariates, "covariate")) %>%
+  crossing(., source = names(ec_tomodel_centered), feat_sel_type = "all", model = c("model4", "model5")) %>%
+  mutate(covariates = modify_if(covariates, model == "model5", ~c(., paste0("line_name:", .))),
+         covariates = map(covariates, ~list(optVariables = .)))
+
+
+
+
+## Save historical feature selection
+save("historical_feature_selection", "historical_fact_reg_feature_selection", "historical_all_features",
+     file = file.path(result_dir, "historical_feature_selection_results.RData"))
+
+
+## Reload the concurrent data and save everything together
+load(file.path(result_dir, "concurrent_feature_selection_results.RData"))
+
+save("concurrent_feature_selection", "historical_feature_selection",
+     "concurrent_fact_reg_feature_selection", "historical_fact_reg_feature_selection",
+     "concurrent_all_features", "historical_all_features",
+     file = file.path(result_dir, "feature_selection_results.RData"))
+
+

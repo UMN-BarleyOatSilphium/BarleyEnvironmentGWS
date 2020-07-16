@@ -934,12 +934,8 @@ load(file.path(result_dir, "concurrent_historical_covariables.RData"))
 ## Concurrent
 
 ## Combine concurrent feature selection df
-concurrent_features <- bind_rows(
-  concurrent_fact_reg_feature_selection %>% select(source, trait, model, apriori, stepAIC_adhoc = adhoc) %>% 
-    gather(feat_sel_type, features, apriori, stepAIC_adhoc),
-  gather(concurrent_feature_selection, feat_subset, features, adhoc, adhoc_nosoil) %>%
-    unite(feat_sel_type, feat_sel_type, feat_subset, sep = "_")
-)
+concurrent_features <- bind_rows( concurrent_fact_reg_feature_selection, concurrent_feature_selection, concurrent_all_features ) %>%
+  rename(features = covariates) %>% select(-direction)
 
 ## combine model2 and model3 covariates
 concurrent_features1 <- concurrent_features %>%
@@ -947,12 +943,6 @@ concurrent_features1 <- concurrent_features %>%
   spread(model, features) %>%
   mutate_at(vars(contains("model")), ~map(., "optVariables")) %>%
   mutate(features = map2(model2, model3, union)) %>%
-  ## Add all covariates
-  bind_rows(.,
-            tibble(source = names(ec_tomodel_centered), features = map(ec_tomodel_centered, ~names(.)[-1:-2])) %>% 
-              mutate(features = map(features, ~c(., paste0("line_name:", .)))) %>% 
-              crossing(., trait = traits, feat_sel_type = "all")
-  ) %>%
   mutate(features = map(features, ~setdiff(., "line_name"))) %>%
   select(-contains("model")) %>%
   mutate(interaction_features = map(features, ~str_subset(., ":")),

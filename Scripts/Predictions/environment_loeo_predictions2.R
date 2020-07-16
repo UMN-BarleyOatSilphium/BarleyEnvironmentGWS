@@ -36,7 +36,7 @@ source_use <- "daymet"
 time_frame_use <- "time_frame5_2010_2014"
 
 # If re-running predictions, should all be re-run?
-rerun_all <- FALSE
+rerun_all <- TRUE
 
 
 
@@ -57,8 +57,6 @@ model_fixed_forms <- formulas(
   model2_id = model1,
   model3_id = model1,
   model3_cov = model1,
-  model3_cov1 = model3_cov,
-  model3_cov_all = model3_cov
 )
 
 ## Models for de novo fitting 
@@ -69,9 +67,7 @@ model_rand_forms <- formulas(
   model2_cov = add_predictors(model1, ~ vs(site1, Gu = E)),
   model2_id = add_predictors(model1, ~ vs(site1, Gu = I)),
   model3_id = add_predictors(model2_id, ~ vs(line_name:site1, Gu = GI)),
-  model3_cov = add_predictors(model2_cov, ~ vs(line_name:site1, Gu = GE)),
-  model3_cov1 = add_predictors(model2_cov, ~ vs(line_name:site1, Gu = GxE)),
-  model3_cov_all = model3_cov,
+  model3_cov = add_predictors(model2_cov, ~ vs(line_name:site1, Gu = GE))
 ) %>% map(~ formula(delete.response(terms(.)))) # Remove response
 
 # Combine into list
@@ -94,45 +90,34 @@ data_to_model <- S2_MET_BLUEs %>%
   mutate_at(vars(environment, location, year), as.factor) %>%
   mutate(env = environment, loc = location)
 
-## Adjust feature selection df
-concurrent_fact_reg_feature_selection <- concurrent_fact_reg_feature_selection %>%
-  gather(selection_type, covariates, apriori, adhoc, adhoc_nosoil) %>% 
-  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>% 
-  mutate(feat_sel_type = ifelse(str_detect(feat_sel_type, "apriori"), "apriori", feat_sel_type))
+# Rename the covariate list
+concurrent_all_features <- concurrent_all_features %>%
+  mutate(covariates = map(covariates, ~setNames(.x, "optVariables")))
 
-concurrent_feature_selection <- concurrent_feature_selection %>%
-  gather(selection_type, covariates, adhoc, adhoc_nosoil) %>% 
-  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_")
-
+# Remove soil variable from all variables
+concurrent_all_features <- concurrent_all_features %>%
+  mutate(covariates = map(covariates, ~modify_at(.x, "optVariables", ~str_subset(.x, "soil", negate = TRUE))), 
+         feat_sel_type = "all_nosoil") %>%
+  bind_rows(concurrent_all_features, .)
 
 # Combine feature selection df
-feature_selection_df <- bind_rows(concurrent_fact_reg_feature_selection, concurrent_feature_selection)
-
-# A vector of all covariates
-all_covariates <- reduce(map(ec_tomodel_centered, ~names(.)[-1:-2]), intersect)
-# Data.frame with all covariates
-all_covariates_df <- crossing(source = source_use, trait = traits, feature_selection = "all", 
-                              model = c("model2", "model3")) %>% 
-  mutate(covariates = ifelse(model == "model2", list(all_covariates), list(c(all_covariates, paste0("line_name:", all_covariates)))))
-
+feature_selection_df <- bind_rows(concurrent_fact_reg_feature_selection, concurrent_feature_selection, 
+                                  concurrent_all_features)
 
 # Reorganize covariate df
 covariates_tomodel <- feature_selection_df %>%
+  select(-direction) %>%
   # Filter the source to use
   filter(source %in% source_use,
-         # Do not use the no soil selections or pls or stepwiseAIC covariates
-         str_detect(feat_sel_type, "nosoil|pls|AIC", negate = TRUE)) %>%
+         # Do not use stepwiseAIC covariates
+         str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
   rename(feature_selection = feat_sel_type) %>%
-  mutate(covariates = map(covariates, "optVariables"),
-         direction = ifelse(is.na(direction), "forward", direction)) %>%
-  # Add all covariates
-  bind_rows(., all_covariates_df) %>%
-  unnest() %>%
+  mutate(covariates = map(covariates, "optVariables")) %>%
+  unnest(covariates) %>%
   filter(covariates != "line_name") %>%
-  group_by(source, trait, feature_selection, model, direction) %>%
+  group_by(source, trait, feature_selection, model) %>%
   nest(.key = "covariates") %>%
   ungroup() %>%
-
   # Collapse covariates
   mutate(covariates = map(covariates, "covariates")) %>%
   # nest
@@ -222,10 +207,9 @@ loeo_predictions_out <- data_train_test1 %>%
       
       ## Relationships for E
       # Subset models
-      models_run <- lapply(X = model.list, "[", c("model2_cov", "model3_cov", "model3_cov1"))
+      models_run <- lapply(X = model.list, "[", c("model2_cov", "model3_cov"))
       # Get covariates
       covariates_use <- covariates_row %>%
-        select(-direction) %>%
         spread(model, covariates) %>%
         mutate(out = list(NULL))
       
@@ -412,7 +396,7 @@ env_external_predictions_out <- env_external_train_val1 %>%
       
       ## Relationships for E and GxE
       # Subset models
-      models_run <- lapply(X = model.list, "[", c("model2_cov", "model3_cov", "model3_cov1"))
+      models_run <- lapply(X = model.list, "[", c("model2_cov", "model3_cov"))
       # Get covariates
       covariates_use <- covariates_row %>%
         select(-direction) %>%
@@ -490,29 +474,29 @@ save("loeo_predictions_out", "env_external_predictions_out",
 
 
 
-## Combine results into one file
-if (file.exists(file.path(result_dir, "loeo_predictions_fact_reg_supp.RData"))) {
-  load(file.path(result_dir, "loeo_predictions_fact_reg.RData"))
-  loeo_predictions_out_reg <- loeo_predictions_out
-  env_external_predictions_out_reg <- env_external_predictions_out
-  
-  # Load the supplemental
-  load(file.path(result_dir, "loeo_predictions_fact_reg_supp.RData"))
-  loeo_predictions_out_supp <- loeo_predictions_out
-  
-  ## Combine
-  loeo_predictions_out <- loeo_predictions_out_reg %>% 
-    subset(., !sapply(., is.null)) %>% 
-    bind_rows() %>%
-    bind_rows(., bind_rows(loeo_predictions_out_supp)) %>%
-    arrange(trait, site)
-  # Rename
-  env_external_predictions_out <- env_external_predictions_out_reg
-  
-  # Resave
-  save("loeo_predictions_out", "env_external_predictions_out",
-       file = file.path(result_dir, "loeo_predictions_fact_reg.RData"))
-}
+# ## Combine results into one file
+# if (file.exists(file.path(result_dir, "loeo_predictions_fact_reg_supp.RData"))) {
+#   load(file.path(result_dir, "loeo_predictions_fact_reg.RData"))
+#   loeo_predictions_out_reg <- loeo_predictions_out
+#   env_external_predictions_out_reg <- env_external_predictions_out
+#   
+#   # Load the supplemental
+#   load(file.path(result_dir, "loeo_predictions_fact_reg_supp.RData"))
+#   loeo_predictions_out_supp <- loeo_predictions_out
+#   
+#   ## Combine
+#   loeo_predictions_out <- loeo_predictions_out_reg %>% 
+#     subset(., !sapply(., is.null)) %>% 
+#     bind_rows() %>%
+#     bind_rows(., bind_rows(loeo_predictions_out_supp)) %>%
+#     arrange(trait, site)
+#   # Rename
+#   env_external_predictions_out <- env_external_predictions_out_reg
+#   
+#   # Resave
+#   save("loeo_predictions_out", "env_external_predictions_out",
+#        file = file.path(result_dir, "loeo_predictions_fact_reg.RData"))
+# }
 
 
 
