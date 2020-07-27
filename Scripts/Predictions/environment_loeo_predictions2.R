@@ -26,8 +26,7 @@ library(parallel)
 
 ## Number of cores
 # n_core <- detectCores()
-# n_core <- 12
-n_core <- 8
+n_core <- 12
 
 # Source of covariates
 source_use <- "daymet"
@@ -36,7 +35,7 @@ source_use <- "daymet"
 time_frame_use <- "time_frame5_2010_2014"
 
 # If re-running predictions, should all be re-run?
-rerun_all <- TRUE
+rerun_all <- FALSE
 
 
 
