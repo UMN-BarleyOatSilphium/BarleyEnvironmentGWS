@@ -208,10 +208,14 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
     # Reset the flag 
     parse_model_out <- TRUE
     
+    # Matrix specifying constraints
+    cm <- as.matrix(1)
+    
     ## Create formula objects
     fixed_form <- value ~ 1
-    rand_form <- ~ line_name + vs(line_name_cov, Gu = K_use) + site + vs(site_cov, Gu = Emain) +
-      gxs + vs(gxs_cov, Gu = KE)
+    rand_form <- ~ vs(line_name, Gtc = cm) + vs(line_name_cov, Gu = K_use, Gtc = cm) + 
+      vs(site, Gtc = cm) + vs(site_cov, Gu = Emain, Gtc = cm) +
+      vs(gxs, Gtc = cm) + vs(gxs_cov, Gu = KE, Gtc = cm)
     
     
     ## Sommer
@@ -220,21 +224,25 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
     })
     
     # Parse the output
-    stdout_parsed <- read_table2(model_stdout)
+    stdout_parsed <- suppressWarnings(read_table2(model_stdout))
     
     # If the output contains singular, refit the model using the iteration that maximized the LL
     if (any(str_detect(model_stdout, "singular"))) {
       
       # Get the interation number
-      iter_use <- which.max(parse_number(stdout_parsed$LogLik))
-      
+      iter_use <- stdout_parsed %>%
+        filter(restrained == "0") %>%
+        mutate_if(is.character, parse_guess) %>%
+        filter(LogLik == max(LogLik)) %>%
+        pull(iteration)
+
       # If iter_use is empty, just skip; else refit
       if (is_empty(iter_use)) {
         varcomp_df <- NULL
         parse_model_out <- FALSE # Use this as a flag
         
       } else {
-        
+
         ## Sommer
         model_stdout <- capture.output({
           model_try <- try( fit_mmer <- mmer(fixed = fixed_form, random = rand_form, data = data, verbose = TRUE, 
@@ -290,6 +298,10 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
     # Return
     out[[i]] <- varcomp_df
     
+    # Print a message
+    cat("\nVariance components estimated for", unlist(select(row, analysis, trait, population, feat_sel_type)) %>% 
+          paste0(names(.), ": ", .) %>% paste0(., collapse = ", "))
+    
   } # Close loop
   
   # Add out to core_df and return
@@ -297,7 +309,7 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
     mutate(results = out) %>%
     select(-data, -core)
   
-}) %>% bind_rows()
+})
 
 
 
