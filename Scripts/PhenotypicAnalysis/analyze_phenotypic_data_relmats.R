@@ -123,9 +123,35 @@ loc_covariates_to_model <- bind_rows(historical_fact_reg_feature_selection, muta
   mutate(analysis = "location")
 
 
+## First estimate genetic variance compoments; these will be held constant
+genetic_variance_components <- bind_rows(env_data_to_model, loc_data_to_model) %>%
+  group_by(trait, population, analysis) %>%
+  do(varG_hat = {
+    
+    row <- .
+    
+    # Trait
+    data <- droplevels(row$data[[1]])
+    genotypes <- levels(data$line_name)
+    analysis <- row$analysis
+    
+    # Create or subset relationship matrices
+    K_use <- K[genotypes, genotypes]
+    
+    ## Mixed solve
+    ms_out <- mixed.solve(y = data$value, K = K_use, Z = model.matrix(~ -1 + line_name, data))
+    
+    # Return the estimate variance components
+    ms_out$Vu
+    
+  }) %>% ungroup() %>% unnest()
+
+
+
 # Combine the 'data_to_model' dataframes
 data_to_model_split <- bind_rows(env_data_to_model, loc_data_to_model) %>% 
   full_join(., bind_rows(env_covariates_to_model, loc_covariates_to_model), by = c("analysis", "trait")) %>%
+  left_join(., genetic_variance_components, by = c("analysis", "trait", "population")) %>%
   assign_cores(df = ., n_core = n_cores, split = TRUE)
 
 
@@ -152,6 +178,9 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
     sites <- levels(data$site)
     covariates <- row$features[[1]]
     analysis <- row$analysis
+    
+    # Get the genetic variance component
+    varG_hat <- row$varG_hat
     
     # Separate covariates into main effect or interaction
     covariate_list <- tibble(term = unique(covariates)) %>% 
@@ -188,6 +217,11 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
     K_use <- K[genotypes, genotypes]
     Zg <- model.matrix(~ -1 + line_name, data)
     Emain <- Env_mat(x = covariate_mat[sites, covariate_list$main, drop = FALSE], method = "Jarq")
+    # Emain; but with zero off-diagonal
+    Emain1 <- Emain
+    Emain1[] <- 0
+    diag(Emain1) <- diag(Emain)
+    
     Eint <- Env_mat(x = covariate_mat[sites, covariate_list$int, drop = FALSE], method = "Jarq")
     # Replace with diagonal matrix if NA
     if (all(is.na(Eint))) { 
@@ -205,39 +239,50 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
     KE <- tcrossprod(Zg %*% K_use, Zg) * tcrossprod(Ze %*% Eint, Ze)
     dimnames(KE) <- replicate(2, data$gxs, simplify = FALSE)
     
+    # Another matrix with unrelated environments
+    KE1 <- tcrossprod(Zg %*% K_use, Zg) * tcrossprod(Ze %*% diag(ncol(Eint)), Ze)
+    dimnames(KE1) <- dimnames(KE)
+    
     # Reset the flag 
     parse_model_out <- TRUE
     
     # Matrix specifying constraints
+    nem <- as.matrix(3) # Not to be estimated but fixed
+    varGt <- as.matrix(varG_hat)
     cm <- as.matrix(1)
     
     ## Create formula objects
     fixed_form <- value ~ 1
-    rand_form <- ~ vs(line_name, Gtc = cm) + vs(line_name_cov, Gu = K_use, Gtc = cm) + 
-      vs(site, Gtc = cm) + vs(site_cov, Gu = Emain, Gtc = cm) +
-      vs(gxs, Gtc = cm) + vs(gxs_cov, Gu = KE, Gtc = cm)
+    
+    # If no_gxe_cov is TRUE, drop gxs_cov
+    if (no_gxe_cov) {
+      rand_form <- ~ vs(line_name_cov, Gu = K_use, Gt = varGt, Gtc = nem) + 
+        vs(site, Gu = Emain1) + vs(site_cov, Gu = Emain) +
+        vs(gxs, Gu = KE1)
+      
+    } else {
+      rand_form <- ~ vs(line_name_cov, Gu = K_use, Gt = varGt, Gtc = nem) + 
+        vs(site, Gu = Emain1) + vs(site_cov, Gu = Emain) +
+        vs(gxs, Gu = KE1) + vs(gxs_cov, Gu = KE)
+      
+    }
     
     
     ## Sommer
     model_stdout <- capture.output({
-      model_try <- try( fit_mmer <- mmer(fixed = fixed_form, random = rand_form, data = data, verbose = TRUE, method = "AI"), silent = TRUE) 
+      model_try <- try( fit_mmer <- mmer(fixed = fixed_form, random = rand_form, data = data, verbose = TRUE), silent = TRUE) 
     })
     
     # Parse the output
     stdout_parsed <- suppressWarnings(read_table2(model_stdout))
+    # Max LL iteration
+    maxLL_iter <- which.max(as.numeric(stdout_parsed$LogLik))
     
     # If the output contains singular, refit the model using the iteration that maximized the LL
-    if (any(str_detect(model_stdout, "singular"))) {
-      
-      # Get the interation number
-      iter_use <- stdout_parsed %>%
-        filter(restrained == "0") %>%
-        mutate_if(is.character, parse_guess) %>%
-        filter(LogLik == max(LogLik)) %>%
-        pull(iteration)
+    if (any(str_detect(model_stdout, "singular")) | maxLL_iter != max(as.numeric(stdout_parsed$iteration))) {
 
-      # If iter_use is empty, just skip; else refit
-      if (is_empty(iter_use)) {
+      # If maxLL_iter is empty, just skip; else refit
+      if (is_empty(maxLL_iter)) {
         varcomp_df <- NULL
         parse_model_out <- FALSE # Use this as a flag
         
@@ -246,7 +291,7 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
         ## Sommer
         model_stdout <- capture.output({
           model_try <- try( fit_mmer <- mmer(fixed = fixed_form, random = rand_form, data = data, verbose = TRUE, 
-                                             method = "AI", iters = iter_use), 
+                                             iters = maxLL_iter), 
                             silent = TRUE) 
         })
         
