@@ -88,6 +88,10 @@ S2_MET_BLUEs_tomodel <- S2_MET_BLUEs %>%
   mutate_at(vars(location, year, environment, line_name), as.factor)
 
 
+
+
+
+
 # Group by trait and fit the multi-environment model
 # Fit models in the TP and the TP + VP
 
@@ -115,8 +119,11 @@ for (i in seq_len(nrow(stage_two_fits))) {
   # Edit factors
   df1 <- df %>%
     droplevels() %>%
-    mutate_at(vars(environment, line_name), fct_contr_sum) %>%
+    left_join(., mutate(distinct(trial_info, location, environment), 
+                        origin = ifelse(location %in% c("Bozeman", "Huntley", "Aberdeen", "Crookston", "Fargo"), "origin", "nonorigin"))) %>%
+    mutate_at(vars(environment, line_name, origin), ~fct_contr_sum(as.factor(.))) %>%
     mutate(wts = std_error^2)
+
   
   # Random model
   fit_lmer <- lmer(formula = value ~ 1 + (1|environment) + (1|line_name) + (1|line_name:environment),
@@ -185,13 +192,22 @@ stage_two_fits_env_mean <- stage_two_fits1 %>%
                        select(environment, mean)) ) %>%
   unnest(coef) %>% rename(pheno_mean = mean)
 
-## Calculate range for the TP
+
+
+
+## Calculate range for the whole population
 stage_two_fits_env_mean %>%
-  filter(population == "tp") %>%
+  filter(population == "all") %>%
   group_by(trait) %>%
   summarize_at(vars(pheno_mean), list(~min, ~mean, ~max))
 
 
+# trait            min   mean    max
+# 1 GrainProtein    9.96   12.5   14.7
+# 2 GrainYield   1774.   4407.  9037. 
+# 3 HeadingDate    50.8    61.4   71.0
+# 4 PlantHeight    45.1    72.0  107. 
+# 5 TestWeight    572.    648.   714.
 
 
 

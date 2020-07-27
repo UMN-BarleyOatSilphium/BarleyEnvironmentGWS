@@ -177,17 +177,20 @@ model_replace <- c("model1" = "g", "model2_id" = "g + e", "model2_cov" = "g + e"
 f_model_replace <- function(x) model_replace[x]
 # f_model_replace <- function(x) paste0("M", toupper(str_extract(x, "[0-9]{1}[a-z]{0,1}")))
 # Vector to rename validation schemes
-f_validation_replace <- function(x) str_replace_all(x, c("tp" = "Tested genotypes", "vp" = "Untested offspring genotypes"))
+f_validation_replace <- function(x) str_replace_all(x, c("tp" = "Tested parents", "vp" = "Untested offspring"))
 f_pop_replace <- function(x) str_replace_all(x, c("all" = "All", "tp" = "FP", "vp" = "OP"))
 # Replace type
 f_type_replace <- function(x) c("loeo" = "New environment", "lolo" = "New location", "loyo" = "New year",
                                 "env_external" = "Holdout environment", "loc_external" = "Holdout location")[x]
 # Replace ec selection
 f_ec_selection_replace <- function(x)  c("rfa_cv_adhoc" = "StepwiseCV", "stepAIC_adhoc" = "StepwiseAIC", 
-                                         "concurrent_rfa_cv_adhoc" = "Concurrent StepwiseCV", "apriori" = "Literature", 
+                                         "concurrent_rfa_cv_adhoc" = "ConcurrentStepwiseCV", "apriori" = "KnownStresses", 
                                          "all" = "All", "none" = "None")[x]
 f_growth_stage_replace <- function(x) 
   c("early_vegetative" = "EV", "late_vegetative" = "LV", "heading" = "HD", "flowering" = "FL", "grain_fill" = "GF")[x]
+
+
+
 
 
 

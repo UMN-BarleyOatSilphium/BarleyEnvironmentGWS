@@ -36,6 +36,33 @@ base_font_size <- 6
 # Base geom text size
 base_geom_text_size <- base_font_size * (5/14)
 
+# 1 column figure width
+figwidth_onecol <- 5.5
+figwidth_twocol <- 12.0
+
+
+## Create location-based color palettes
+location_colors <- paletteer_d(package = "ggsci", palette = "default_igv", n = n_distinct(trial_info$location) + 1)
+location_colors <- setNames(object = location_colors[-4], unique(trial_info$location))
+
+# Use shading to designate environment-specific colors
+environment_colors <- distinct(trial_info, location, environment) %>% 
+  left_join(., tibble(location = names(location_colors), color = location_colors)) %>%
+  arrange(location, environment) %>%
+  group_by(location) %>%
+  mutate(alpha = seq(n())) %>%
+  ungroup() %>%
+  mutate(alpha = alpha - 1, alpha = 1 - (alpha * 0.1), 
+         color = alpha(color, alpha = alpha)) %>% 
+  {setNames(pull(., color), pull(., environment))}
+
+
+
+###
+### Figures and Supplemental information is created in order of reference 
+### in the manuscript 
+### 
+
 
 
 # Figure 1: map, crop model output, generation of covariates --------------
@@ -170,7 +197,7 @@ g_popstr <- K_pco_df %>%
         panel.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)))
 
 # Save this
-ggsave(filename = "fig_sXX_population_structure.jpg", plot = g_popstr, path = fig_dir,
+ggsave(filename = "figure1_partB_population_structure.jpg", plot = g_popstr, path = fig_dir,
        height = 2.5, width = 3, dpi = dpi_use)
 
 
@@ -211,7 +238,7 @@ g_map_v2 <- ggplot(data = north_america, aes(x = long, y = lat, group = group)) 
         legend.text = element_text(size = 5), legend.key.height = unit(0.5, "lines"), legend.key.width = unit(0.25, "lines"))
 
 # Save this
-ggsave(filename = "fig1_partA_draft2.jpg", plot = g_map_v2, path = fig_dir,
+ggsave(filename = "figure1_partA_draft2.jpg", plot = g_map_v2, path = fig_dir,
        height = 5, width = 8.7, units = "cm", dpi = dpi_use)
     
           
@@ -226,7 +253,7 @@ g_pop_map <- plot_grid(g_map_v2, labels = subfigure_labels[1], label_size = subf
   plot_layout(design = layout)
 
 # Save this
-ggsave(filename = "fig1_partAB_draft1.jpg", plot = g_pop_map, path = fig_dir,
+ggsave(filename = "figure1_partAB_draft1.jpg", plot = g_pop_map, path = fig_dir,
        height = 6, width = 12, units = "cm", dpi = dpi_use)
 
 
@@ -523,16 +550,16 @@ g_loo_pred_obs_list <- loo_pred_obs_df %>%
     ann_df <- distinct(.x, trait, pop, ability_all) %>%
       mutate(annotation = paste0("r[MP]==", ability_all))
     
-    ggplot(.x, aes(x = pred_complete, y = value, color = leave_one_group)) +
+    ggplot(.x, aes(x = pred_complete, y = value, fill = leave_one_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
-      geom_point(size = 0.2) +
+      geom_point(size = 0.15, shape = 21, color = alpha("white", 0)) +
       geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
                 parse = TRUE, vjust = -1, hjust = 1.2, size = 1.5) +
       scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
       scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
-      scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
+      scale_fill_manual(values = environment_colors, guide = FALSE) +
       facet_grid(trait1 ~ pop, switch = "y", labeller = labeller(trait1 = label_parsed, pop = f_validation_replace)) +
-      theme_genetics(base_size = 6) +
+      theme_genetics(base_size = base_font_size) +
       theme(strip.placement = "outside", strip.background = element_blank())
   })
 
@@ -543,7 +570,8 @@ g_loo_pred_obs <- g_loo_pred_obs_list %>%
   map(~. + theme(axis.title = element_blank())) %>%
   plot_grid(plotlist = ., ncol = 1, align = "v", rel_heights = c(1, rep(0.85, length(.) - 1))) %>%
   add_sub(plot = ., label = "Predicted phenotypic value", size = 6, vjust = -1) %>%
-  plot_grid(textGrob(label = "Observed phenotypic value", rot = 90, gp = gpar(fontsize = 6)), ., rel_widths = c(0.03, 1))
+  plot_grid(textGrob(label = "Observed phenotypic value", rot = 90, gp = gpar(fontsize = base_font_size)), .,
+                     rel_widths = c(0.05, 1))
 
 
 # Save
@@ -558,7 +586,8 @@ accuracy_within_env_toplot <- within_environment_prediction_accuracy %>%
   filter(type == "loeo") %>%
   filter(model %in% str_subset(models_use, "id", negate = TRUE), selection %in% c("none", "rfa_cv_adhoc")) %>%
   # Add individual points
-  mutate(trait1 = paste0(abbreviate(str_add_space(trait), 2), "\n(n = ", nGroup+1, ")")) %>%
+  # mutate(trait1 = paste0(abbreviate(str_add_space(trait), 2), "\n(n = ", nGroup+1, ")")) %>%
+  mutate(trait1 = abbreviate(str_add_space(trait), 2)) %>%
   unite(group, trait, model, pop, remove = FALSE)
   
 accuracy_within_env_toplot2 <- accuracy_within_env_toplot %>%
@@ -599,9 +628,9 @@ g_accuracy_within_env <- accuracy_within_env_toplot %>%
   theme(axis.title = element_blank(), strip.text.y = element_text(color = "white"))
 
 # Add text grob
-g_accuracy_within_env1 <- plot_grid(textGrob(label = expression('Within-environment'~italic(r[MG])), 
-                                             rot = 90, gp = gpar(fontsize = 6)), 
-                                    g_accuracy_within_env, rel_widths = c(0.03, 1))  
+g_accuracy_within_env1 <- plot_grid(
+  textGrob(label = expression('Within-environment'~italic(r[MG])), rot = 90, gp = gpar(fontsize = base_font_size)), 
+  g_accuracy_within_env, rel_widths = c(0.05, 1))  
 
 ## Save
 ggsave(filename = "figure2_partB_draft.jpg", plot = g_accuracy_within_env1, path = fig_dir,
@@ -613,18 +642,12 @@ g_figure2 <- plot_grid(g_loo_pred_obs, g_accuracy_within_env1,
 
 ## Save
 ggsave(filename = "figure2_loeo_predictions.jpg", plot = g_figure2, path = fig_dir,
-       width = 8.0, height = 14, dpi = dpi_use, units = "cm")
+       width = figwidth_onecol, height = 14, dpi = dpi_use, units = "cm")
 
+## Save as vector image
+ggsave(filename = "figure2_loeo_predictions.svg", plot = g_figure2, path = fig_dir,
+       width = figwidth_onecol, height = 14, dpi = dpi_use, units = "cm")
 
-## Toy example of eliminating undesirable lines/environments based on GPC
-loo_pred_obs_df %>%
-  filter(trait == "GrainProtein", pop == "tp") %>%
-  # Calculate number of environments/lines
-  mutate(nEnvAll = n_distinct(leave_one_group), nLineAll = n_distinct(line_name),
-         nObsAll = n()) %>%
-  filter(pred_complete <= 12) %>%
-  mutate(nEnvSel = n_distinct(leave_one_group), nLineSel = n_distinct(line_name), nObsSel = n()) %>%
-  distinct_at(vars(contains("All"), contains("Sel")))
 
 
 
@@ -642,7 +665,8 @@ load(file.path(result_dir, "feature_selection_results.RData"))
 
 # Extract results
 historical_timeframe_selection_out1 <- historical_timeframe_selection_out %>%
-  mutate(stepwise_results = map(adhoc, "finalResults") %>% map(as.list) %>% map(as_tibble)) %>%
+  filter(feat_sel_type == "adhoc") %>%
+  mutate(stepwise_results = map(covariates, "finalResults") %>% map(as.list) %>% map(as_tibble)) %>%
   unnest(stepwise_results) %>%
   # Parse timeframe
   mutate(time_frame_type = str_extract(time_frame, "time_frame|window"),
@@ -677,7 +701,7 @@ g_mod <- list(
 
 ## Plot timeframe results
 historical_timeframe_selection_out1_toplot <- historical_timeframe_selection_out1 %>%
-  filter(time_frame_type == "time_frame", model == "model3")
+  filter(time_frame_type == "time_frame", model == "model5")
 
 # Separate df for the selected timeframe (to add as points and an annotation)
 timeframe_used_df <- inner_join(distinct(historical_feature_selection, trait, time_frame), historical_timeframe_selection_out1_toplot)
@@ -687,12 +711,12 @@ g_timeframe_analysis <- historical_timeframe_selection_out1_toplot %>%
   ggplot(aes(x = length, y = RMSE_scale, color = trait)) +
   geom_line(lwd = 0.25) +
   geom_point(data = timeframe_used_df, size = 0.3) +
-  # Add an annotation
-  annotate(geom = "curve", x = 10, y = 0.35, xend = min(timeframe_used_df$length) + 1, yend = min(timeframe_used_df$RMSE_scale),
-           curvature = 0.25, arrow = arrow(angle = 30, length = unit(0.25, "line"), ends = "last"), lwd = 0.25) +
-  annotate(geom = "text", label = "Chosen timeframe", x = 10.5, y = 0.39, hjust = 1, size = 2) +
+  # # Add an annotation
+  # annotate(geom = "curve", x = 10, y = 0.35, xend = min(timeframe_used_df$length) + 1, yend = min(timeframe_used_df$RMSE_scale),
+  #          curvature = 0.25, arrow = arrow(angle = 30, length = unit(0.25, "line"), ends = "last"), lwd = 0.25) +
+  # annotate(geom = "text", label = "Chosen timeframe", x = 10.5, y = 0.39, hjust = 1, size = 2) +
   scale_y_continuous(breaks = pretty, limits = c(0, 1), name = "Scaled RMSEP") +
-  scale_x_continuous(name = "Historical data years (before 2015)", trans = "reverse") +
+  scale_x_continuous(name = "Historical weather data years (before 2015)", trans = "reverse") +
   scale_color_manual(values = trait_colors, name = NULL, labels = function(x) abbreviate(str_add_space(x), 2),
                      guide = guide_legend(nrow = 2)) +
   theme_genetics(base_size = 6) +
@@ -701,54 +725,45 @@ g_timeframe_analysis <- historical_timeframe_selection_out1_toplot %>%
         legend.key.width = unit(0.5, "line"), legend.key.height = unit(0.5, "line"))
 
   
-## Plot window results
-## 
-## Make this supplemental?
-## 
-historical_window_selection_out1_toplot <- historical_timeframe_selection_out1 %>%
-  filter(time_frame_type == "window", model == "model3") %>%
-  mutate(length = fct_inseq(as.factor(length))) %>%
-  mutate_at(vars(contains("year")), ~ymd(paste0(., "0101")))
-
-
-# Plot together
-g_window_analysis <- historical_window_selection_out1_toplot %>%
-  ggplot(aes(x = end_year, y = RMSE_scale, color = trait, lty = length)) +
-  geom_line(lwd = 0.25) +
-  scale_y_continuous(breaks = pretty, limits = c(0, 1), name = "Scaled RMSEP") +
-  scale_x_date(date_breaks = "5 year", date_labels = "%Y", name = "End year of window") +
-  scale_color_manual(values = trait_colors, guide = FALSE) +
-  scale_linetype_discrete(name = "Window length (yrs)", guide = guide_legend(title.position = "top")) +
-  theme_genetics(base_size = 6) +
-  theme(strip.placement = "outside", strip.background = element_blank(), legend.position = c(0.3, 0.15),
-        legend.direction = "horizontal", legend.key.width = unit(0.5, "line"), legend.key.height = unit(0.5, "line"))
-
-
-
-# Combine plot
-g_time_frame_combine <- plot_grid(
-  g_timeframe_analysis, 
-  g_window_analysis + theme(axis.title.y = element_blank(), axis.text.y = element_blank()), 
-  labels = subfigure_labels[1:2], label_size = 8, label_x = c(0, -0.05), rel_widths = c(1, 0.95))
-
-# Save
-ggsave(filename = "figure3_partA_draft1.jpg", plot = g_time_frame_combine, path = fig_dir,
-       height = 4, width = 10, units = "cm", dpi = dpi_use)
+# ## Plot window results
+# ## 
+# ## Make this supplemental?
+# ## 
+# historical_window_selection_out1_toplot <- historical_timeframe_selection_out1 %>%
+#   filter(time_frame_type == "window", model == "model3") %>%
+#   mutate(length = fct_inseq(as.factor(length))) %>%
+#   mutate_at(vars(contains("year")), ~ymd(paste0(., "0101")))
+# 
+# 
+# # Plot together
+# g_window_analysis <- historical_window_selection_out1_toplot %>%
+#   ggplot(aes(x = end_year, y = RMSE_scale, color = trait, lty = length)) +
+#   geom_line(lwd = 0.25) +
+#   scale_y_continuous(breaks = pretty, limits = c(0, 1), name = "Scaled RMSEP") +
+#   scale_x_date(date_breaks = "5 year", date_labels = "%Y", name = "End year of window") +
+#   scale_color_manual(values = trait_colors, guide = FALSE) +
+#   scale_linetype_discrete(name = "Window length (yrs)", guide = guide_legend(title.position = "top")) +
+#   theme_genetics(base_size = 6) +
+#   theme(strip.placement = "outside", strip.background = element_blank(), legend.position = c(0.3, 0.15),
+#         legend.direction = "horizontal", legend.key.width = unit(0.5, "line"), legend.key.height = unit(0.5, "line"))
+# 
 
 
 
 
-## Part C - accuracy within environments - LOLO
+
+## Part B - accuracy within locations - LOLO
 
 ## Filter for relevant cases
 accuracy_within_loc_toplot <- predictive_ability %>%
   ## Adjust model names
   mutate(model = str_replace_all(model, c("model2" = "model4", "model3" = "model5"))) %>%
   filter(type == "lolo") %>%
-  filter(model %in% str_subset(models_use, "id", negate = TRUE), selection %in% c("none", "rfa_cv_adhoc")) %>%
+  filter(model %in% str_subset(models_use, "id", negate = TRUE), selection %in% c("none", "rfa_adhoc")) %>%
   # Add individual points
-  mutate(trait1 = paste0(abbreviate(str_add_space(trait), 2), "\n(n = ", nGroup+1, ")"),
-         pop = paste0(f_validation_replace(pop), " (", f_pop_replace(pop), ")")) %>%
+  # mutate(trait1 = paste0(abbreviate(str_add_space(trait), 2), "\n(n = ", nGroup+1, ")")) %>%
+  mutate(trait1 = abbreviate(str_add_space(trait), 2)) %>%
+  mutate(pop = paste0(f_validation_replace(pop), " (", f_pop_replace(pop), ")")) %>%
   unite(group, trait, model, pop, remove = FALSE)
 
 accuracy_within_loc_toplot2 <- accuracy_within_loc_toplot %>%
@@ -789,17 +804,17 @@ g_accuracy_within_loc <- accuracy_within_loc_toplot %>%
   theme(axis.title.x = element_blank(), strip.text.y = element_text(color = "white"))
 
 ## Save
-ggsave(filename = "figure3_partc_draft.jpg", plot = g_accuracy_within_loc, path = fig_dir,
+ggsave(filename = "figure3_partB_draft.jpg", plot = g_accuracy_within_loc, path = fig_dir,
        width = 80, height = 40, dpi = dpi_use, units = "mm")
 
 
 
-## Part D - plot predicted/observed phenotypes for each trait and by target population
+## Part C - plot predicted/observed phenotypes for each trait and by target population
 ## for model 3 with stepwise covariates - LOLO
 
 lolo_pred_obs_df <- predictions_df %>%
   filter(type == "lolo") %>%
-  filter(model == "model3_cov", selection == "rfa_cv_adhoc") %>%
+  filter(model == "model3_cov", selection == "rfa_adhoc") %>%
   # Add annotations
   left_join(., across_site_prediction_accuracy_annotation) %>%
   # convert grain yield to Mg/ha
@@ -816,16 +831,16 @@ g_lolo_pred_obs_list <- lolo_pred_obs_df %>%
     ann_df <- distinct(.x, trait, pop, ability_all) %>%
       mutate(annotation = paste0("r[MP]==", ability_all))
     
-    ggplot(.x, aes(x = pred_complete, y = value, color = leave_one_group)) +
+    ggplot(.x, aes(x = pred_complete, y = value, fill = leave_one_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
-      geom_point(size = 0.2) +
+      geom_point(size = 0.15, shape = 21, color = alpha("white", 0)) +
       geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
                 parse = TRUE, vjust = -1, hjust = 1.2, size = 1.5) +
       scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
       scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
-      scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
+      scale_fill_manual(values = location_colors, guide = FALSE) +
       facet_grid(pop ~ trait1, switch = "y", labeller = labeller(trait1 = label_parsed, pop = f_pop_replace)) +
-      theme_genetics(base_size = 6) +
+      theme_genetics(base_size = base_font_size) +
       theme(strip.placement = "outside", strip.background = element_blank())
   })
 
@@ -834,26 +849,30 @@ g_lolo_pred_obs_list <- lolo_pred_obs_df %>%
 g_lolo_pred_obs <- g_lolo_pred_obs_list %>%
   modify_at(-1, ~. + theme(strip.text.y = element_blank(), axis.title.y = element_blank())) %>%
   map(~. + theme(axis.title.x = element_blank())) %>%
-  plot_grid(plotlist = ., nrow = 1, align = "h", rel_widths = c(1, rep(0.90, length(.) - 1))) %>%
+  plot_grid(plotlist = ., nrow = 1, align = "h", rel_widths = c(1, rep(0.85, length(.) - 1))) %>%
   add_sub(plot = ., label = "Predicted phenotypic value", size = 6, vjust = -1)
 
 
 # Save
-ggsave(filename = "figure3_partD_draft.jpg", plot = g_lolo_pred_obs, path = fig_dir,
+ggsave(filename = "figure3_partC_draft.jpg", plot = g_lolo_pred_obs, path = fig_dir,
        height = 5, width = 16, units = "cm", dpi = dpi_use)
 
 
 
 ## Combine plots
-top_plot <- plot_grid(g_time_frame_combine, g_accuracy_within_loc, nrow = 1, 
-                      labels = c("", subfigure_labels[3]), label_size = 8, rel_widths = c(1, 0.8))
+top_plot <- plot_grid(g_timeframe_analysis, g_accuracy_within_loc, nrow = 1, align = "h", axis = "tb",
+                      labels = subfigure_labels[1:2], label_size = subfigure_label_size, rel_widths = c(0.75, 1))
 
 g_figure3 <- plot_grid(top_plot, g_lolo_pred_obs, ncol = 1, rel_heights = c(0.75, 1), 
-                       labels = c("", subfigure_labels[4]), label_size = 8)
+                       labels = c("", subfigure_labels[3]), label_size = subfigure_label_size)
 
 ## Save
 ggsave(filename = "figure3_lolo_predictions.jpg", plot = g_figure3, path = fig_dir,
-       width = 16, height = 8.5, dpi = dpi_use, units = "cm")
+       width = 12, height = 10, dpi = dpi_use, units = "cm")
+
+## Save as vector image
+ggsave(filename = "figure3_lolo_predictions.svg", plot = g_figure3, path = fig_dir,
+       width = 12, height = 10, dpi = dpi_use, units = "cm")
 
 
 
@@ -873,7 +892,7 @@ ggsave(filename = "figure3_lolo_predictions.jpg", plot = g_figure3, path = fig_d
 
 external_pred_obs_df <- predictions_df %>%
   filter(str_detect(type, "ext")) %>%
-  filter(model == "model3_cov", selection == "rfa_cv_adhoc") %>%
+  filter(model == "model3_cov", str_detect(selection, "rfa"), str_detect(selection, "nosoil", negate = TRUE)) %>%
   # Add annotations - prediction accuracy across and within environments/locations
   left_join(., predictive_ability) %>%
   # convert grain yield to Mg/ha
@@ -894,16 +913,17 @@ g_external_pred_obs_list <- external_pred_obs_df %>%
              annotation = paste0(abbreviate(leave_one_group1, 5), "~", ann1),
              x = ifelse(str_detect(type, "env") & trait %in% c("PlantHeight", "TestWeight"), -Inf, Inf), y = -Inf)
     
-    ggplot(.x, aes(x = pred_complete, y = value, color = leave_one_group)) +
+    ggplot(.x, aes(x = pred_complete, y = value, fill = leave_one_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
-      geom_point(size = 0.2) +
+      geom_point(size = 0.15, shape = 21, color = alpha("white", 0)) +
       geom_text_repel(data = ann_df, aes(x = x, y = y, label = annotation, color = leave_one_group), inherit.aes = FALSE,
                       parse = TRUE, hjust = 1, size = 1, direction = "y", segment.alpha = 0, box.padding = 0.01) +
       scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
       scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
-      scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
+      scale_fill_manual(values = c(location_colors, environment_colors), guide = FALSE) +
+      scale_color_manual(values = c(location_colors, environment_colors), guide = FALSE) +
       facet_grid(type ~ trait1, switch = "y", labeller = labeller(trait1 = label_parsed, type = f_type_replace)) +
-      theme_genetics(base_size = 6) +
+      theme_genetics(base_size = base_font_size) +
       theme(strip.placement = "outside", strip.background = element_blank())
   })
 
@@ -913,22 +933,53 @@ g_holdout_pred_obs <- g_external_pred_obs_list %>%
   modify_at(-1, ~. + theme(strip.text.y = element_blank(), axis.title.y = element_blank())) %>%
   map(~. + theme(axis.title.x = element_blank())) %>%
   plot_grid(plotlist = ., nrow = 1, align = "h", rel_widths = c(1, rep(0.80, length(.) - 1))) %>%
-  add_sub(plot = ., label = "Predicted phenotypic value", size = 6, vjust = -1)
+  add_sub(plot = ., label = "Predicted phenotypic value", size = base_font_size, vjust = -1)
+
+## Vertical
+g_holdout_pred_obs_vert <- g_external_pred_obs_list %>%
+  map(~. + facet_grid(trait1 ~ type, switch = "y", labeller = labeller(trait1 = label_parsed, type = f_type_replace))) %>%
+  modify_at(-1, ~. + theme(strip.text.x = element_blank())) %>%
+  map(~. + theme(axis.title = element_blank())) %>%
+  plot_grid(plotlist = ., ncol = 1, align = "v", rel_heights = c(1, rep(0.85, length(.) - 1))) %>%
+  add_sub(plot = ., label = "Predicted phenotypic value", size = 6, vjust = -1) %>%
+  plot_grid(textGrob(label = "Observed phenotypic value", rot = 90, gp = gpar(fontsize = base_font_size)), .,
+            rel_widths = c(0.05, 1))
 
 # Save
-ggsave(filename = "figure4_partA_draft1.jpg", plot = g_holdout_pred_obs, path = fig_dir,
-       height = 5, width = 12, units = "cm", dpi = 2000)
+ggsave(filename = "figure4_exernal_validation.jpg", plot = g_holdout_pred_obs_vert, path = fig_dir,
+       height = 10, width = 5.5, units = "cm", dpi = dpi_use)
+
+# Save as vector image
+ggsave(filename = "figure4_exernal_validation.svg", plot = g_holdout_pred_obs_vert, path = fig_dir,
+       height = 10, width = 5.5, units = "cm", dpi = dpi_use)
 
 
 
 
-## Supplementary figures and tables ##
+
+
+
+
+
+
+
+
+# Supplementary figures ---------------------------------------------------
+
+
+# Figure S1: validation of predicted flowering time from crop model -------
+
+# The code for this picture is in the 'define_environmental_covariables.R' script
+
+
+
+
+# Figure S2: Comparison of environment-specific EC sets -------------------
 
 ## Number and overlap of covariates in the analyses ##
 
 # Load the data
 load(file = file.path(result_dir, "feature_selection_results.RData"))
-load(file.path(result_dir, "concurrent_historical_covariables.RData"))
 
 
 ## Concurrent
@@ -961,7 +1012,8 @@ concurrent_features_count <- concurrent_features1 %>%
 
 # These will be polished plots for the manuscript
 concurrent_features_count1 <- concurrent_features_count %>%
-  filter(source == "daymet", feat_sel_type != "stepAIC_adhoc")
+  filter(source == "daymet", feat_sel_type != "stepAIC_adhoc", n > 0) %>%
+  mutate(label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n))
 
 concurrent_features2 <- concurrent_features1 %>%
   filter(source == "daymet", feat_sel_type != "stepAIC_adhoc")
@@ -973,17 +1025,14 @@ g_concurrent_features_count2 <- concurrent_features_count1 %>%
   filter(source == "daymet") %>%
   ggplot(aes(x = feat_sel_type, y = n, fill = feature_class)) +
   geom_col() +
-  geom_text(aes(y = 2*max(concurrent_features_count1$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
-            nudge_y = ifelse(concurrent_features_count1$feature_class == "main_features", 25, 10), size = 3) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = base_geom_text_size) +
   facet_grid(trait ~ ., switch = "y", labeller = labeller(trait = str_add_space)) +
   scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
   scale_x_discrete(labels = f_ec_selection_replace, name = "Covariate set") +
   scale_y_continuous(name = "Number of covariates", breaks = pretty) +
-  theme_genetics() +
+  theme_genetics(base_font_size) +
   theme(legend.position = "top", strip.placement = "outside")
 
-ggsave(filename = "concurrent_features_count_daymet.jpg", plot = g_concurrent_features_count2,
-       path = fig_dir, height = 8, width = 3.5, dpi = 1000)
 
 
 
@@ -1008,19 +1057,17 @@ g_concurrent_features_overlap_featsel <- concurrent_features_overlap_featsel %>%
   mutate(feature_class = fct_rev(feature_class)) %>%
   mutate_at(vars(contains("feat_sel")), f_ec_selection_replace) %>%
   unite(feat_sel_type_pair, feat_sel_type.x, feat_sel_type.y, sep = "-") %>%
+  mutate(label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)) %>%
+  filter(n > 0) %>%
   ggplot(aes(x = trait, y = n, fill = feature_class)) +
   geom_col() +
-  geom_text(aes(y = 2*max(concurrent_features_overlap_featsel$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
-            nudge_y = ifelse(concurrent_features_overlap_featsel$feature_class == "main_features", 0, -2), size = 3) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = base_geom_text_size) +
   facet_grid(~ feat_sel_type_pair, switch = "y", labeller = labeller(trait = str_add_space)) +
   scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
   scale_x_discrete(name = "Trait", labels = str_add_space) +
   scale_y_continuous(name = "Overlapping covariates", breaks = pretty) +
-  theme_genetics() +
+  theme_genetics(base_font_size) +
   theme(legend.position = "none", strip.placement = "outside", axis.text.x = element_text(angle = 45, hjust = 1))
-
-ggsave(filename = "concurrent_features_overlap_featsel_daymet.jpg", plot = g_concurrent_features_overlap_featsel,
-       path = fig_dir, height = 3, width = 4, dpi = 1000)
 
 
 ## Overlap between traits
@@ -1045,19 +1092,17 @@ g_concurrent_features_overlap_trait <- concurrent_features_overlap_trait %>%
   mutate(feature_class = fct_rev(feature_class)) %>%
   mutate_at(vars(contains("trait")), ~abbreviate(str_add_space(.), 2)) %>%
   unite(trait_pair, trait.x, trait.y, sep = ":") %>%
+  mutate(label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)) %>%
+  filter(n > 0) %>%
   ggplot(aes(x = trait_pair, y = n, fill = feature_class)) +
   geom_col() +
-  geom_text(aes(y = 2*max(concurrent_features_overlap_trait$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
-            nudge_y = ifelse(concurrent_features_overlap_trait$feature_class == "main_features", 7, 2), size = 2) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = base_geom_text_size) +
   facet_grid(feat_sel_type ~ ., switch = "y", labeller = labeller(feat_sel_type = f_ec_selection_replace)) +
   scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
   scale_x_discrete(name = "Trait pair") +
   scale_y_continuous(name = "Overlapping covariates", breaks = pretty) +
-  theme_genetics() +
+  theme_genetics(base_font_size) +
   theme(legend.position = "none", strip.placement = "outside", axis.text.x = element_text(angle = 45, hjust = 1))
-
-ggsave(filename = "concurrent_features_overlap_trait_daymet.jpg", plot = g_concurrent_features_overlap_trait,
-       path = fig_dir, height = 3, width = 3.5, dpi = 1000)
 
 
 
@@ -1083,140 +1128,46 @@ concurrent_indiv_feature_counts <- concurrent_features3 %>%
 
 ## Plot
 g_concurrent_indiv_feature_counts <- concurrent_indiv_feature_counts %>%
+  mutate(feature_class = fct_inorder(feature_class)) %>%
   ggplot(aes(x = covariates, y = n, fill = feature_class)) +
   geom_col() +
   scale_fill_discrete(labels = c("main_features" = "Environment covariate", "interaction_features" = "G x E covariate"), name = NULL) +
   scale_x_discrete(name = "Covariate") +
-  scale_y_continuous(name = "Count", breaks = pretty) +
-  theme_genetics(base_size = 8) +
+  scale_y_continuous(name = "Count") +
+  theme_genetics(base_size = base_font_size) +
   theme(legend.position = c(0.75, 0.75), strip.placement = "outside", axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
-
-## Save
-ggsave(filename = "concurrent_indiv_feature_counts_daymet.jpg", plot = g_concurrent_indiv_feature_counts, 
-       path = fig_dir, width = 4, height = 5, dpi = 1000)
 
 
 ## Stitch these plots together - patchwork
 left_plot <- plot_grid(g_concurrent_features_count2 + theme(legend.position = "none"), g_concurrent_features_overlap_trait, 
-                       ncol = 1, rel_heights = c(1, 0.45), align = "hv", axis = "lr", labels = letters[1:2],
+                       ncol = 1, rel_heights = c(1, 0.45), align = "hv", axis = "lr", labels = subfigure_labels[1:2],
                        label_size = 10)  
 right_plot <- plot_grid(g_concurrent_features_overlap_featsel, g_concurrent_indiv_feature_counts, ncol = 1,
-                        rel_heights = c(0.6, 1), align = "hv", axis = "lr", labels = letters[3:4], label_size = 10)  
+                        rel_heights = c(0.6, 1), align = "hv", axis = "lr", labels = subfigure_labels[3:4], label_size = 10)  
 
 merged_plot <- (left_plot | right_plot) + plot_layout(widths = c(1, 1))
 
 # Save
-ggsave(filename = "concurrent_features_comparison_merged_daymet.jpg", plot = merged_plot,
-       path = fig_dir, height = 8, width = 6, dpi = 1000)
+ggsave(filename = "figure_S2_concurrent_features_comparison_merged_daymet.jpg", plot = merged_plot,
+       path = fig_dir, height = 8, width = 6, dpi = dpi_use)
 
 
 
 
 
-# Supplementary fig XX - environmental relationships ----------------------
 
-# Matrix of covariates
-ec_tomodel_scaled_mat <- ec_tomodel_scaled$daymet %>%
-  select(-source) %>%
-  filter(environment %in% c(train_test_env, validation_env)) %>%
-  as.data.frame() %>%
-  column_to_rownames("environment") %>%
-  as.matrix()
+# Figure S3: Comparison of location-specific EC sets ----------------------
 
-## Calculate environmental relationship matrices based on these features
-concurrent_features_env_relmat <- concurrent_features1 %>%
-  filter(feat_sel_type == "rfa_cv_adhoc", source == "daymet") %>%
-  mutate(interaction_features = map(interaction_features, ~str_remove(., "line_name:"))) %>%
-  mutate(interaction_features_ec_mat = map(interaction_features, ~ec_tomodel_scaled_mat[, .x, drop = FALSE]),
-         main_features_ec_mat = map(main_features, ~ec_tomodel_scaled_mat[, .x, drop = FALSE])) %>%
-  mutate_at(vars(ends_with("ec_mat")), ~map(., ~Env_mat(x = .x, method = "Jarq")))
+# Edit historical_feature_selection
+historical_feature_selection1 <- historical_feature_selection %>%
+  mutate(source = "daymet", feat_sel_type = str_replace(feat_sel_type, "rfa_adhoc", "rfa_cv_adhoc"))
 
-concurrent_features_env_relmat1 <- concurrent_features_env_relmat %>%
-  select(trait, feat_sel_type, interaction = interaction_features_ec_mat, main = main_features_ec_mat) %>%
-  gather(covariate_type, Emat, main, interaction) %>%
-  ## Remove lines where matrices are all NA
-  filter(map_lgl(Emat, ~!any(is.na(.))))
-
-
-## For each trait and covariate type (interaction/main), plot a heatmap and
-## a dendrogram
-concurrent_features_heatmap_plots <- concurrent_features_env_relmat1 %>%
-  group_by(trait, feat_sel_type, covariate_type) %>%
-  do(plot = {
-    row <- .
-    
-    # First perform clustering on the relationship matrix
-    env_clust <- hclust(dist(row$Emat[[1]], method = "euclidean"), method = "average")
-    # get the data
-    clust_data <- dendro_data(model = env_clust)
-    # Label data
-    clust_lab_data <- mutate(clust_data$labels, group = ifelse(label %in% train_test_env, "Train/test", "Holdout"),
-                             group = fct_relevel(group, "Holdout", after = Inf))
-
-    # Factor order of environments
-    env_order <- levels(clust_lab_data$label)
-    
-    # Create the plotting data.frame
-    dat <- row$Emat[[1]] %>%
-      as.data.frame(.) %>% 
-      rownames_to_column(., "environment") %>%
-      gather(environment2, relationship, -environment) %>%
-      # Refactor the environments
-      mutate_at(vars(contains("environment")), ~factor(., levels = env_order)) %>%
-      mutate_at(vars(contains("environment")), list(group = ~ifelse(. %in% train_test_env, "training", "external"))) %>%
-      mutate(environment = fct_rev(environment))
-    
-    # Plot
-    g_heat <- dat %>%
-      ggplot(aes(x = environment, y = environment2, fill = relationship)) +
-      geom_tile() +
-      scale_fill_gradient2(low = heat_colors[1], mid = heat_colors[2], high = heat_colors[3]) +
-      scale_y_discrete(position = "right") +
-      labs(subtitle = paste(str_add_space(row$trait), str_to_title(row$covariate_type), sep = ", ")) +
-      theme_genetics(8) +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1), panel.spacing = unit(0.25, "line"),
-            strip.placement = "outside", axis.title = element_blank(), legend.position = "none",
-            axis.text.y = element_blank())
-    
-    ## Plot dendrogram
-    g_dendro <- ggplot(segment(clust_data)) + 
-      geom_segment(aes(x = x, y = y, xend = xend, yend = yend)) + 
-      geom_text(data = clust_lab_data, aes(x = x, y = y, label = label, color = group), hjust = 1, 
-                size = 2.5, nudge_y = -0.1) +
-      coord_flip() + 
-      scale_y_continuous(expand=c(0.2, 0)) + 
-      scale_color_manual(name = NULL, values = c("black", "red")) +
-      theme_genetics(base_size = 8) +
-      theme_dendro() +
-      theme(legend.position = c(0.8, 0.90))
-
-    # Combine plots
-    plot_grid(g_heat, g_dendro, align = "v", axis = "tb", rel_widths = c(1, 0.7))
-    
-  }) %>% ungroup()
-
-## Combine all plots
-g_heat_dendro_all <- plot_grid(plotlist = concurrent_features_heatmap_plots$plot, 
-                               nrow = ceiling(nrow(concurrent_features_heatmap_plots)/2))
-# Save
-ggsave(filename = "figure_sXX_environmental_covariate_heatmap.jpg", plot = g_heat_dendro_all, 
-       path = fig_dir, width = 12, height = 15, dpi = 1000)
-
-
-
-
-
-## Historical
 
 ## Combine historical feature selection df
-historical_features <- bind_rows(
-  historical_fact_reg_feature_selection %>% select(source, trait, model, apriori, stepAIC_adhoc = adhoc) %>% 
-    gather(feat_sel_type, features, apriori, stepAIC_adhoc),
-  historical_feature_selection %>% 
-    mutate(model = ifelse(model == "model2", "model4", "model5"), source = "daymet") %>%
-    gather(feat_subset, features, adhoc) %>%
-    unite(feat_sel_type, feat_sel_type, feat_subset, sep = "_")
-)
+historical_features <- bind_rows( historical_fact_reg_feature_selection, historical_all_features,  historical_feature_selection1 ) %>%
+  rename(features = covariates) %>% select(-direction, -time_frame)
+  
+  
 
 ## combine model2 and model3 covariates
 historical_features1 <- historical_features %>%
@@ -1224,20 +1175,10 @@ historical_features1 <- historical_features %>%
   spread(model, features) %>%
   mutate_at(vars(contains("model")), ~map(., "optVariables")) %>%
   mutate(features = map2(model4, model5, union)) %>%
-  ## Add all covariates
-  bind_rows(.,
-            tibble(source = names(ec_tomodel_centered), 
-                   features = list(names(historical_ec_tomodel_timeframe_centered[[1]])[-1:-3])) %>% 
-              mutate(features = map(features, ~c(., paste0("line_name:", .)))) %>% 
-              crossing(., trait = traits, feat_sel_type = "all")
-  ) %>%
   mutate(features = map(features, ~setdiff(., "line_name"))) %>%
   select(-contains("model")) %>%
   mutate(interaction_features = map(features, ~str_subset(., ":")),
-         main_features = map2(features, interaction_features, setdiff)) %>%
-  ## Use the time_frame selected by the stepwise search
-  select(-time_frame) %>%
-  left_join(., distinct(historical_feature_selection, trait, time_frame))
+         main_features = map2(features, interaction_features, setdiff))
 
 
 ## Calculate the number of covariates in each contingency
@@ -1252,7 +1193,8 @@ historical_features_count <- historical_features1 %>%
 
 # These will be polished plots for the manuscript
 historical_features_count1 <- historical_features_count %>%
-  filter(source == "daymet", feat_sel_type != "stepAIC_adhoc")
+  filter(source == "daymet", feat_sel_type != "stepAIC_adhoc", n > 0) %>%
+  mutate(label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n))
 
 historical_features2 <- historical_features1 %>%
   filter(source == "daymet", feat_sel_type != "stepAIC_adhoc")
@@ -1264,18 +1206,13 @@ g_historical_features_count1 <- historical_features_count1 %>%
   filter(source == "daymet") %>%
   ggplot(aes(x = feat_sel_type, y = n, fill = feature_class)) +
   geom_col() +
-  geom_text(aes(y = 2*max(historical_features_count1$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
-            nudge_y = ifelse(historical_features_count1$feature_class == "main_features", 25, 10), size = 3) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = base_geom_text_size) +
   facet_grid(trait ~ ., switch = "y", labeller = labeller(trait = str_add_space)) +
   scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
   scale_x_discrete(labels = f_ec_selection_replace, name = "Covariate set") +
   scale_y_continuous(name = "Number of covariates", breaks = pretty) +
-  theme_genetics() +
+  theme_genetics(base_font_size) +
   theme(legend.position = "top", strip.placement = "outside")
-
-ggsave(filename = "historical_features_count_daymet.jpg", plot = g_historical_features_count1,
-       path = fig_dir, height = 8, width = 3.5, dpi = 1000)
-
 
 
 ## Overlap between non-all feature selection types
@@ -1299,19 +1236,18 @@ g_historical_features_overlap_featsel <- historical_features_overlap_featsel %>%
   mutate(feature_class = fct_rev(feature_class)) %>%
   mutate_at(vars(contains("feat_sel")), f_ec_selection_replace) %>%
   unite(feat_sel_type_pair, feat_sel_type.x, feat_sel_type.y, sep = "-") %>%
+  mutate(label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)) %>%
+  filter(n > 0) %>%
   ggplot(aes(x = trait, y = n, fill = feature_class)) +
   geom_col() +
-  geom_text(aes(y = 2*max(historical_features_overlap_featsel$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
-            nudge_y = ifelse(historical_features_overlap_featsel$feature_class == "main_features", 0, -2), size = 3) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = base_geom_text_size) +
   facet_grid(~ feat_sel_type_pair, switch = "y", labeller = labeller(trait = str_add_space)) +
   scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
   scale_x_discrete(name = "Trait", labels = str_add_space) +
   scale_y_continuous(name = "Overlapping covariates", breaks = pretty) +
-  theme_genetics() +
+  theme_genetics(base_font_size) +
   theme(legend.position = "none", strip.placement = "outside", axis.text.x = element_text(angle = 45, hjust = 1))
 
-ggsave(filename = "historical_features_overlap_featsel_daymet.jpg", plot = g_historical_features_overlap_featsel,
-       path = fig_dir, height = 3, width = 4, dpi = 1000)
 
 
 ## Overlap between traits
@@ -1336,20 +1272,17 @@ g_historical_features_overlap_trait <- historical_features_overlap_trait %>%
   mutate(feature_class = fct_rev(feature_class)) %>%
   mutate_at(vars(contains("trait")), ~abbreviate(str_add_space(.), 2)) %>%
   unite(trait_pair, trait.x, trait.y, sep = ":") %>%
+  mutate(label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)) %>%
+  filter(n > 0) %>%
   ggplot(aes(x = trait_pair, y = n, fill = feature_class)) +
   geom_col() +
-  geom_text(aes(y = 2*max(historical_features_overlap_trait$n), label = paste0(toupper(abbreviate(feature_class, 1)), ": ", n)), 
-            nudge_y = ifelse(historical_features_overlap_trait$feature_class == "main_features", 7, 2), size = 2) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = base_geom_text_size) +
   facet_grid(feat_sel_type ~ ., switch = "y", labeller = labeller(feat_sel_type = f_ec_selection_replace)) +
   scale_fill_discrete(labels = c("main_features" = "Main", "interaction_features" = "Interaction"), name = NULL) +
   scale_x_discrete(name = "Trait pair") +
   scale_y_continuous(name = "Overlapping covariates", breaks = pretty) +
-  theme_genetics() +
+  theme_genetics(base_font_size) +
   theme(legend.position = "none", strip.placement = "outside", axis.text.x = element_text(angle = 45, hjust = 1))
-
-ggsave(filename = "historical_features_overlap_trait_daymet.jpg", plot = g_historical_features_overlap_trait,
-       path = fig_dir, height = 3, width = 3.5, dpi = 1000)
-
 
 
 ## Count the number of times a particular covariate is select
@@ -1374,156 +1307,31 @@ historical_indiv_feature_counts <- historical_features3 %>%
 
 ## Plot
 g_historical_indiv_feature_counts <- historical_indiv_feature_counts %>%
+  mutate(feature_class = fct_inorder(feature_class)) %>%
   ggplot(aes(x = covariates, y = n, fill = feature_class)) +
   geom_col() +
   scale_fill_discrete(labels = c("main_features" = "Environment covariate", "interaction_features" = "G x E covariate"), name = NULL) +
   scale_x_discrete(name = "Covariate") +
-  scale_y_continuous(name = "Count", breaks = pretty) +
-  theme_genetics(base_size = 8) +
+  scale_y_continuous(name = "Count") +
+  theme_genetics(base_size = base_font_size) +
   theme(legend.position = c(0.75, 0.75), strip.placement = "outside", axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
-
-## Save
-ggsave(filename = "historical_indiv_feature_counts_daymet.jpg", plot = g_historical_indiv_feature_counts, 
-       path = fig_dir, width = 4, height = 5, dpi = 1000)
 
 
 ## Stitch these plots together - patchwork
 left_plot <- plot_grid(g_historical_features_count1 + theme(legend.position = "none"), g_historical_features_overlap_trait, 
-                       ncol = 1, rel_heights = c(1, 0.45), align = "hv", axis = "lr", labels = letters[1:2],
+                       ncol = 1, rel_heights = c(1, 0.45), align = "hv", axis = "lr", labels = subfigure_labels[1:2],
                        label_size = 10)  
 right_plot <- plot_grid(g_historical_features_overlap_featsel, g_historical_indiv_feature_counts, ncol = 1,
-                        rel_heights = c(0.6, 1), align = "hv", axis = "lr", labels = letters[3:4], label_size = 10)  
+                        rel_heights = c(0.6, 1), align = "hv", axis = "lr", labels = subfigure_labels[3:4], label_size = 10)  
 
 merged_plot <- (left_plot | right_plot) + plot_layout(widths = c(1, 1))
 
 # Save
-ggsave(filename = "historical_features_comparison_merged_daymet.jpg", plot = merged_plot,
-       path = fig_dir, height = 8, width = 6, dpi = 1000)
+ggsave(filename = "figure_S3_historical_features_comparison_merged_daymet.jpg", plot = merged_plot,
+       path = fig_dir, height = 8, width = 6, dpi = dpi_use)
 
 
-
-
-# Supplementary fig XX - location relationships ----------------------
-
-# list of covariate matrices
-historical_ec_tomodel_list <- historical_ec_tomodel_timeframe_centered %>%
-  subset(., str_detect(names(.), "daymet")) %>%
-  bind_rows() %>%
-  select(-source) %>%
-  filter(time_frame %in% unique(historical_feature_selection$time_frame)) %>%
-  split(.$time_frame) %>%
-  map(~select(., -time_frame) %>% as.data.frame() %>% column_to_rownames("location") %>% as.matrix())
-
-## Calculate environmental relationship matrices based on these features
-historical_features_env_relmat <- historical_features1 %>%
-  filter(feat_sel_type %in% c("all", "rfa_cv_adhoc"), source == "daymet") %>%
-  mutate(interaction_features = map(interaction_features, ~str_remove(., "line_name:"))) %>%
-  mutate(interaction_features_ec_mat = map2(interaction_features, time_frame, ~historical_ec_tomodel_list[[.y]][, .x, drop = FALSE]),
-         main_features_ec_mat = map2(main_features, time_frame, ~historical_ec_tomodel_list[[.y]][, .x, drop = FALSE])) %>%
-  mutate_at(vars(ends_with("ec_mat")), ~map(., ~Env_mat(x = .x, method = "Jarq")))
-
-historical_features_env_relmat1 <- historical_features_env_relmat %>%
-  select(trait, feat_sel_type, interaction = interaction_features_ec_mat, main = main_features_ec_mat) %>%
-  gather(covariate_type, Emat, main, interaction) %>%
-  ## Remove lines where matrices are all NA
-  filter(map_lgl(Emat, ~!any(is.na(.))))
-
-
-## For each trait and covariate type (interaction/main), plot a heatmap and
-## a dendrogram
-historical_features_heatmap_plots <- historical_features_env_relmat1 %>%
-  # No need for all and interaction covariates
-  filter(!(feat_sel_type == "all" & covariate_type == "interaction")) %>%
-  group_by(trait, feat_sel_type, covariate_type) %>%
-  do(plot = {
-    row <- .
-    
-    # First perform clustering on the relationship matrix
-    env_clust <- hclust(dist(row$Emat[[1]], method = "euclidean"), method = "average")
-    # get the data
-    clust_data <- dendro_data(model = env_clust)
-    # Label data
-    clust_lab_data <- mutate(clust_data$labels, group = ifelse(label %in% train_test_loc, "Train/test", "Holdout"),
-                             group = fct_relevel(group, "Holdout", after = Inf),
-                             label1 = str_to_title(str_replace_all(label, "_", " ")),
-                             label1 = ifelse(str_detect(label1, " ") & nchar(label1) > 10, str_replace(label1, " ", "\n"), label1))
-    # Segment data
-    clust_seg_data <- segment(clust_data)
-    # Factor order of environments
-    env_order <- levels(clust_lab_data$label)
-    
-    # Create the plotting data.frame
-    dat <- row$Emat[[1]] %>%
-      as.data.frame(.) %>% 
-      rownames_to_column(., "location") %>%
-      gather(location2, relationship, -location) %>%
-      # Refactor the environments
-      mutate_at(vars(contains("location")), ~factor(., levels = env_order)) %>%
-      mutate(location = fct_rev(location))
-    
-    # Plot
-    g_heat <- dat %>%
-      ggplot(aes(x = location, y = location2, fill = relationship)) +
-      geom_tile() +
-      scale_fill_gradient2(low = heat_colors[1], mid = heat_colors[2], high = heat_colors[3]) +
-      scale_y_discrete(position = "right") +
-      scale_x_discrete(labels = function(x) str_to_title(str_replace_all(x, "_", " "))) +
-      labs(subtitle = paste(str_add_space(row$trait), str_to_title(row$covariate_type), sep = ", ")) +
-      theme_genetics(8) +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1), panel.spacing = unit(0.25, "line"),
-            strip.placement = "outside", axis.title = element_blank(), legend.position = "none",
-            axis.text.y = element_blank())
-    
-    x_nudge <- 0.01 * max(clust_seg_data$y)
-    
-    ## Plot dendrogram
-    g_dendro <- ggplot(data = clust_seg_data) + 
-      geom_segment(aes(x = x, y = y, xend = xend, yend = yend)) + 
-      geom_text(data = clust_lab_data, aes(x = x, y = y, label = label1, color = group), hjust = 1, 
-                size = 2.5, nudge_y = -x_nudge) +
-      coord_flip() + 
-      scale_y_continuous(expand = c(0.5, 0)) + 
-      scale_color_manual(name = NULL, values = c("black", "red")) +
-      theme_genetics(base_size = 8) +
-      theme_dendro() +
-      theme(legend.position = c(0.8, 0.90))
-    
-    # Combine plots
-    plot_grid(g_heat, g_dendro, align = "h", axis = "tblr", rel_widths = c(1, 0.7), nrow = 1)
-    
-  }) %>% ungroup()
-
-## Combine all plots
-g_heat_dendro_all <- historical_features_heatmap_plots %>%
-  filter(feat_sel_type == "all") %>%
-  pull(plot) %>%
-  plot_grid(plotlist = ., nrow = ceiling(length(.)/2))
-
-# Save
-ggsave(filename = "figure_sXX_location_covariate_heatmap_all.jpg", plot = g_heat_dendro_all, 
-       path = fig_dir, width = 14, height = 14, dpi = 1000)
-
-## Combine stepwise covariate plots
-g_heat_dendro_stepwise <- historical_features_heatmap_plots %>%
-  filter(feat_sel_type == "rfa_cv_adhoc") %>%
-  pull(plot) %>%
-  plot_grid(plotlist = ., nrow = ceiling(length(.)/2))
-
-# Save
-ggsave(filename = "figure_sXX_location_covariate_heatmap_stepwise.jpg", plot = g_heat_dendro_stepwise, 
-       path = fig_dir, width = 14, height = 14, dpi = 1000)
-
-
-
-
-
-
-
-
-
-
-
-# Supplemental Figure XX - LOEO predictive ability across environments ----------
+# Figure S4 - LOEO predictive ability across environments ----------
 
 ## Plot predicted vs observed phenotypic values for LOEO for all models, traits,
 ## EC selections, etc.
@@ -1531,12 +1339,14 @@ ggsave(filename = "figure_sXX_location_covariate_heatmap_stepwise.jpg", plot = g
 # First create a data.frame from which to plot all scenarios
 
 loo_pred_obs_df <- predictions_df %>%
-  # Filter for relevant models
-  filter(model %in% models_use) %>%
+  # Filter for relevant models and remove nonsoil selections
+  filter(model %in% models_use, str_detect(selection, "nosoil", negate = TRUE)) %>%
   # Add annotations
   left_join(., across_site_prediction_accuracy_annotation) %>%
   # Add environment/location specific predictive abilities
   left_join(., select(predictive_ability, trait:ability)) %>%
+  ## Adjust rfa_cv selections
+  mutate(selection = str_replace(selection, "rfa_adhoc", "rfa_cv_adhoc")) %>%
   # convert grain yield to Mg/ha
   mutate_at(vars(value, pred_complete), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
   # Add trait units
@@ -1563,14 +1373,14 @@ g_loeo_all_list <- loo_pred_obs_df %>%
     ann_df <- distinct(.x, trait, pop, model, selection, ability_all) %>%
       mutate(annotation = paste0("r[MP]==", ability_all))
     
-    ggplot(data = .x, aes(x = pred_complete, y = value, color = leave_one_group)) +
+    ggplot(data = .x, aes(x = pred_complete, y = value, fill = leave_one_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.2) +
-      geom_point(size = 0.2) +
+      geom_point(size = 0.1, shape = 21, color = alpha("white", 0)) +
       geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
                 parse = TRUE, vjust = -1, hjust = 1.2, size = 1) +
       scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
       scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
-      scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
+      scale_fill_manual(values = environment_colors, guide = FALSE) +
       facet_grid(pop ~ model + selection, switch = "y", scales = "free_x", labeller = labeller(pop = f_pop_replace)) +
       labs(subtitle = parse(text = unique(.x$trait1))) +
       theme_genetics(base_size = 6) +
@@ -1584,17 +1394,17 @@ g_loeo_all <- plot_grid(plotlist = g_loeo_all_list, ncol = 1, align = "v", axis 
 
 
 # Save
-ggsave(filename = "figure_sXX_loeo_across_site_prediction_accuracy.jpg", plot = g_loeo_all, path = fig_dir,
-       height = 20, width = 22, units = "cm", dpi = 500)
+ggsave(filename = "figure_S4_loeo_across_site_prediction_accuracy.jpg", plot = g_loeo_all, path = fig_dir,
+       height = 20, width = 22, units = "cm", dpi = 1000)
 
 
 
-# Supplemental Figure XX - LOEO prediction accuracy and bias within environments ----------
+# Figure S5 - LOEO prediction accuracy and bias within environments ----------
 
 ## Filter for relevant cases
 accuracy_bias_within_env_toplot <- within_environment_prediction_accuracy %>%
   filter(type == "loeo") %>%
-  filter(model %in% models_use) %>%
+  filter(model %in% models_use, str_detect(selection, "nosoil", negate = TRUE)) %>%
   # Add individual points
   mutate(trait1 = paste0(abbreviate(str_add_space(trait), 2), " (n = ", nGroup+1, ")"),
          selection = fct_inorder(selection),
@@ -1650,7 +1460,7 @@ g_accuracy_within_env <- accuracy_bias_within_env_toplot %>%
              aes(y = value_mean), position = position_dodge(0.9), size = 0.8) +
   scale_y_continuous(name = expression('Within-environment'~italic(r[MG])), breaks = pretty) +
   g_mod
-  
+
 
 # Plot point and line range for bias
 g_bias_within_env <- accuracy_bias_within_env_toplot %>%
@@ -1675,13 +1485,13 @@ g_accuracy_bias_within_env <- plot_grid(g_accuracy_within_env, g_bias_within_env
 
 
 ## Save
-ggsave(filename = "figure_sXX_loeo_accuracy_bias_within_environments.jpg", plot = g_accuracy_bias_within_env, 
-       path = fig_dir, width = 12, height = 4, dpi = 500)
+ggsave(filename = "figure_S5_loeo_accuracy_bias_within_environments.jpg", plot = g_accuracy_bias_within_env, 
+       path = fig_dir, width = 12, height = 4, dpi = 1000)
 
 
 
 
-# Supplemental Figure XX - LOLO predictive ability across locations ----------
+# Figure S6 - LOLO predictive ability across locations ----------
 
 ## Plot predicted vs observed phenotypic values for LOLO for all models, traits,
 ## EC selections, etc.
@@ -1689,21 +1499,20 @@ ggsave(filename = "figure_sXX_loeo_accuracy_bias_within_environments.jpg", plot 
 ## Plot all
 g_lolo_all_list <- loo_pred_obs_df %>%
   filter(type == "lolo") %>%
-  filter(str_detect(selection, "Concurrent|AIC", negate = TRUE)) %>%
   split(.$trait) %>%
   map(~{
     # Extract annotations
     ann_df <- distinct(.x, trait, pop, model, selection, ability_all) %>%
       mutate(annotation = paste0("r[MP]==", ability_all))
     
-    ggplot(data = .x, aes(x = pred_complete, y = value, color = leave_one_group)) +
+    ggplot(data = .x, aes(x = pred_complete, y = value, fill = leave_one_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.2) +
-      geom_point(size = 0.2) +
+      geom_point(size = 0.1, shape = 21, color = alpha("white", 0)) +
       geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
                 parse = TRUE, vjust = -1, hjust = 1.2, size = 1) +
       scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
       scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
-      scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
+      scale_fill_manual(values = location_colors, guide = FALSE) +
       facet_grid(pop ~ model + selection, switch = "y", scales = "free_x", labeller = labeller(pop = f_pop_replace)) +
       labs(subtitle = parse(text = unique(.x$trait1))) +
       theme_genetics(base_size = 6) +
@@ -1716,18 +1525,20 @@ g_lolo_all <- plot_grid(plotlist = g_lolo_all_list, ncol = 1, align = "v", axis 
                         labels = subfigure_labels[seq_along(g_lolo_all_list)], label_size = 8)
 
 # Save
-ggsave(filename = "figure_sXX_lolo_across_site_prediction_accuracy.jpg", plot = g_lolo_all, path = fig_dir,
-       height = 20, width = 22, units = "cm", dpi = 500)
+ggsave(filename = "figure_S6_lolo_across_site_prediction_accuracy.jpg", plot = g_lolo_all, path = fig_dir,
+       height = 20, width = 22, units = "cm", dpi = 1000)
 
 
 
-# Supplemental Figure XX - LOLO prediction accuracy and bias within locations ----------
+# Figure S7 - LOLO prediction accuracy and bias within locations ----------
 
 ## Filter for relevant cases
 accuracy_bias_within_loc_toplot <- predictive_ability %>%
-  filter(type == "lolo", model %in% models_use, str_detect(selection, "concurrent|AIC", negate = TRUE)) %>%
+  filter(type == "lolo") %>%
+  filter(model %in% models_use, str_detect(selection, "nosoil", negate = TRUE)) %>%
   # Add individual points
-  mutate(trait1 = paste0(abbreviate(str_add_space(trait), 2), " (n = ", nGroup+1, ")"),
+  mutate(selection = str_replace(selection, "rfa_adhoc", "rfa_cv_adhoc"),
+         trait1 = paste0(abbreviate(str_add_space(trait), 2), " (n = ", nGroup+1, ")"),
          selection = fct_inorder(selection),
          model = str_replace(model, "_id", "_cov"),
          bias = bias * 100) %>%
@@ -1788,12 +1599,12 @@ g_accuracy_bias_within_loc <- plot_grid(g_accuracy_within_loc, g_bias_within_loc
 
 
 ## Save
-ggsave(filename = "figure_sXX_lolo_accuracy_bias_within_locations.jpg", plot = g_accuracy_bias_within_loc, 
-       path = fig_dir, width = 12, height = 4, dpi = 500)
+ggsave(filename = "figure_S7_lolo_accuracy_bias_within_locations.jpg", plot = g_accuracy_bias_within_loc, 
+       path = fig_dir, width = 12, height = 4, dpi = 1000)
 
 
 
-# Supplemental Figure XX - external predictive ability across environments ----------
+# Figure S8 - external predictive ability across environments ----------
 
 ## Plot all
 g_ext_env_all_list <- loo_pred_obs_df %>%
@@ -1812,15 +1623,16 @@ g_ext_env_all_list <- loo_pred_obs_df %>%
              y = case_when(trait == "GrainYield" & str_detect(selection, "None", negate = TRUE) ~ Inf,
                            TRUE ~ -Inf))
     
-    ggplot(.x, aes(x = pred_complete, y = value, color = leave_one_group)) +
+    ggplot(.x, aes(x = pred_complete, y = value, fill = leave_one_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
-      geom_point(size = 0.2) +
+      geom_point(size = 0.1, shape = 21, color = alpha("white", 0)) +
       geom_label_repel(data = ann_df, aes(x = x, y = y, label = annotation, color = leave_one_group), inherit.aes = FALSE,
                        parse = TRUE, hjust = 1, size = 1, direction = "y", segment.alpha = 0, box.padding = 0.01, 
                        label.size = NA, label.padding = 0.01, fill = alpha("white", 0.5)) +
       scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
       scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
-      scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
+      scale_fill_manual(values = environment_colors, guide = FALSE) +
+      scale_color_manual(values = environment_colors, guide = FALSE) +
       facet_grid(. ~ model + selection, switch = "y", scales = "free_x") +
       labs(subtitle = parse(text = unique(.x$trait1))) +
       theme_genetics(base_size = 6) +
@@ -1833,14 +1645,14 @@ g_ext_env_all <- plot_grid(plotlist = g_ext_env_all_list, ncol = 1, align = "v",
                            labels = subfigure_labels[seq_along(g_lolo_all_list)], label_size = 8)
 
 # Save
-ggsave(filename = "figure_sXX_external_environment_across_site_prediction_accuracy.jpg", plot = g_ext_env_all, path = fig_dir,
-       height = 16, width = 22, units = "cm", dpi = 500)
+ggsave(filename = "figure_S8_external_environment_across_site_prediction_accuracy.jpg", plot = g_ext_env_all, path = fig_dir,
+       height = 16, width = 22, units = "cm", dpi = 1000)
 
 
 
 
 
-# Supplemental Figure XX - external predictive ability across locations ----------
+# Figure S9 - external predictive ability across locations ----------
 
 ## Plot all
 g_ext_loc_all_list <- loo_pred_obs_df %>%
@@ -1860,15 +1672,16 @@ g_ext_loc_all_list <- loo_pred_obs_df %>%
              y = case_when(trait == "GrainYield" & selection == "All" ~ Inf,
                            TRUE ~ -Inf))
     
-    ggplot(.x, aes(x = pred_complete, y = value, color = leave_one_group)) +
+    ggplot(.x, aes(x = pred_complete, y = value, fill = leave_one_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
-      geom_point(size = 0.2) +
+      geom_point(size = 0.1, shape = 21, color = alpha("white", 0)) +
       geom_label_repel(data = ann_df, aes(x = x, y = y, label = annotation, color = leave_one_group), inherit.aes = FALSE,
                        parse = TRUE, hjust = 1, size = 1, direction = "y", segment.alpha = 0, box.padding = 0.01, 
                        label.size = NA, label.padding = 0.01, fill = alpha("white", 0.5)) +
       scale_x_continuous(name = "Predicted phenotypic value", breaks = pretty) +
       scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
-      scale_color_paletteer_d(package = "ggsci", palette = "default_igv", guide = FALSE) +
+      scale_fill_manual(values = location_colors, guide = FALSE) +
+      scale_color_manual(values = location_colors, guide = FALSE) +
       facet_grid(. ~ model + selection, switch = "y", scales = "free_x") +
       labs(subtitle = parse(text = unique(.x$trait1))) +
       theme_genetics(base_size = 6) +
@@ -1881,8 +1694,116 @@ g_ext_loc_all <- plot_grid(plotlist = g_ext_loc_all_list, ncol = 1, align = "v",
                            labels = subfigure_labels[seq_along(g_lolo_all_list)], label_size = 8)
 
 # Save
-ggsave(filename = "figure_sXX_external_location_across_site_prediction_accuracy.jpg", plot = g_ext_loc_all, path = fig_dir,
-       height = 16, width = 22, units = "cm", dpi = 500)
+ggsave(filename = "figure_S9_external_location_across_site_prediction_accuracy.jpg", plot = g_ext_loc_all, path = fig_dir,
+       height = 16, width = 22, units = "cm", dpi = 1000)
+
+
+
+
+# Figure S10 - comparison of genomic relationships between populations ----------
+
+# Tidy the K matrix
+genomic_relationship_df <- tidy(as.dist(K)) %>%
+  rename_all(~c("line_name1", "line_name2", "genomic_rel"))
+
+## Subset the K matrix for FP-FP comparisons and FP-OP comparisons
+fp_fp_genomic_relationship <- filter_at(genomic_relationship_df, vars(contains("line_name")), all_vars(. %in% tp)) %>%
+  mutate(comparison = "fp_fp")
+
+fp_op_genomic_relationship <- filter(genomic_relationship_df, line_name1 %in% vp, line_name2 %in% tp) %>%
+  mutate(comparison = "fp_op")
+
+## Plot
+bind_rows(fp_fp_genomic_relationship, fp_op_genomic_relationship) %>%
+  ggplot(aes(x = genomic_rel, fill = comparison)) +
+  geom_density(alpha = 0.5)
+
+
+
+
+
+
+
+
+# Supplementary tables ----------------------------------------
+
+
+
+
+# Table S1: variance component breakdown ----------------------------------
+
+
+
+
+
+# Table S2: Name, definition, and source of variables -------------------
+
+## Load the environmental covariates
+load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates.RData"))
+
+covariate_names <- bind_rows(
+  crossing(distinct(filter(growth_stage_covariates, stage != "heading"), stage), 
+           variable = str_subset(string = names(growth_stage_covariates)[-1:-3], pattern = "radn_mean", negate = TRUE)) %>% 
+    unite(environmental_covariate, sep = ".") %>% mutate(type = "weather", source = "Daymet"),
+  tibble(type = "soil", environmental_covariate = names(soil_covariates)[-1], source = "HWSD"))
+  
+## Save table
+write_csv(x = variable_names, path = file.path(fig_dir, "table_s2_variable_names_definitions_draft1.csv"))
+
+
+
+
+# Table S3: ECs selected per trait - concurrent and historical -----------------
+
+selected_features <- bind_rows(
+  mutate(concurrent_features, analysis = "concurrent"),
+  mutate(historical_features, analysis = "historical")
+) %>%
+  mutate(features = map(features, "optVariables")) %>%
+  filter(model %in% c("model3", "model5"), source == "daymet",
+         str_detect(feat_sel_type, "apriori|rfa"), str_detect(feat_sel_type, "nosoil", negate = TRUE)) %>%
+  select(-source, -model) %>%
+  unnest(features) %>%
+  filter(features != "line_name") %>%
+  mutate(feature_type = ifelse(str_detect(features, "line_name"), "main", "gxe"),
+         feature_type = fct_rev(feature_type),
+         features = str_remove(features, "line_name:"),
+         obs = "X")
+
+# Output a table
+selected_features %>%
+  select(analysis, trait, CovariateSet = feat_sel_type, names(.)) %>%
+  spread(feature_type, obs) %>%
+  mutate(analysis = f_timeframe_replace(analysis), trait = str_add_space(trait),
+         CovariateSet = f_ec_selection_replace(CovariateSet)) %>%
+  rename_at(vars(matches("^[a-z]")), str_to_title) %>%
+  rename(GxE = Gxe) %>%
+  write_csv(x = ., path = file.path(fig_dir, "table_s3_ecs_per_trait.csv"), na = "")
+
+
+
+
+
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2058,19 +1979,215 @@ write_csv(x = location_pheno_variance_analysis_table,
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# # Appendix ----------------------------------------------------------------
+# 
+# 
+# 
+# 
+# # Supplementary fig XX - environmental relationships ----------------------
+# 
+# # Matrix of covariates
+# ec_tomodel_scaled_mat <- ec_tomodel_scaled$daymet %>%
+#   select(-source) %>%
+#   filter(environment %in% c(train_test_env, validation_env)) %>%
+#   as.data.frame() %>%
+#   column_to_rownames("environment") %>%
+#   as.matrix()
+# 
+# ## Calculate environmental relationship matrices based on these features
+# concurrent_features_env_relmat <- concurrent_features1 %>%
+#   filter(feat_sel_type == "rfa_cv_adhoc", source == "daymet") %>%
+#   mutate(interaction_features = map(interaction_features, ~str_remove(., "line_name:"))) %>%
+#   mutate(interaction_features_ec_mat = map(interaction_features, ~ec_tomodel_scaled_mat[, .x, drop = FALSE]),
+#          main_features_ec_mat = map(main_features, ~ec_tomodel_scaled_mat[, .x, drop = FALSE])) %>%
+#   mutate_at(vars(ends_with("ec_mat")), ~map(., ~Env_mat(x = .x, method = "Jarq")))
+# 
+# concurrent_features_env_relmat1 <- concurrent_features_env_relmat %>%
+#   select(trait, feat_sel_type, interaction = interaction_features_ec_mat, main = main_features_ec_mat) %>%
+#   gather(covariate_type, Emat, main, interaction) %>%
+#   ## Remove lines where matrices are all NA
+#   filter(map_lgl(Emat, ~!any(is.na(.))))
+# 
+# 
+# ## For each trait and covariate type (interaction/main), plot a heatmap and
+# ## a dendrogram
+# concurrent_features_heatmap_plots <- concurrent_features_env_relmat1 %>%
+#   group_by(trait, feat_sel_type, covariate_type) %>%
+#   do(plot = {
+#     row <- .
+#     
+#     # First perform clustering on the relationship matrix
+#     env_clust <- hclust(dist(row$Emat[[1]], method = "euclidean"), method = "average")
+#     # get the data
+#     clust_data <- dendro_data(model = env_clust)
+#     # Label data
+#     clust_lab_data <- mutate(clust_data$labels, group = ifelse(label %in% train_test_env, "Train/test", "Holdout"),
+#                              group = fct_relevel(group, "Holdout", after = Inf))
+#     
+#     # Factor order of environments
+#     env_order <- levels(clust_lab_data$label)
+#     
+#     # Create the plotting data.frame
+#     dat <- row$Emat[[1]] %>%
+#       as.data.frame(.) %>% 
+#       rownames_to_column(., "environment") %>%
+#       gather(environment2, relationship, -environment) %>%
+#       # Refactor the environments
+#       mutate_at(vars(contains("environment")), ~factor(., levels = env_order)) %>%
+#       mutate_at(vars(contains("environment")), list(group = ~ifelse(. %in% train_test_env, "training", "external"))) %>%
+#       mutate(environment = fct_rev(environment))
+#     
+#     # Plot
+#     g_heat <- dat %>%
+#       ggplot(aes(x = environment, y = environment2, fill = relationship)) +
+#       geom_tile() +
+#       scale_fill_gradient2(low = heat_colors[1], mid = heat_colors[2], high = heat_colors[3]) +
+#       scale_y_discrete(position = "right") +
+#       labs(subtitle = paste(str_add_space(row$trait), str_to_title(row$covariate_type), sep = ", ")) +
+#       theme_genetics(8) +
+#       theme(axis.text.x = element_text(angle = 45, hjust = 1), panel.spacing = unit(0.25, "line"),
+#             strip.placement = "outside", axis.title = element_blank(), legend.position = "none",
+#             axis.text.y = element_blank())
+#     
+#     ## Plot dendrogram
+#     g_dendro <- ggplot(segment(clust_data)) + 
+#       geom_segment(aes(x = x, y = y, xend = xend, yend = yend)) + 
+#       geom_text(data = clust_lab_data, aes(x = x, y = y, label = label, color = group), hjust = 1, 
+#                 size = 2.5, nudge_y = -0.1) +
+#       coord_flip() + 
+#       scale_y_continuous(expand=c(0.2, 0)) + 
+#       scale_color_manual(name = NULL, values = c("black", "red")) +
+#       theme_genetics(base_size = 8) +
+#       theme_dendro() +
+#       theme(legend.position = c(0.8, 0.90))
+#     
+#     # Combine plots
+#     plot_grid(g_heat, g_dendro, align = "v", axis = "tb", rel_widths = c(1, 0.7))
+#     
+#   }) %>% ungroup()
+# 
+# ## Combine all plots
+# g_heat_dendro_all <- plot_grid(plotlist = concurrent_features_heatmap_plots$plot, 
+#                                nrow = ceiling(nrow(concurrent_features_heatmap_plots)/2))
+# # Save
+# ggsave(filename = "figure_sXX_environmental_covariate_heatmap.jpg", plot = g_heat_dendro_all, 
+#        path = fig_dir, width = 12, height = 15, dpi = 1000)
+# 
+# 
+# # Supplementary fig XX - location relationships ----------------------
+# 
+# # list of covariate matrices
+# historical_ec_tomodel_list <- historical_ec_tomodel_timeframe_centered %>%
+#   subset(., str_detect(names(.), "daymet")) %>%
+#   bind_rows() %>%
+#   select(-source) %>%
+#   filter(time_frame %in% unique(historical_feature_selection$time_frame)) %>%
+#   split(.$time_frame) %>%
+#   map(~select(., -time_frame) %>% as.data.frame() %>% column_to_rownames("location") %>% as.matrix())
+# 
+# ## Calculate environmental relationship matrices based on these features
+# historical_features_env_relmat <- historical_features1 %>%
+#   filter(feat_sel_type %in% c("all", "rfa_cv_adhoc"), source == "daymet") %>%
+#   mutate(interaction_features = map(interaction_features, ~str_remove(., "line_name:"))) %>%
+#   mutate(interaction_features_ec_mat = map2(interaction_features, time_frame, ~historical_ec_tomodel_list[[.y]][, .x, drop = FALSE]),
+#          main_features_ec_mat = map2(main_features, time_frame, ~historical_ec_tomodel_list[[.y]][, .x, drop = FALSE])) %>%
+#   mutate_at(vars(ends_with("ec_mat")), ~map(., ~Env_mat(x = .x, method = "Jarq")))
+# 
+# historical_features_env_relmat1 <- historical_features_env_relmat %>%
+#   select(trait, feat_sel_type, interaction = interaction_features_ec_mat, main = main_features_ec_mat) %>%
+#   gather(covariate_type, Emat, main, interaction) %>%
+#   ## Remove lines where matrices are all NA
+#   filter(map_lgl(Emat, ~!any(is.na(.))))
+# 
+# 
+# ## For each trait and covariate type (interaction/main), plot a heatmap and
+# ## a dendrogram
+# historical_features_heatmap_plots <- historical_features_env_relmat1 %>%
+#   # No need for all and interaction covariates
+#   filter(!(feat_sel_type == "all" & covariate_type == "interaction")) %>%
+#   group_by(trait, feat_sel_type, covariate_type) %>%
+#   do(plot = {
+#     row <- .
+#     
+#     # First perform clustering on the relationship matrix
+#     env_clust <- hclust(dist(row$Emat[[1]], method = "euclidean"), method = "average")
+#     # get the data
+#     clust_data <- dendro_data(model = env_clust)
+#     # Label data
+#     clust_lab_data <- mutate(clust_data$labels, group = ifelse(label %in% train_test_loc, "Train/test", "Holdout"),
+#                              group = fct_relevel(group, "Holdout", after = Inf),
+#                              label1 = str_to_title(str_replace_all(label, "_", " ")),
+#                              label1 = ifelse(str_detect(label1, " ") & nchar(label1) > 10, str_replace(label1, " ", "\n"), label1))
+#     # Segment data
+#     clust_seg_data <- segment(clust_data)
+#     # Factor order of environments
+#     env_order <- levels(clust_lab_data$label)
+#     
+#     # Create the plotting data.frame
+#     dat <- row$Emat[[1]] %>%
+#       as.data.frame(.) %>% 
+#       rownames_to_column(., "location") %>%
+#       gather(location2, relationship, -location) %>%
+#       # Refactor the environments
+#       mutate_at(vars(contains("location")), ~factor(., levels = env_order)) %>%
+#       mutate(location = fct_rev(location))
+#     
+#     # Plot
+#     g_heat <- dat %>%
+#       ggplot(aes(x = location, y = location2, fill = relationship)) +
+#       geom_tile() +
+#       scale_fill_gradient2(low = heat_colors[1], mid = heat_colors[2], high = heat_colors[3]) +
+#       scale_y_discrete(position = "right") +
+#       scale_x_discrete(labels = function(x) str_to_title(str_replace_all(x, "_", " "))) +
+#       labs(subtitle = paste(str_add_space(row$trait), str_to_title(row$covariate_type), sep = ", ")) +
+#       theme_genetics(8) +
+#       theme(axis.text.x = element_text(angle = 45, hjust = 1), panel.spacing = unit(0.25, "line"),
+#             strip.placement = "outside", axis.title = element_blank(), legend.position = "none",
+#             axis.text.y = element_blank())
+#     
+#     x_nudge <- 0.01 * max(clust_seg_data$y)
+#     
+#     ## Plot dendrogram
+#     g_dendro <- ggplot(data = clust_seg_data) + 
+#       geom_segment(aes(x = x, y = y, xend = xend, yend = yend)) + 
+#       geom_text(data = clust_lab_data, aes(x = x, y = y, label = label1, color = group), hjust = 1, 
+#                 size = 2.5, nudge_y = -x_nudge) +
+#       coord_flip() + 
+#       scale_y_continuous(expand = c(0.5, 0)) + 
+#       scale_color_manual(name = NULL, values = c("black", "red")) +
+#       theme_genetics(base_size = 8) +
+#       theme_dendro() +
+#       theme(legend.position = c(0.8, 0.90))
+#     
+#     # Combine plots
+#     plot_grid(g_heat, g_dendro, align = "h", axis = "tblr", rel_widths = c(1, 0.7), nrow = 1)
+#     
+#   }) %>% ungroup()
+# 
+# ## Combine all plots
+# g_heat_dendro_all <- historical_features_heatmap_plots %>%
+#   filter(feat_sel_type == "all") %>%
+#   pull(plot) %>%
+#   plot_grid(plotlist = ., nrow = ceiling(length(.)/2))
+# 
+# # Save
+# ggsave(filename = "figure_sXX_location_covariate_heatmap_all.jpg", plot = g_heat_dendro_all, 
+#        path = fig_dir, width = 14, height = 14, dpi = 1000)
+# 
+# ## Combine stepwise covariate plots
+# g_heat_dendro_stepwise <- historical_features_heatmap_plots %>%
+#   filter(feat_sel_type == "rfa_cv_adhoc") %>%
+#   pull(plot) %>%
+#   plot_grid(plotlist = ., nrow = ceiling(length(.)/2))
+# 
+# # Save
+# ggsave(filename = "figure_sXX_location_covariate_heatmap_stepwise.jpg", plot = g_heat_dendro_stepwise, 
+#        path = fig_dir, width = 14, height = 14, dpi = 1000)
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# 

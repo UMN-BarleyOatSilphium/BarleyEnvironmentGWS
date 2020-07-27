@@ -475,23 +475,24 @@ save("loeo_predictions_out", "env_external_predictions_out",
 
 # ## Combine results into one file
 # if (file.exists(file.path(result_dir, "loeo_predictions_fact_reg_supp.RData"))) {
+#   
 #   load(file.path(result_dir, "loeo_predictions_fact_reg.RData"))
 #   loeo_predictions_out_reg <- loeo_predictions_out
 #   env_external_predictions_out_reg <- env_external_predictions_out
-#   
+# 
 #   # Load the supplemental
 #   load(file.path(result_dir, "loeo_predictions_fact_reg_supp.RData"))
 #   loeo_predictions_out_supp <- loeo_predictions_out
-#   
+# 
 #   ## Combine
-#   loeo_predictions_out <- loeo_predictions_out_reg %>% 
-#     subset(., !sapply(., is.null)) %>% 
+#   loeo_predictions_out <- loeo_predictions_out_reg %>%
+#     subset(., !sapply(., is.null)) %>%
 #     bind_rows() %>%
 #     bind_rows(., bind_rows(loeo_predictions_out_supp)) %>%
 #     arrange(trait, site)
 #   # Rename
 #   env_external_predictions_out <- env_external_predictions_out_reg
-#   
+# 
 #   # Resave
 #   save("loeo_predictions_out", "env_external_predictions_out",
 #        file = file.path(result_dir, "loeo_predictions_fact_reg.RData"))

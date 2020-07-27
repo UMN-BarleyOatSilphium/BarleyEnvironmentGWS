@@ -33,107 +33,6 @@ env_trials <- S2_MET_BLUEs %>%
 
 
 
-
-
-# Assess accuracy of heading date predictions from multi-cultivar  --------
-
-
-
-load(file.path(enviro_dir, "GrowthStaging/apsim_s2met_model_cultivar_test_results.RData"))
-
-## Reorganize output
-apsim_s2met_cultivar_out1 <- apsim_s2met_cultivar_out %>% 
-  unnest(apsim_out) %>%
-  # Assign cultivar
-  mutate(cultivar = str_extract(out_name, "cultivar1\\=.*$") %>% str_remove(., "cultivar1=")) %>%
-  mutate(stage = case_when(
-    between(zadok_stage, 10, 30) ~ "early_vegetative",
-    between(zadok_stage, 30, 50) ~ "late_vegetative",
-    between(zadok_stage, 50, 60) ~ "heading",
-    between(zadok_stage, 60, 70) ~ "flowering",
-    between(zadok_stage, 70, 91) ~ "grain_fill")) %>%
-  filter(sowing_das == 1) %>% 
-  # Sort by trial, cultivar, dap
-  arrange(trial, cultivar, day) %>%
-  group_by(trial, cultivar) %>%
-  nest() %>%
-  mutate(data = map(data, ~mutate(., dap = seq(nrow(.))))) %>%
-  unnest() %>%
-  select(trial, environment, cultivar, date, day, dap, stage)
-
-
-# Calculate avereage DAP of heading date predictions from CGM
-cgm_predicted_heading <- apsim_s2met_cultivar_out1 %>% 
-  filter(stage %in% c("heading", "flowering")) %>% 
-  group_by(trial, environment, cultivar, stage) %>% 
-  summarize(pred_HD = mean(dap)) %>%
-  # summarize(pred_HD = min(dap)) %>%
-  ungroup() %>%
-  # Remove S2C1 trials
-  filter(str_detect(trial, "S2C1", negate = TRUE))
-
-# # Get the environmental means of heading date from the AMMI model
-# env_mean_heading <- ammi_fit %>% 
-#   filter(trait == "HeadingDate") %>% 
-#   mutate(env_mean = map(fit_ammi, ~.x$mu + .x$Eeffect),
-#          env_mean = map(env_mean, ~tibble(environment = names(.), 
-#                                           obs_HD = .))) %>% 
-#   unnest(env_mean) %>%
-#   filter(environment != "EON17")
-
-
-## Combine
-pred_obs_heading <- inner_join(env_mean_heading, cgm_predicted_heading)
-
-## Summarize
-cgm_pred_HD_summary <- pred_obs_heading %>%
-  group_by(cultivar, stage) %>%
-  summarize(cor = cor(obs_HD, pred_HD), 
-            mae = mean(abs(pred_HD - obs_HD)),
-            rmse = sqrt(mean((pred_HD - obs_HD)^2)))
-
-## Find the cultivar that results in the most accuracy prediction
-cgm_pred_HD_summary %>%
-  filter(stage == "flowering") %>%
-  # arrange(desc(cor))
-  arrange(rmse) %>%
-  as.data.frame()
-
-## Create an annotation df
-cgm_pred_HD_summary_annotate <- cgm_pred_HD_summary %>%
-  filter(stage == "flowering") %>%
-  mutate(cor = paste0("r==", round(cor, 3)),
-         rmse = paste0("RMSE==", round(rmse, 3)))
-
-## Plot each cultivar
-(g_cgm_cultivar_summary <- pred_obs_heading %>%
-  filter(stage == "flowering") %>%
-  ggplot(aes(y = obs_HD, x = pred_HD)) +
-  geom_abline(slope = 1, intercept = 0) +
-  geom_point() +
-  facet_wrap(~ cultivar) +
-  scale_y_continuous(name = "Observed mean heading (dap)") +
-  scale_x_continuous(name = "CGM predicted flowering (dap)")  +
-  geom_text(data = cgm_pred_HD_summary_annotate, 
-            aes(x = 89, y = 54, label = cor), parse = T, hjust = 1, size = 2) +
-  geom_text(data = cgm_pred_HD_summary_annotate, 
-            aes(x = 89, y = 52, label = rmse), parse = T, hjust = 1, size = 2) +
-  theme_presentation2(10))
-
-ggsave(filename = "cgm_pred_obs_HD_cultivars.jpg", plot = g_cgm_cultivar_summary, path = fig_dir,
-       height = 8, width = 10, dpi = 500)
-
-
-
-
-# Assess accuracy of heading date predictions from the chosen crop --------
-
-
-## Load the environmental covariates
-## This contains output from both nasapower and dayment
-load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates.RData"))
-
-
 ## Fit models to calculate environmental means
 env_means <- S2_MET_BLUEs %>%
   filter(line_name %in% c(tp, vp)) %>%
@@ -159,6 +58,102 @@ env_means <- S2_MET_BLUEs %>%
     
   }) %>% ungroup()
 
+# Just heading date
+env_means_heading <- subset(env_means, trait == "HeadingDate") %>%
+  mutate(obs_HD = mu + effect)
+
+
+
+
+
+# Assess accuracy of heading date predictions from multiple cultivar  --------
+
+
+
+load(file.path(enviro_dir, "GrowthStaging/apsim_s2met_model_cultivar_test_results.RData"))
+
+## Reorganize output
+apsim_s2met_cultivar_out1 <- apsim_s2met_cultivar_out %>% 
+  unnest(apsim_out) %>%
+  # Assign cultivar
+  mutate(cultivar = str_extract(simulation_name, "cultivar1\\=.*$") %>% str_remove(., "cultivar1=")) %>%
+  mutate(stage = case_when(
+    between(zadok_stage, 10, 30) ~ "early_vegetative",
+    between(zadok_stage, 30, 50) ~ "late_vegetative",
+    between(zadok_stage, 50, 70) ~ "flowering",
+    between(zadok_stage, 70, 91) ~ "grain_fill")) %>%
+  filter(sowing_das == 1) %>% 
+  # Sort by trial, cultivar, dap
+  arrange(trial, cultivar, day) %>%
+  group_by(trial, cultivar) %>%
+  nest() %>%
+  mutate(data = map(data, ~mutate(., dap = seq(nrow(.))))) %>%
+  unnest() %>%
+  select(trial, environment, cultivar, date = Date, day, dap, stage)
+
+
+# Calculate avereage DAP of heading date predictions from CGM
+cgm_predicted_heading <- apsim_s2met_cultivar_out1 %>% 
+  filter(stage %in% c("heading", "flowering")) %>% 
+  group_by(trial, environment, cultivar, stage) %>% 
+  summarize(pred_HD = mean(dap)) %>%
+  # summarize(pred_HD = min(dap)) %>%
+  ungroup() %>%
+  # Remove S2C1 trials
+  filter(str_detect(trial, "S2C1", negate = TRUE))
+
+## Combine
+pred_obs_heading <- inner_join(env_means_heading, cgm_predicted_heading)
+
+## Summarize
+cgm_pred_HD_summary <- pred_obs_heading %>%
+  group_by(cultivar, stage) %>%
+  summarize(cor = cor(obs_HD, pred_HD), 
+            mae = mean(abs(pred_HD - obs_HD)),
+            rmse = sqrt(mean((pred_HD - obs_HD)^2)))
+
+## Find the cultivar that results in the most accuracy prediction
+cgm_pred_HD_summary %>%
+  filter(stage == "flowering") %>%
+  # arrange(desc(cor))
+  arrange(rmse) %>%
+  as.data.frame()
+
+## Create an annotation df
+cgm_pred_HD_summary_annotate <- cgm_pred_HD_summary %>%
+  filter(stage == "flowering") %>%
+  mutate(cor = paste0("R^2==", round(cor^2, 3)),
+         rmse = paste0("RMSE==", round(rmse, 3)))
+
+## Plot each cultivar
+(g_cgm_cultivar_summary <- pred_obs_heading %>%
+  filter(stage == "flowering") %>%
+  ggplot(aes(y = obs_HD, x = pred_HD)) +
+  geom_abline(slope = 1, intercept = 0) +
+  geom_point() +
+  facet_wrap(~ cultivar) +
+  scale_y_continuous(name = "Observed mean heading (dap)", breaks = pretty) +
+  scale_x_continuous(name = "CGM predicted flowering (dap)", breaks = pretty)  +
+  geom_text(data = cgm_pred_HD_summary_annotate, 
+            aes(x = 89, y = 54, label = cor), parse = T, hjust = 1, size = 2) +
+  geom_text(data = cgm_pred_HD_summary_annotate, 
+            aes(x = 89, y = 52, label = rmse), parse = T, hjust = 1, size = 2) +
+  theme_presentation2(10))
+
+ggsave(filename = "figure_SXX_cgm_cultivar_testing.jpg", plot = g_cgm_cultivar_summary, path = fig_dir,
+       height = 8, width = 10, dpi = 500)
+
+
+
+
+# Assess accuracy of heading date predictions from the chosen crop --------
+
+
+## Load the environmental covariates
+## This contains output from both nasapower and dayment
+load(file.path(enviro_dir, "EnvironmentalCovariates/s2met_environmental_covariates.RData"))
+
+
 
 
 # Calculate avereage DAP of heading date predictions from CGM
@@ -171,15 +166,9 @@ cgm_predicted_heading <- growth_stage_weather %>%
   # Remove S2C1 trials
   filter(str_detect(trial, "S2C1", negate = TRUE))
 
-# Get the environmental means of heading date from the AMMI model
-env_mean_heading <- env_means %>% 
-  filter(trait == "HeadingDate") %>% 
-  mutate(obs_HD = mu + effect) %>%
-  filter(environment != "EON17")
-
 
 ## Combine
-pred_obs_heading <- inner_join(env_mean_heading, cgm_predicted_heading)
+pred_obs_heading <- inner_join(env_means_heading, cgm_predicted_heading)
 
 ## Summarize
 (cgm_pred_HD_summary <- pred_obs_heading %>%
@@ -196,32 +185,27 @@ g_pred_obs_HD <- pred_obs_heading %>%
   geom_point() +
   facet_wrap(~ source + stage) +
   theme_presentation2(12)
-plotly::ggplotly(g_pred_obs_HD)
-
 
 ## Replot and save
 cgm_pred_HD_summary_annotate <- cgm_pred_HD_summary %>%
-  mutate(pred_HD_mean_cor = paste0("r==", round(pred_HD_mean_cor, 3)),
+  mutate(pred_HD_mean_cor = paste0("R^2==", round(pred_HD_mean_cor^2, 3)),
          pred_HD_mean_rmse = paste0("RMSE==", round(pred_HD_mean_rmse, 3)))
-# fit
-fit <- lm(obs_HD ~ pred_HD_mean, data = pred_obs_heading, subset = stage == "flowering")
 
 g_cgm_summary <- pred_obs_heading %>%
-  filter(stage == "flowering") %>%
-  ggplot(aes(x = obs_HD, y = pred_HD_mean)) +
+  filter(stage == "flowering", source == "daymet") %>%
+  ggplot(aes(y = obs_HD, x = pred_HD_mean)) +
   geom_abline(slope = 1, intercept = 0) +
   geom_point() +
-  scale_x_continuous(name = "Observed mean heading (dap)") +
-  scale_y_continuous(name = "CGM predicted flowering (dap)") +
-  facet_grid(~ source) +
-  geom_text(data = filter(cgm_pred_HD_summary_annotate, stage == "flowering"), 
+  scale_y_continuous(name = "Observed mean heading (dap)", breaks = pretty) +
+  scale_x_continuous(name = "CGM predicted flowering (dap)", breaks = pretty) +
+  geom_text(data = filter(cgm_pred_HD_summary_annotate, stage == "flowering", source == "daymet"), 
             aes(x = 51, y = 72, label = pred_HD_mean_cor), parse = T, hjust = 0) +
-  geom_text(data = filter(cgm_pred_HD_summary_annotate, stage == "flowering"), 
+  geom_text(data = filter(cgm_pred_HD_summary_annotate, stage == "flowering", source == "daymet"), 
             aes(x = 51, y = 70, label = pred_HD_mean_rmse), parse = T, hjust = 0) +
   theme_genetics()
 
-ggsave(filename = "cgm_pred_obs_HD.jpg", plot = g_cgm_summary, path = fig_dir,
-       height = 5, width = 8, dpi = 500)
+ggsave(filename = "figure_SXX_cgm_pred_obs_HD.jpg", plot = g_cgm_summary, path = fig_dir,
+       height = 3, width = 3, dpi = 1000)
   
   
 

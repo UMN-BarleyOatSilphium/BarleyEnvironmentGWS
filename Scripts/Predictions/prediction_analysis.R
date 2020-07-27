@@ -101,6 +101,17 @@ predictions_df %>%
   as.data.frame()
   
 
+## Compare soil to nosoil
+predictive_ability %>%
+  distinct(trait, model, pop, type, selection, ability_all) %>%
+  filter(str_detect(model, "cov")) %>%
+  spread(selection, ability_all) %>%
+  arrange(type, trait, model, pop) %>%
+  as.data.frame()
+
+
+
+
 
 ## Adjust ability using heritability
 within_environment_prediction_accuracy <- predictive_ability %>%
@@ -130,7 +141,7 @@ predictive_ability %>%
 
 
 predictions_df %>%
-  filter(type == "lolo", trait == "GrainProtein", !selection %in% c("none", "concurrent_rfa_cv_adhoc")) %>%
+  filter(str_detect(type, "external"), trait == "GrainYield", !selection %in% c("none", "concurrent_rfa_cv_adhoc")) %>%
   ggplot(aes(x = pred_complete, y = value, color = leave_one_group)) +
   geom_abline(slope = 1, intercept = 0) +
   geom_point(size = 0.5) +

@@ -21,7 +21,7 @@ source(file.path(repo_dir, "source_MSI.R"))
 # Other packages
 library(modelr)
 library(broom)
-library(BGLR)
+# library(BGLR)
 
 load(file = file.path(result_dir, "feature_selection_results.RData"))
 load(file.path(result_dir, "concurrent_historical_covariables.RData"))
@@ -58,15 +58,18 @@ env_data_to_model <- S2_MET_BLUEs %>%
   nest() %>% ungroup()
 
 
+# Remove soil variable from all variables
+concurrent_all_features <- concurrent_all_features %>%
+  mutate(covariates = map(covariates, ~modify_at(.x, "optVariables", ~str_subset(.x, "soil", negate = TRUE))), 
+         feat_sel_type = "all_nosoil") %>%
+  bind_rows(concurrent_all_features, .)
+
 # Assemble covariates to model
-env_covariates_to_model <- concurrent_fact_reg_feature_selection %>% 
-  select(trait, model, source, apriori) %>% 
-  gather(feat_sel_type, features, apriori) %>%
-  bind_rows(., rename(concurrent_feature_selection, features = adhoc)) %>%
-  mutate(features = map(features, "optVariables") %>% map(~setdiff(x = ., y = "line_name"))) %>%
-  filter(source == "daymet", model == "model3") %>%
+env_covariates_to_model <- bind_rows(concurrent_fact_reg_feature_selection, concurrent_feature_selection, 
+                                     concurrent_all_features)  %>%
+  mutate(features = map(covariates, "optVariables") %>% map(~setdiff(x = ., y = "line_name"))) %>%
+  filter(source == "daymet", model == "model3", str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
   select(trait, feat_sel_type, features) %>%
-  bind_rows(., tibble(trait = traits, feat_sel_type = "all", features = list(names(ec_tomodel_scaled$daymet)[-1:-2]))) %>%
   mutate(analysis = "environment")
 
 
@@ -103,20 +106,20 @@ loc_data_to_model <- S2_MET_loc_BLUEs %>%
   group_by(analysis, trait, population) %>%
   nest() %>% ungroup()
 
-# Convert model 2/3 to 4/5
-historical_feature_selection <- historical_feature_selection %>% 
-  mutate(model = str_replace_all(model, c("model2" = "model4", "model3" = "model5")),
-         source = "daymet")
+# Remove soil variable from all variables
+historical_all_features <- historical_all_features %>%
+  mutate(covariates = map(covariates, ~modify_at(.x, "optVariables", ~str_subset(.x, "soil", negate = TRUE))), 
+         feat_sel_type = "all_nosoil") %>%
+  bind_rows(historical_all_features, .)
 
-## Assemble covariates to model
-loc_covariates_to_model <- historical_fact_reg_feature_selection %>% 
-  select(trait, model, source, apriori) %>% 
-  gather(feat_sel_type, features, apriori) %>%
-  bind_rows(., rename(historical_feature_selection, features = adhoc)) %>%
-  mutate(features = map(features, "optVariables") %>% map(~setdiff(x = ., y = "line_name"))) %>%
-  filter(source == "daymet", model == "model5") %>%
+
+# Combine feature selection df
+loc_covariates_to_model <- bind_rows(historical_fact_reg_feature_selection, mutate(historical_feature_selection, source = "daymet"),
+                                  historical_all_features) %>%
+  select(-contains("time_frame"))  %>%
+  mutate(features = map(covariates, "optVariables") %>% map(~setdiff(x = ., y = "line_name"))) %>%
+  filter(source == "daymet", model == "model5", str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
   select(trait, feat_sel_type, features) %>%
-  bind_rows(., tibble(trait = traits, feat_sel_type = "all", features = list(names(loc_ec_tomodel_scaled[[1]])[-1:-3])) ) %>%
   mutate(analysis = "location")
 
 
@@ -125,8 +128,6 @@ data_to_model_split <- bind_rows(env_data_to_model, loc_data_to_model) %>%
   full_join(., bind_rows(env_covariates_to_model, loc_covariates_to_model), by = c("analysis", "trait")) %>%
   assign_cores(df = ., n_core = n_cores, split = TRUE)
 
-# Set a random seed for result reproducibility
-set.seed(1922)
 
 ## Iterate over cores
 pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function(core_df) {
@@ -204,26 +205,63 @@ pheno_variance_analysis_out <- coreApply(X = data_to_model_split, FUN = function
     KE <- tcrossprod(Zg %*% K_use, Zg) * tcrossprod(Ze %*% Eint, Ze)
     dimnames(KE) <- replicate(2, data$gxs, simplify = FALSE)
     
+    # Reset the flag 
+    parse_model_out <- TRUE
+    
+    ## Create formula objects
+    fixed_form <- value ~ 1
+    rand_form <- ~ line_name + vs(line_name_cov, Gu = K_use) + site + vs(site_cov, Gu = Emain) +
+      gxs + vs(gxs_cov, Gu = KE)
+    
+    
     ## Sommer
     model_stdout <- capture.output({
-      model_try <- try( {
-        fit_mmer <- mmer(fixed = value_scaled ~ 1,
-                         random = ~ line_name + vs(line_name_cov, Gu = K_use) + site + vs(site_cov, Gu = Emain) +
-                           gxs + vs(gxs_cov, Gu = KE),
-                         data = data, verbose = TRUE, method = "NR", tolparinv = 1e-1)
-      }, silent = TRUE) })
+      model_try <- try( fit_mmer <- mmer(fixed = fixed_form, random = rand_form, data = data, verbose = TRUE, method = "AI"), silent = TRUE) 
+    })
     
-    # Get the variance components; asemble into a tibble
-    varcomp_df <- fit_mmer$sigma %>%
-      map_dbl(~.) %>%
-      tibble(term = names(.), variance = .) %>%
-      mutate(term = str_remove_all(term, "u:"),
-             source = str_remove_all(term, "_cov")) %>%
-      group_by(source) %>%
-      mutate(total_source_variance = sum(variance)) %>%
-      ungroup() %>%
-      mutate(variance_prop = variance / total_source_variance,
-             note = list(NULL))
+    # Parse the output
+    stdout_parsed <- read_table2(model_stdout)
+    
+    # If the output contains singular, refit the model using the iteration that maximized the LL
+    if (any(str_detect(model_stdout, "singular"))) {
+      
+      # Get the interation number
+      iter_use <- which.max(parse_number(stdout_parsed$LogLik))
+      
+      # If iter_use is empty, just skip; else refit
+      if (is_empty(iter_use)) {
+        varcomp_df <- NULL
+        parse_model_out <- FALSE # Use this as a flag
+        
+      } else {
+        
+        ## Sommer
+        model_stdout <- capture.output({
+          model_try <- try( fit_mmer <- mmer(fixed = fixed_form, random = rand_form, data = data, verbose = TRUE, 
+                                             method = "AI", iters = iter_use), 
+                            silent = TRUE) 
+        })
+        
+        
+      }
+      
+    }
+    
+    if (parse_model_out) {
+    
+      # Get the variance components; asemble into a tibble
+      varcomp_df <- fit_mmer$sigma %>%
+        map_dbl(~.) %>%
+        tibble(term = names(.), variance = .) %>%
+        mutate(term = str_remove_all(term, "u:"),
+               source = str_remove_all(term, "_cov")) %>%
+        group_by(source) %>%
+        mutate(total_source_variance = sum(variance)) %>%
+        ungroup() %>%
+        mutate(variance_prop = variance / total_source_variance,
+               note = list(NULL))
+      
+    }
     
     
     # ## BGLR
