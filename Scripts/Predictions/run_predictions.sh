@@ -2,8 +2,9 @@
 
 #PBS -l walltime=32:00:00,mem=62gb,nodes=1:ppn=12
 # #PBS -l walltime=04:00:00,mem=62gb,nodes=1:ppn=12
-#PBS -N loeo_predictions_fr
+# #PBS -N loeo_predictions_fr
 # #PBS -N lolo_predictions_fr
+#PBS -N cv_env_predictions_fr
 #PBS -M neyha001@umn.edu
 #PBS -m abe
 #PBS -r n
@@ -16,16 +17,12 @@ module load R/3.5.2_mkl
 ## Factorial regression 
 
 # Leave-one-environment-out
-Rscript environment_loeo_predictions2.R
+# Rscript environment_loeo_predictions2.R
 
 # # Leave-one-location-out
 # Rscript environment_lolo_predictions2.R
 
-# # Leave-one-out from individual covariate selection
-# Rscript environment_loo_predictions2_fr_samples.R
 
-
-# # Leave-one-out and external validation
-# Rscript environment_loo_predictions2.R
-
+## 75-25 cross-validation
+Rscript environment_envCV_predictions2.R
 

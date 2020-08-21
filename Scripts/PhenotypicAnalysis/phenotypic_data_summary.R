@@ -15,7 +15,7 @@ repo_dir <- getwd()
 source(file.path(repo_dir, "source.R"))
 
 ## Load additional packages
-library(Bilinear)
+library(lme4qtl)
 library(modelr)
 library(broom)
 
@@ -85,26 +85,21 @@ S2_MET_BLUEs_tomodel <- S2_MET_BLUEs %>%
   filter( (population == "all") |
             (population == "tp" & line_name %in% tp) |
             (population == "vp" & line_name %in% vp) ) %>%
-  mutate_at(vars(location, year, environment, line_name), as.factor)
+  mutate_at(vars(location, year, environment, line_name), as.factor) %>%
+  # Convert yield to Mg ha-1
+  mutate_at(vars(value, std_error), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
+  # Rescale TW
+  mutate_at(vars(value, std_error), ~ifelse(trait == "TestWeight", . / 100, .)) %>%
+  # Rescale PH
+  mutate_at(vars(value, std_error), ~ifelse(trait == "PlantHeight", . / 10, .))
 
 
 
 
 
 
-# Group by trait and fit the multi-environment model
-# Fit models in the TP and the TP + VP
+# Partition variance for environmental means ------------------------------
 
-#### Note
-#### 
-#### I am not sure whether to weight the residuals. It seems to result in a more realistic estimate of residual
-#### variance, but it may not be correct.
-#### 
-
-### Analyze the components of GxE
-
-# Lmer control
-lmer_control <- lmerControl(check.nobs.vs.nlev = "ignore", check.nobs.vs.nRE = "ignore")
 
 # Group by trait and fit the multi-environment model
 # Fit models in the TP and the TP + VP
@@ -113,38 +108,129 @@ stage_two_fits <- S2_MET_BLUEs_tomodel %>%
   nest() %>%
   mutate(out = list(NULL))
 
-for (i in seq_len(nrow(stage_two_fits))) {
+for (i in which(sapply(stage_two_fits$out, is.null))) {
 
   df <- droplevels(stage_two_fits$data[[i]])
   # Edit factors
   df1 <- df %>%
     droplevels() %>%
-    left_join(., mutate(distinct(trial_info, location, environment), 
-                        origin = ifelse(location %in% c("Bozeman", "Huntley", "Aberdeen", "Crookston", "Fargo"), "origin", "nonorigin"))) %>%
-    mutate_at(vars(environment, line_name, origin), ~fct_contr_sum(as.factor(.))) %>%
-    mutate(wts = std_error^2)
+    mutate_at(vars(environment, line_name), ~fct_contr_sum(as.factor(.))) %>%
+    mutate(wts = std_error^2, gxe = interaction(line_name, environment, drop = TRUE, sep = ":"))
 
+  ## Construct covariance matrices
+  K_use <- K[levels(df1$line_name), levels(df1$line_name)]
+  KE_use <- tcrossprod(model.matrix(~ -1 + line_name, df1) %*% K_use, model.matrix(~ -1 + line_name, df1)) *
+    tcrossprod(model.matrix(~ -1 + environment, df1))
+  dimnames(KE_use) <- replicate(2, levels(df1$gxe), simplify = FALSE)
   
-  # Random model
-  fit_lmer <- lmer(formula = value ~ 1 + (1|environment) + (1|line_name) + (1|line_name:environment),
-                   data = df1, control = lmer_control, weights = wts)
+  fit_mmer <- mmer(fixed = value ~ 1, random = ~ environment + vs(line_name, Gu = K_use) + vs(gxe, Gu = KE_use),
+                   data = df1, weights = wts, verbose = TRUE)
   
-  # Adjust with fixed environments
-  fit_lmer2 <- lmer(formula = value ~ 1 + environment + (1|line_name) + (1|line_name:environment),
-                    data = df1, control = lmer_control, weights = wts)
+  ## Get variance components
+  var_comp <- fit_mmer$sigma %>% 
+    map_df(1) %>% 
+    gather(term, variance) %>% 
+    mutate(term = str_remove(term, "u:"),
+           se = sqrt(diag(fit_mmer$sigmaSE)))
   
-  # Ranova
-  fit_ranova <- lmerTest::ranova(model = fit_lmer)
+  # Get environmental means
+  environmental_means <- fit_mmer$U$environment$value %>% 
+    tibble(environment = names(.), effect = .) %>%
+    mutate(environment = str_remove(environment, "environment"),
+           mean = effect + fit_mmer$Beta$Estimate[1])
+  
   
   ## Return the model
-  stage_two_fits$out[[i]] <- tibble(fit_rand = list(fit_lmer), fit_env_fixed = list(fit_lmer2),
-                                    ranova = list(fit_ranova))
+  stage_two_fits$out[[i]] <- tibble(var_comp = list(var_comp), env_mean = list(environmental_means))
   
 }
 
-stage_two_fits1 <- unnest(stage_two_fits, out) %>%
-  mutate(var_comp = map(fit_rand, ~as.data.frame(VarCorr(.))), 
-         ranova = map(ranova, tidy))
+# Unnest
+stage_two_varcomp_env <- unnest(stage_two_fits, out) %>%
+  select(-data) %>%
+  # Rescale test weight
+  mutate(var_comp = modify_if(var_comp, trait == "TestWeight", ~mutate(.x, variance = variance * (100^2), se = se * 100)),
+         env_mean = modify_if(env_mean, trait == "TestWeight", ~mutate_if(.x, is.numeric, ~. * 100)))
+
+
+
+# Partition variance for location means -----------------------------------
+
+
+# Calculate location means
+S2_MET_loc_BLUEs <- S2_MET_BLUEs_tomodel %>%
+  # Remove irrigated trials - these will eventually be included
+  filter(!str_detect(environment, "HTM|BZI|AID")) %>%
+  droplevels() %>%
+  group_by(trait, population, line_name, location) %>%
+  summarize(value = mean(value)) %>%
+  ungroup()
+
+# Group by trait and fit the model
+stage_two_fits_loc <- S2_MET_loc_BLUEs %>%
+  group_by(trait, population) %>%
+  nest() %>%
+  mutate(out = list(NULL))
+
+for (i in which(sapply(stage_two_fits_loc$out, is.null))) {
+  
+  df <- droplevels(stage_two_fits_loc$data[[i]])
+  # Edit factors
+  df1 <- df %>%
+    droplevels() %>%
+    mutate_at(vars(location, line_name), ~fct_contr_sum(as.factor(.))) %>%
+    mutate(gxe = interaction(line_name, location, drop = TRUE, sep = ":"))
+  
+  ## Construct covariance matrices
+  K_use <- K[levels(df1$line_name), levels(df1$line_name)]
+  KE_use <- tcrossprod(model.matrix(~ -1 + line_name, df1) %*% K_use, model.matrix(~ -1 + line_name, df1)) *
+    tcrossprod(model.matrix(~ -1 + location, df1))
+  dimnames(KE_use) <- replicate(2, levels(df1$gxe), simplify = FALSE)
+  
+  fit_mmer <- mmer(fixed = value ~ 1, random = ~ location + vs(line_name, Gu = K_use) + vs(gxe, Gu = KE_use),
+                   data = df1, verbose = TRUE)
+  
+  ## Get variance components
+  var_comp <- fit_mmer$sigma %>% 
+    map_df(1) %>% 
+    gather(term, variance) %>% 
+    mutate(term = str_remove(term, "u:"),
+           se = sqrt(diag(fit_mmer$sigmaSE)))
+  
+  # Get environmental means
+  location_means <- fit_mmer$U$location$value %>% 
+    tibble(location = names(.), effect = .) %>%
+    mutate(location = str_remove(location, "location"),
+           mean = effect + fit_mmer$Beta$Estimate[1])
+  
+  
+  ## Return the model
+  stage_two_fits_loc$out[[i]] <- tibble(var_comp = list(var_comp), loc_mean = list(location_means))
+  
+}
+
+# Unnest
+stage_two_varcomp_loc <- unnest(stage_two_fits_loc, out) %>%
+  select(-data) %>%
+  # Rescale test weight
+  mutate(var_comp = modify_if(var_comp, trait == "TestWeight", ~mutate(.x, variance = variance * (100^2), se = se * 100)),
+         loc_mean = modify_if(loc_mean, trait == "TestWeight", ~mutate_if(.x, is.numeric, ~. * 100)))
+
+# Save
+save("stage_two_varcomp_env", "stage_two_varcomp_loc",file = file.path(result_dir, "stage_two_phenotypic_analysis.RData"))
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 ## Create a table for output
@@ -209,28 +295,6 @@ stage_two_fits_env_mean %>%
 # 4 PlantHeight    45.1    72.0  107. 
 # 5 TestWeight    572.    648.   714.
 
-
-
-
-
-### Summarize heritability within environments ###
-
-env_trait_herit %>%
-  filter(environment %in% train_test_env) %>%
-  group_by(trait) %>%
-  summarize(herit_min = min(heritability), herit_max = max(heritability), herit_mean = mean(heritability))
-
-# trait        herit_min herit_max herit_mean
-# 1 GrainProtein     0.295     0.840      0.657
-# 2 GrainYield       0.179     0.861      0.532
-# 3 HeadingDate      0.174     0.980      0.845
-# 4 PlantHeight      0.160     0.882      0.547
-# 5 TestWeight       0.501     0.945      0.716
-
-## Sort validation environment heritabilities
-env_trait_herit %>%
-  filter(environment %in% validation_env) %>%
-  arrange(trait, desc(heritability))
 
 
 

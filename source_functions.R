@@ -1950,6 +1950,6 @@ cv <- function(x, na.rm = FALSE) sd(x = x, na.rm = na.rm) / mean(x = x, na.rm = 
 
 
 # First define a function to calculate bias
-bias <- function(obs, pred) mean((pred - obs) / obs)
+bias <- function(obs, pred) (mean(pred) - mean(obs)) / mean(obs)
 
 

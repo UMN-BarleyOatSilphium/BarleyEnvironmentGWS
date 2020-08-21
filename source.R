@@ -11,7 +11,6 @@ invisible(lapply(X = pkgs, library, character.only = TRUE))
 
 ## Directories
 proj_dir <- repo_dir
-alt_proj_dir <- "C:/GoogleDrive/BarleyLab/Projects/S2MET_Predictions//"
 
 ## Google drive directory
 gdrive_dir <- "C:/GoogleDrive"
@@ -58,7 +57,7 @@ entry_list <- read_excel(file.path(data_dir, "project_entries.xlsx"))
 
 # Grab the entry names that are not checks
 tp <- subset(entry_list, Class == "S2TP", Line, drop = T)
-tp <- setdiff(tp, c("07MT-10")) # Remove hullness line and what appears to be a duplicate
+tp <- setdiff(tp, c("07MT-10")) # Remove hullness line
 vp <- subset(entry_list, Class == "S2C1R", Line, drop = T)
 
 
@@ -85,7 +84,12 @@ vp_geno <- intersect(vp, row.names(s2_imputed_mat))
 s2_imputed_mat_use <- s2_imputed_mat[c(tp_geno, vp_geno),]
 
 # Calculate the K matrix
-K <- A.mat(X = s2_imputed_mat_use, min.MAF = 0, max.missing = 1)
+K <- Kgeno <- A.mat(X = s2_imputed_mat_use, min.MAF = 0, max.missing = 1)
+
+## Add missing entries as unrelated
+K <- bdiag(K, diag(x = mean(diag(K)), nrow = length(c(tp, vp)) - length(c(tp_geno, vp_geno))))
+K <- as.matrix(K); dimnames(K) <- replicate(2, c(row.names(s2_imputed_mat_use), setdiff(c(tp, vp), c(tp_geno, vp_geno))), simplify = FALSE)
+K <- K[sort(row.names(K)), sort(row.names(K))]
 
 
 
@@ -177,7 +181,7 @@ model_replace <- c("model1" = "g", "model2_id" = "g + e", "model2_cov" = "g + e"
 f_model_replace <- function(x) model_replace[x]
 # f_model_replace <- function(x) paste0("M", toupper(str_extract(x, "[0-9]{1}[a-z]{0,1}")))
 # Vector to rename validation schemes
-f_validation_replace <- function(x) str_replace_all(x, c("tp" = "Tested parents", "vp" = "Untested offspring"))
+f_validation_replace <- function(x) str_replace_all(x, c("tp" = "Tested founders", "vp" = "Untested offspring"))
 f_pop_replace <- function(x) str_replace_all(x, c("all" = "All", "tp" = "FP", "vp" = "OP"))
 # Replace type
 f_type_replace <- function(x) c("loeo" = "New environment", "lolo" = "New location", "loyo" = "New year",
