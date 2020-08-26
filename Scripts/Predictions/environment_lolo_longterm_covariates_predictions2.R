@@ -132,8 +132,6 @@ historical_all_features <- historical_all_features %>%
 # Combine feature selection df
 feature_selection_df <- historical_feature_selection_longterm %>% 
   mutate(., source = "daymet")
-  select(-contains("time_frame"))
-
 
 # Reorganize covariate df
 covariates_tomodel <- feature_selection_df %>%
