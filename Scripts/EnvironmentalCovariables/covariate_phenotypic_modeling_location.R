@@ -207,17 +207,29 @@ historical_timeframe_selection_out1 <- historical_timeframe_selection_out %>%
   separate(time_frame1, c("length", "start_year", "end_year"), sep = "_") %>%
   mutate_at(vars(length, contains("year")), parse_guess) %>%
   # Round the RMSE
-  mutate_at(vars(RMSE, R2), ~round(., 5))
+  mutate_at(vars(RMSE, R2), ~round(., 5)) %>%
+  arrange(trait, RMSE, length, desc(end_year))
 
 
 ## Plot timeframes
-historical_timeframe_selection_out1 %>%
+g1 <- historical_timeframe_selection_out1 %>%
   filter(time_frame_type == "time_frame") %>%
-  ggplot(aes(x = length, y = RMSE, color = feat_sel_type, size = nVariables)) +
+  ggplot(aes(x = length, y = RMSE)) +
   geom_line() +
   scale_x_reverse() +
-  facet_grid(trait ~ ., scales = "free_y") +
-  theme_presentation2()
+  facet_grid(trait ~ feat_sel_type, scales = "free_y") +
+  theme_presentation2(base_size = 10)
+
+# Plot windows
+g2 <- historical_timeframe_selection_out1 %>%
+  filter(time_frame_type == "window") %>%
+  mutate(length = fct_inseq(as.character(length))) %>%
+  ggplot(aes(x = end_year, y = RMSE, lty = length)) +
+  geom_line() +
+  facet_grid(trait ~ feat_sel_type, scales = "free_y") +
+  theme_presentation2(base_size = 10)
+
+cowplot::plot_grid(g1, g2)
 
 
 
@@ -227,30 +239,26 @@ historical_timeframe_selection_out1 %>%
 
 
 ## Find the the best, shortest, most recent timeframe based on RMSE
-## Timeframe
-historical_timeframe_sorted_timeframe <- historical_timeframe_selection_out1 %>%
-  filter(time_frame_type == "time_frame") %>%
-  # Round the
+historical_timeframe_best_timeframe <- historical_timeframe_selection_out1 %>%
+  filter(time_frame_type == "time_frame", length < 15, feat_sel_type != "adhoc_nosoil") %>%
   split(.$trait) %>%
-  map(~arrange(., RMSE, end_year, length))
-
-## Window
-historical_timeframe_sorted_window <- historical_timeframe_selection_out1 %>%
-  filter(time_frame_type == "window") %>%
-  # Round the
-  split(.$trait) %>%
-  map(~arrange(., RMSE, end_year, length))
-
-
-## Time frames appear to be best (or at least comparable to windows); use these
-historical_timeframe_best_timeframe <- historical_timeframe_sorted_timeframe %>%
-  map(~filter(., length < 15)) %>% # USe a shorter length
   map_df(~slice(., 1))
 
+# Choose also the best timeframe and window with length >= 10 years
+historical_timeframe_best_longterm <- historical_timeframe_selection_out1 %>%
+  filter(length >= 5, feat_sel_type != "adhoc_nosoil", end_year >= 2010) %>%
+  group_by(trait, time_frame_type) %>%
+  do(slice(., 1)) %>%
+  ungroup()
 
 ## These will be the feature selection covariates
 historical_feature_selection <- historical_timeframe_selection_out %>%
   inner_join(., select(historical_timeframe_best_timeframe, trait, time_frame)) %>%
+  select(-data) %>%
+  mutate(feat_sel_type = paste0("rfa_", feat_sel_type))
+
+historical_feature_selection_longterm <- historical_timeframe_selection_out %>%
+  inner_join(., select(historical_timeframe_best_longterm, trait, time_frame)) %>%
   select(-data) %>%
   mutate(feat_sel_type = paste0("rfa_", feat_sel_type))
 
@@ -363,7 +371,8 @@ historical_all_features <- trait_covariate_df %>%
 
 
 ## Save historical feature selection
-save("historical_feature_selection", "historical_fact_reg_feature_selection", "historical_all_features",
+save("historical_feature_selection", "historical_feature_selection_longterm",
+     "historical_fact_reg_feature_selection", "historical_all_features",
      file = file.path(result_dir, "historical_feature_selection_results.RData"))
 
 
@@ -371,6 +380,7 @@ save("historical_feature_selection", "historical_fact_reg_feature_selection", "h
 load(file.path(result_dir, "concurrent_feature_selection_results.RData"))
 
 save("concurrent_feature_selection", "historical_feature_selection",
+     "historical_feature_selection_longterm",
      "concurrent_fact_reg_feature_selection", "historical_fact_reg_feature_selection",
      "concurrent_all_features", "historical_all_features",
      file = file.path(result_dir, "feature_selection_results.RData"))
