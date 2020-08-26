@@ -36,9 +36,6 @@ nCV <- 25
 # Source of covariates
 source_use <- "daymet"
 
-## Data.frame of timeframes to use per trait
-time_frame_use_df <- historical_feature_selection %>%
-  distinct(trait, time_frame)
 
 # If re-running predictions, should all be re-run?
 rerun_all <- TRUE
@@ -47,10 +44,12 @@ rerun_all <- TRUE
 
 ## Load covariate data
 load(file.path(result_dir, "concurrent_historical_covariables.RData"))
-
 ## Load the factorial regression results
 load(file.path(result_dir, "feature_selection_results.RData"))
 
+## Data.frame of timeframes to use per trait
+time_frame_use_df <- historical_feature_selection %>%
+  distinct(trait, time_frame)
 
 
 
