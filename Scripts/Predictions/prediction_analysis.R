@@ -41,7 +41,9 @@ alpha <- 0.05
 
 
 ## Grab the prediction outputs and combine
-prediction_list <- map(set_names(object_list, object_list), get) %>%
+prediction_list <- object_list %>%
+  set_names(., .) %>%
+  map(get) %>%
   # Bind rows if necessary
   modify_if(is.list, bind_rows) %>%
   subset(., map_lgl(., ~nrow(.) > 1)) %>%
@@ -56,68 +58,49 @@ prediction_list <- map(set_names(object_list, object_list), get) %>%
 ## Combine data.frames and mutate columns
 predictions_df <- prediction_list %>%
   imap(~unnest(.x, prediction) %>% mutate(type = .y) ) %>%
+  modify_if(., str_detect(names(.), "lo[a-z]o"), ~mutate(.x, .id = as.character("01"))) %>%
   map(~rename_at(.x, vars(which(names(.x) %in% c("env", "loc"))),
                  ~str_replace_all(., c("loc" = "location", "env" = "environment")))) %>%
   map_df(~mutate_if(., is.character, parse_guess) %>%
            mutate_if(is.factor, ~parse_guess(as.character(.)))) %>%
-  rename(selection = feature_selection) %>%
+  rename(selection = feature_selection, cv_rep = .id) %>%
   mutate(selection = ifelse(is.na(selection), "none", selection),
          pop = ifelse(line_name %in% tp, "tp", "vp")) %>%
   select(-which(names(.) %in% c(".id", "core", "trait1"))) %>%
   # Coalesce columns
-  mutate(leave_one_group = site, nGroup = nSite) %>%
+  mutate(test_group = site, nGroup = nSite) %>%
   select(-which(names(.) %in% c("environment", "location", "nLoc", "nEnv", "loc1", "env1", "nSite", "site1", "source"))) %>%
   # Subset trait-site combinations that are relevant
-  inner_join(distinct(select(gather(distinct(S2_MET_BLUEs, trait, environment, location), var, site, -trait), -var)), .)
+  inner_join(distinct(select(gather(distinct(S2_MET_BLUEs, trait, environment, location), var, site, -trait), -var)), .) %>%
+  # Sort
+  arrange(type, model, selection, cv_rep, site)
 
 
 
 ## Calculate accuracy and bias per train group, model, and population
 predictive_ability <- predictions_df %>%
-  group_by(trait, model, pop, type, leave_one_group, selection) %>%
-  # First calculate accuracy per environment
+  group_by(trait, model, pop, type, cv_rep, test_group, selection) %>%
+  # First calculate accuracy per environment within a cv rep
   mutate(ability = cor(pred_complete, value), 
          bias = bias(obs = value, pred = pred_complete),
          rmse = sqrt(mean((value - pred_complete)^2))) %>% # Bias as percent deviation from observed
-  group_by(trait, model, pop, type, selection) %>%
+  group_by(trait, model, pop, type, selection, cv_rep) %>%
   # Next calculate accuracy across all environments
   mutate(ability_all = cor(pred_complete, value), 
          bias_all = bias(obs = value, pred = pred_complete),
-         rmse_all = sqrt(mean((value - pred_complete)^2))) %>% # Bias as percent deviation from observed
-  # Now summarize across all
-  group_by(trait, model, pop, type, leave_one_group, selection) %>%
-  summarize_at(vars(ability, bias, rmse, ability_all, bias_all, rmse_all, nObs, nGroup), mean) %>%
-  ungroup()
-
-
-## Drop crookston as a location and recalculate location prediction accuracy for grain yield
-predictions_df %>%
-  filter(type == "lolo", leave_one_group != "Crookston", trait == "GrainYield") %>%
-  group_by(trait, model, pop, type, selection) %>%
-  # Next calculate accuracy across all environments
-  summarize(ability_all = cor(pred_complete, value), 
-            bias_all = bias(obs = value, pred = pred_complete),
-            rmse_all = sqrt(mean((value - pred_complete)^2))) %>%
-  as.data.frame()
-  
-
-## Compare soil to nosoil
-predictive_ability %>%
-  distinct(trait, model, pop, type, selection, ability_all) %>%
-  filter(str_detect(model, "cov")) %>%
-  spread(selection, ability_all) %>%
-  arrange(type, trait, model, pop) %>%
-  as.data.frame()
-
+         rmse_all = sqrt(mean((value - pred_complete)^2))) %>%
+  ungroup() %>%
+  # Reduce observations
+  distinct_at(vars(-line_name, -value, -contains("pred")))
 
 
 
 
 ## Adjust ability using heritability
 within_environment_prediction_accuracy <- predictive_ability %>%
-  filter(type %in% c("loeo", "env_external")) %>%
+  filter(type %in% c("loeo", "env_external", "cv_env")) %>%
   select(-contains("_all")) %>%
-  left_join(., env_trait_herit, by = c("trait","leave_one_group" = "environment")) %>%
+  left_join(., env_trait_herit, by = c("trait", "test_group" = "environment")) %>%
   mutate(accuracy = ability / sqrt(heritability))
 
 
@@ -160,7 +143,7 @@ predictive_ability %>%
 
 # Calculate predictive ability over all observations; also calculate RMSE
 accuracy_bias_all <- predictive_ability %>% 
-  distinct(trait, model, pop, type, selection, ability_all, bias_all)
+  distinct(trait, cv_rep, model, pop, type, selection, ability_all, bias_all)
 
 # First create annotation df
 across_site_prediction_accuracy_annotation <- accuracy_bias_all %>%
@@ -176,8 +159,6 @@ across_site_prediction_accuracy_annotation <- accuracy_bias_all %>%
 save("predictions_df", "predictive_ability", "across_site_prediction_accuracy_annotation",
      "within_environment_prediction_accuracy", 
      file = file.path(result_dir, "prediction_accuracy_compiled.RData"))
-
-
 
 
 

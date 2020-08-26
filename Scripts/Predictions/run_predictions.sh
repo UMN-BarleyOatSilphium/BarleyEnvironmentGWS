@@ -1,10 +1,10 @@
 #!/bin/bash
 
-#PBS -l walltime=32:00:00,mem=62gb,nodes=1:ppn=12
+#PBS -l walltime=16:00:00,mem=62gb,nodes=1:ppn=12
 # #PBS -l walltime=04:00:00,mem=62gb,nodes=1:ppn=12
 # #PBS -N loeo_predictions_fr
 # #PBS -N lolo_predictions_fr
-#PBS -N cv_env_predictions_fr
+#PBS -N cv_7525_predictions_fr
 #PBS -M neyha001@umn.edu
 #PBS -m abe
 #PBS -r n
@@ -24,5 +24,5 @@ module load R/3.5.2_mkl
 
 
 ## 75-25 cross-validation
-Rscript environment_envCV_predictions2.R
+Rscript cross_validation_7525_predictions2.R
 
