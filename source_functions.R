@@ -2056,18 +2056,6 @@ run_apsim <- function(trial.info, met.dir, apsim.dir = dirname(apsim.base), apsi
 
 
 
-
-
-
-## Table of variables, nicknames, and units for HWSD
-hwsd_variables <- read.csv(file = "C:/GoogleDrive/BarleyLab/Breeding/EnvironmentalData/RawData/SoilData/HWSD/hwsd_variable_reference.csv", stringsAsFactors = FALSE)
-
-
-
-
-
-
-
 ## A function to query the HWSD database using latitude/longitude
 get_hwsd2 <- function(lat, long, gridsize, hwsd.raster, con) {
   

@@ -27,6 +27,13 @@ data_dir <- file.path(proj_dir, "Data")
 result_dir <- file.path(proj_dir, "Results")
 
 
+# Load variable csv
+## Table of variables, nicknames, and units for HWSD
+hwsd_variables <- read.csv(file = "C:/GoogleDrive/BarleyLab/Breeding/EnvironmentalData/RawData/SoilData/HWSD/hwsd_variable_reference.csv", stringsAsFactors = FALSE)
+
+
+
+
 
 ######
 # MSI Source starts here
