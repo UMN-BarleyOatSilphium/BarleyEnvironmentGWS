@@ -282,8 +282,141 @@ lolo_predictions_out <- data_train_test1 %>%
 lolo_longterm_covariates_predictions_out <- lolo_predictions_out
 
 
+
+# External validation -----------------------------------------------
+
+
+# Data to use
+data_to_model <- S2_MET_loc_BLUEs %>% 
+  filter(line_name %in% c(tp_geno, vp_geno),
+         trait %in% traits,
+         location %in% c(train_test_loc, validation_loc)) %>%
+  mutate(id = seq(nrow(.))) %>%
+  droplevels() %>%
+  mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno))) %>%
+  mutate_at(vars(location), as.factor) %>%
+  mutate(loc = location)
+
+
+# Generate skeleton train/test sets for validation
+loc_external_train_val <- data_to_model %>%
+  group_by(trait) %>%
+  mutate(site = loc) %>%
+  do({ tibble(train = list(resample(data = droplevels(.), idx = which(.$site %in% train_test_loc))),
+              test = list(resample(data = droplevels(.), idx = which(.$site %in% validation_loc)))) }) %>%
+  ungroup() %>%
+  mutate(train = map(train, ~filter(as.data.frame(.), line_name %in% tp_geno) %>% 
+                       mutate_at(vars(site), fct_contr_sum) %>%
+                       mutate(site1 = site)),
+         test = map(test, ~filter(as.data.frame(.), line_name %in% vp_geno) %>% 
+                      mutate_at(vars(site), fct_contr_sum) %>%
+                      mutate(site1 = site)) ) %>%
+  # Combine with the different covariate sets
+  left_join(., covariates_tomodel, by = "trait")
+
+## Assign cores and split
+loc_external_train_val1 <- loc_external_train_val %>%
+  assign_cores(df = ., n_core = 1, split = TRUE)
+
+
+
+## Don't parallelize
+loc_external_predictions_out <- loc_external_train_val1 %>%
+  coreApply(X = ., FUN = function(core_df) {
+    
+    ## Output list
+    out <- vector("list", nrow(core_df))
+    
+    for (i in seq_along(out)) {
+      
+      row <- core_df[i,]
+      # Get covariates
+      covariates_row <- row$model_covariates[[1]]
+
+      # Record the number of sites and observations used for training
+      train_n <- summarize(row$train[[1]], nSite = n_distinct(site), nObs = n())
+      
+      ##############
+      ##############
+      
+      ## Relationships for E and GxE
+      # Subset models
+      models_run <- lapply(X = model.list, "[", c("model2_cov", "model3_cov"))
+      # Get covariates
+      covariates_use <- covariates_row %>%
+        spread(model, covariates) %>%
+        mutate(out = list(NULL))
+      
+      # Iterate over rows
+      for (r in seq_len(nrow(covariates_use))) {
+        
+        # List of covariates
+        covariate_list <- tibble(term = unique(unlist(covariates_use[r, c("model4", "model5")]))) %>% 
+          mutate(class = ifelse(str_detect(term, ":"), "interaction", "main"),
+                 covariate = str_remove(term, "line_name:")) %>%
+          split(.$class) %>% 
+          map("covariate")
+        
+        # Get the timeframe to use
+        time_frame_use <- covariates_use$time_frame[r]
+        
+        # Create a matrix of scaled and centered covariates
+        covariate_mat <- loc_ec_tomodel_scaled %>%
+          filter(time_frame == time_frame_use,
+                 location %in% levels(row$train[[1]]$site1)) %>%
+          select(., location, unique(unlist(covariate_list))) %>%
+          as.data.frame() %>%
+          column_to_rownames("location") %>%
+          as.matrix()
+        
+        ## Environmental relationship matrices
+        Emain <- Env_mat(x = covariate_mat[,covariate_list$main, drop = FALSE], method = "Jarq")
+        if (is.null(covariate_list$interaction)) {
+          Eint <- diag(ncol(Emain)); dimnames(Eint) <- dimnames(Emain)
+        } else {
+          Eint <- Env_mat(x = covariate_mat[,covariate_list$int, drop = FALSE], method = "Jarq")
+        }
+        
+        # run predictions
+        prediction_out_cov <- genomewide_prediction2(x = row, model.list = models_run, K = K, E = Emain, KE = Eint)
+        
+        # Add to df
+        covariates_use$out[[r]] <- prediction_out_cov$prediction_out
+        
+      }
+      
+      prediction_out_cov <- unnest(covariates_use, out)
+      
+      
+      
+      ###################
+      
+      ###################
+      
+      ## Combine and return the predictions
+      out[[i]] <- mutate(prediction_out_cov, train_n = list(train_n)) %>% unnest(train_n)
+      
+      
+      ## Notify user
+      cat("\nPredictions for trait", row$trait, "complete.")
+      
+    } # Close loop
+    
+    ## Add results to the core_df
+    mutate(core_df, out = out)
+    
+  }) %>% bind_rows()
+
+# Rename
+loc_external_longterm_covariates_predictions_out <- loc_external_predictions_out
+
+
+
+
+
 ## Save the results
-save("lolo_longterm_covariates_predictions_out", file = file.path(result_dir, "lolo_longterm_covariates_predictions_fact_reg.RData"))
+save("lolo_longterm_covariates_predictions_out", "loc_external_longterm_covariates_predictions_out",
+     file = file.path(result_dir, "lolo_longterm_covariates_predictions_fact_reg.RData"))
 
 
 

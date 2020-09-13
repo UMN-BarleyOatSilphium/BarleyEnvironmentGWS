@@ -1348,58 +1348,6 @@ Env_mat <- function(x, method = c("Jarquin2014", "Malosetti2016", "Rincent2019")
 }
 
 
-
-
-# ### A function to perform forward stepwise regression
-# ### while consider VIF
-# step_fwd <- function(object, scope, vif.cutoff = 2) {
-#   
-#   # New vif function
-#   vif1 <- function(object) {
-#     if (length(attr(terms(formula(object)), "term.labels")) < 2) {
-#       0
-#     } else {
-#       vif(object)
-#     }}
-#     
-#   
-#   ## Copy items
-#   objecti <- object
-#   add <- TRUE
-#   
-#   while(add) {
-#   
-#     # Perform the initial add1
-#     add1_i <- add1(object = objecti, scope = scope)
-#     add1_i_df <- as.data.frame(add1_i)
-#     
-#     ## Calculate vif for each of those add1 models
-#     add1_models <- str_subset(string = row.names(add1_i), pattern = "none", negate = TRUE) %>% 
-#       map(~update(objecti, formula = add_predictors(f = formula(objecti), reformulate(.))))
-#     add1_vif <- map(add1_models, vif1)
-#     
-#     # Determine if there are any VIF > cutoff
-#     any_large_vif <- map_lgl(add1_vif, ~any(. > vif.cutoff))
-#     # Add this to thhe add1
-#     add1_i_df$vif <- c(FALSE, any_large_vif)
-#     
-#     # Determine the regressor that minimizes AIC without introducting inflated vif
-#     to_add <- row.names(add1_i)[which.min(subset(add1_i_df, !vif, AIC, drop = TRUE))]
-#   
-#     if (length(to_add) == 0 | to_add == "<none>") {
-#       add <- FALSE
-#       
-#     } else {
-#       # Add that regressor to the model
-#       objecti_temp <- update(objecti, formula = add_predictors(f = formula(objecti), reformulate(to_add)))
-#       objecti <- objecti_temp
-# 
-#     }
-#     
-#   }
-#   
-#   
-# }
   
 
 
@@ -1409,273 +1357,6 @@ make_dist_mat <- function(x) {
   1 - (d1 / max(d1))
 }
 
-
-
-    
-
-## The main prediction function for CV ##
-# 
-# x is a row with training and testing df
-# 
-# Other objects should be in the global environment:
-# ec_model_building
-# ec_model_scaled
-# K
-# model_fixed_forms
-# model_rand_forms
-# 
-# 
-# 
-# 
-genomewide_prediction <- function(x) {
-  
-  # Get training and test data
-  row <- x
-  tr <- unique(row$trait)
-  
-  # train <- droplevels(subset(data_to_model, id %in% row$train[[1]]$id)) %>%
-  #   mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno)))
-  # test <- subset(data_to_model, id %in% row$test[[1]]$id) %>%
-  #   select(environment, line_name, value)
-  
-  ## Different subsetting method
-  train <- row$train[[1]]
-  test <- row$test[[1]]
-  
-  # Record the number of environment and observations used for training
-  train_n <- summarize(train, nEnv = n_distinct(environment), nObs = n())
-  
-  
-  # ## Get the covariate model and extract the formula
-  # ec_model_form <- ec_model_building %>% 
-  #   unnest(final_model) %>%
-  #   subset(trait == row$trait & model == "model3_ammi", object, drop = TRUE) %>%
-  #   # It's a list, so take the first element
-  #   first() %>%
-  #   formula()
-  # 
-  # # main_environment_covariates
-  # main_environment_covariates <- all.vars(ec_model_form) %>% 
-  #   subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|", negate = T), 
-  #                                        pattern = .))))
-  # 
-  # # interaction_environment_covariates
-  # interaction_environment_covariates <- all.vars(ec_model_form) %>% 
-  #   subset(., map_lgl(., ~any(str_detect(string = str_subset(string = attr(terms(ec_model_form), "term.labels"), pattern = "\\|"), 
-  #                                        pattern = .)))) %>% setdiff(., "line_name")
-  # 
-  # ## Subset covariates into a df
-  # ec_df <- ec_tomodel_scaled %>%
-  #   # Select environment and the relevant covariates
-  #   select(env = environment, union(main_environment_covariates, interaction_environment_covariates)) %>%
-  #   filter(env %in% levels(train$env)) %>%
-  #   as.data.frame() %>%
-  #   column_to_rownames("env")
-  # 
-  
-  
-  # ## Create a list of model formulas
-  # model_fixed_forms <- formulas(
-  #   .response = ~ value, 
-  #   model1 = ~ 1,
-  #   model2 = model1,
-  #   # model2a = add_predictors(model2, ~ env),
-  #   # model2b = reformulate(c("1", main_environment_covariates)),
-  #   model3 = model2,
-  #   # model3a = model2a,
-  #   # model3b = model2b
-  #   model4 = model1,
-  #   model5 = model4,
-  #   model2_P = model2,
-  #   model3_P = model3,
-  #   model4_P = model4,
-  #   model5_P = model5,
-  #   model3_GxE = model3,
-  #   model5_GxL = model5
-  # )
-  
-  
-  ## Models for de novo fitting 
-  ## Create a list of model formulas
-  model_rand_forms <- formulas(
-    .response = ~ value,
-    model1 = ~ vs(line_name, Gu = K),
-    model2 = add_predictors(model1, ~ vs(env, Gu = E)),
-    # model2a = model1,
-    # model2b = model1,
-    model3 = add_predictors(model2, ~ vs(line_name:env1, Gu = GE)),
-    # model3a = add_predictors(model1, ~ vs(line_name:env1, Gu = GE)),
-    # model3b = model3a
-    model4 = add_predictors(model1, ~vs(loc, Gu = L)),
-    model5 = add_predictors(model4, ~vs(line_name:loc, Gu = GL)),
-    # Modified models
-    model2_P = add_predictors(model1, ~ vs(env, Gu = E_IPC)),
-    model3_P = add_predictors(model2, ~ vs(line_name:env1, Gu = GE_IPC)),
-    model4_P = add_predictors(model1, ~vs(loc, Gu = L_IPC)),
-    model5_P = add_predictors(model4, ~vs(line_name:loc, Gu = GL_IPC)),
-    model3_GxE = add_predictors(model2, ~ vs(line_name:env1, Gu = GxE)),
-    model5_GxL = add_predictors(model4, ~vs(line_name:loc, Gu = GxL))
-  ) %>% map(~ formula(delete.response(terms(.)))) # Remove response
-  
-  # Residual formula
-  resid_form <- ~ vs(units)
-  
-  
-  
-  ## Create relationship matrices
-  K <- K # Genomic
-  # E <- Env_mat(x = ec_df[,main_environment_covariates, drop = FALSE], method = "Rincent2019")
-  E <- subset(environmental_relmat_df, trait == tr & term == "main", EC, drop = TRUE)[[1]]
-  L <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use & term == "main", EC, drop = TRUE)[[1]]
-  
-  GE <- subset(environmental_relmat_df, trait == tr & term == "int", EC, drop = TRUE)[[1]] %>%
-    kronecker(X = K, Y = ., make.dimnames = TRUE)
-  GL <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use & term == "int", EC, drop = TRUE)[[1]] %>%
-    kronecker(X = K, Y = ., make.dimnames = TRUE)
-  
-  GxE <- kronecker(X = K, Y = E, make.dimnames = TRUE)
-  GxL <- kronecker(X = K, Y = L, make.dimnames = TRUE)
-  
-  
-  ## AMMI covariance matrices
-  E_IPC <- subset(environmental_relmat_df, trait == tr & term == "main", K, drop = TRUE)[[1]]
-  L_IPC <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use & term == "int", K, drop = TRUE)[[1]]
-  
-  GE_IPC <- subset(environmental_relmat_df, trait == tr & term == "int", K, drop = TRUE)[[1]] %>%
-    kronecker(X = K, Y = ., make.dimnames = TRUE)
-  GL_IPC <- subset(location_relmat_df, trait == tr & time_frame == time_frame_use & term == "int", K, drop = TRUE)[[1]] %>%
-    kronecker(X = K, Y = ., make.dimnames = TRUE)
-  
-  ## Define an expression that fits the model
-  fit_mmer_exp <- expression({
-    model_fit <- mmer(fixed = fixed_form, random = rand_form, rcov = resid_form,
-                      data = train, date.warning = FALSE, verbose = TRUE)
-  })
-  
-  
-  
-  #################
-  ## Fit models and extract predictions
-  #################
-  
-  prediction_out <- tibble(trait = tr, model = names(model_rand_forms)) %>%
-    mutate(prediction = list(NULL))
-  
-  # Test df to merge
-  test_merge <- select(test, line_name, env, loc = location, year, value) %>%
-    mutate_if(is.factor, as.character)
-  
-  # Iterate over models
-  for (m in seq(nrow(prediction_out))) {
-    
-    # Model name and formulas
-    mod <- prediction_out$model[m]
-    # fixed_form <- model_fixed_forms[[mod]]
-    fixed_form <- value ~ 1
-    rand_form <- model_rand_forms[[mod]]
-    
-    # ## Get the variance components from the full model
-    # full_varcomp <- subset(prediction_out, model == mod, sigma, drop = T)[[1]]
-    # # Assign values to separate objects
-    # varG <- full_varcomp$`u:line_name`
-    # varE <- full_varcomp$`u:env`
-    # varGE <- full_varcomp$`u:;line_name:env`
-    # varR <- full_varcomp$units
-    
-    # Use rrBLUP to fit model1
-    if (mod == "model1") {
-      
-      model_fit <- kin.blup(data = as.data.frame(train), geno = "line_name", pheno = "value", K = K)
-      
-      # Fixed effects
-      fixed_eff <- matrix(data = (model_fit$pred - model_fit$g)[1], nrow = 1, ncol = 1,
-                          dimnames = list("(Intercept)", "estimate"))
-      
-      ## Random effects
-      rand_eff <- list(`u:line_name` = c(model_fit$g))
-      
-      
-    
-    } else {
-      
-      ## Try to fit the model; capture the output
-      model_stdout <- capture.output( eval(fit_mmer_exp) )
-      
-      # If model fit is empty, try using a smaller number of iterations; for instance find
-      # the maximum logLik and use those iterations
-      itry <- 1
-      while (is_empty(model_fit) & itry == 1) {
-        
-        # Find the number of iterations that maximized the logLik
-        best_iter <- model_stdout %>% 
-          subset(., str_detect(., "singular", negate = T)) %>% 
-          read_table(.) %>%
-          subset(., LogLik == max(LogLik), iteration, drop = TRUE)
-        
-        # Refit
-        eval(fit_mmer_exp)
-        
-        # Increase the counter
-        itry = itry + 1
-        
-      }
-      
-      # If the model is still empty, create empty fixed and random effects
-      if (is_empty(model_fit)) {
-        fixed_eff <- matrix(as.numeric(NA), nrow = 1, ncol = 1, dimnames = list("(Intercept)", "estimate"))
-        
-        rand_eff <- list("u:line_name" = set_names(x = rep(NA, nlevels(test$line_name)), nm = levels(test$line_name)))
-        
-      } else {
-        
-        ## Fixed effects
-        fixed_eff <- coef(model_fit) %>%
-          select(term = Effect, estimate = Estimate) %>%
-          column_to_rownames("term") %>%
-          as.matrix()
-        
-        ## Random effects
-        rand_eff <- map(randef(model_fit), "value")
-        
-      }
-
-    }
-      
-      
-    ## Vector of new column names for separation, if necessary
-    separation_col_names <- str_extract(string = attr(terms(rand_form), "term.labels"), pattern = "[a-z_]{1,}:[a-z]{1,}") %>% 
-      str_subset(., ":") %>% 
-      str_split(., ":") %>% 
-      unlist()
-      
-    ## Create an X matrix for test
-    Xtest <- model.matrix(fixed_form, test)[,row.names(fixed_eff), drop = FALSE] # This seems to work
-    # Calculate fixed effects by the formula Xb
-    fixed_pred <- Xtest %*% fixed_eff
-    
-    
-    ## Convert to a complete data.frame
-    rand_eff_df <- rand_eff %>% 
-      map(~tibble(term = names(.), pred = .x)) %>% 
-      imap(~`names<-`(.x, c(str_remove_all(.y, "u:|[0-9]"), paste0("pred", .y)))) %>% 
-      modify_if(~str_detect(names(.x)[1], ":"), 
-                ~separate(.x, col = 1, into = separation_col_names, sep = ":")) %>% 
-      .[order(map_dbl(., ncol), decreasing = T)] %>% 
-      map(~left_join(test_merge, .x)) %>%
-      reduce(full_join) %>% 
-      mutate(pred_incomplete = rowSums(select(., contains("pred")))) %>% 
-      select(-contains(":"))
-    
-    # Add predictions to the list
-    prediction_out$prediction[[m]] <- mutate(rand_eff_df, pred_complete = pred_incomplete + c(fixed_pred))
-    
-  }
-  
-  # Return predictions
-  return(list(prediction_out = prediction_out, train_n = train_n))
-  
-  
-}
 
 
 ## Different version of prediction function
@@ -1951,5 +1632,573 @@ cv <- function(x, na.rm = FALSE) sd(x = x, na.rm = na.rm) / mean(x = x, na.rm = 
 
 # First define a function to calculate bias
 bias <- function(obs, pred) (mean(pred) - mean(obs)) / mean(obs)
+
+
+
+
+## EnvironmentalData functions
+## 
+## 
+
+## A function to query weather variables (daily)
+## trial.info must have columns: trial, year, latitude, longitude
+## parameters must match those in the parameters list
+## Regardless of choice, the following parameters are also queried: c("TS_MIN", "TS_MAX", "ALLSKY_SFC_SW_DWN", "PRECTOT")
+## 
+## ## Testing data
+# trial.info <- read_csv("C:/GoogleDrive/BarleyLab/Breeding/PhenotypicData/Metadata/trial_metadata.csv") %>%
+#    mutate_at(vars(contains("date")), ymd) %>%
+#    filter(project2 == "S2MET") %>%
+#    sample_n(., 10)
+#    
+get_weather_data <- function(trial.info, pars = NULL, site = c("nasapower", "daymet")) {
+  
+  ## libraries
+  require(nasapower)
+  require(stringr)
+  require(tibble)
+  require(daymetr)
+  
+  # Stop if trial.info is not a data.frame
+  stopifnot(is.data.frame(trial.info))
+  
+  site <- match.arg(site)
+  
+  # Make sure trial.info has correct columns
+  needed_cols <- c("trial", "year", "latitude", "longitude")
+  if (!all(needed_cols %in% names(trial.info))) 
+    stop(paste0("The 'trial.info' data.frame does not have the required columns: ", paste0(needed_cols, collapse = ", ")))
+  
+  
+  # Control flow based on site
+  if (site == "nasapower") {
+    
+    # Stop if pars is not a character
+    stopifnot(is.character(pars))
+    
+    # Check pars against the parameters dataframe
+    if (!all(pars %in% names(parameters))) stop("Parameters in 'pars' don't match those available from nasapower.")
+    
+    ## Add the needed pars to the parameters list
+    # Rename for .met file
+    needed_pars <- c("mint" = "TS_MIN", "maxt" = "TS_MAX", "radn" = "ALLSKY_SFC_SW_DWN", "rain" = "PRECTOT")
+    # Add names for the parameters (default is to lower)
+    pars1 <- setNames(pars, tolower(pars))
+    
+    ## Intersect
+    pars2 <- union(needed_pars, pars1)
+    names(pars2)[needed_pars %in% pars2] <- names(needed_pars)[needed_pars %in% pars2]
+    names(pars2)[pars2 %in% setdiff(pars2, needed_pars)] <- names(pars1)[pars1 %in% setdiff(pars2, needed_pars)]
+    
+    # Separate renaming vector (with date)
+    pars2_rename <- c("date" = "YYYYMMDD", pars2)
+    
+    
+    ## Iterate over trials
+    output <- vector("list", length = nrow(trial.info))
+    
+    # Loop
+    for (i in seq_along(output)) {
+      
+      # Get the name of the trial
+      trial_name <- trial.info[["trial"]][i]
+      # Print a message
+      cat("\nRetrieving weather data for trial: ", trial_name)
+      
+      # Get the year
+      trial_year <- trial.info[["year"]][i]
+      ## Create dates using this year
+      dates <- paste0(trial_year, c("-01-01", "-12-31"))
+      
+      # Get lat/long
+      lonlat <- unlist(trial.info[i,c("longitude", "latitude")])
+      
+      ## Pull data
+      data_out <- get_power(community = "AG", pars = pars2, temporal_average = "DAILY", lonlat = lonlat, dates = dates)
+      
+      
+      ## Get relevant data and rename
+      data_out1 <- as.data.frame(data_out)[pars2_rename]
+      names(data_out1) <- names(pars2_rename)
+      
+      # Remove missing values
+      data_out1[data_out1 == -99] <- NA
+      
+      
+      # Extract elevation
+      elevation <- as.numeric(str_remove(string = str_extract(string = attr(data_out, "POWER.Elevation"), pattern = "[0-9]*.[0-9]* meters"), pattern = " meters"))
+      
+      ## Output a list
+      output[[i]] <- list(elevation = elevation, data = data_out1)
+      
+    }
+    
+  } else if (site == "daymet") {
+    
+    ## Pars is ignored here; send warning
+    warning("The input 'pars' is ignored when querying daymet.")
+    
+    ## Iterate over trials
+    output <- vector("list", length = nrow(trial.info))
+    
+    # Loop
+    for (i in seq_along(output)) {
+      
+      # Get the name of the trial
+      trial_name <- trial.info[["trial"]][i]
+      # Print a message
+      cat("\nRetrieving weather data for trial: ", trial_name)
+      
+      # Get the year
+      trial_year <- trial.info[["year"]][i]
+      
+      # Get lat/long
+      lat <- trial.info$latitude[i]
+      lon <- trial.info$longitude[i]
+      
+      ## Pull data
+      data_out <- download_daymet(lat = lat, lon = lon, start = trial_year, end = trial_year, internal = TRUE,
+                                  silent = TRUE)
+      
+      ## Get relevant data and rename
+      data_out1 <- data_out$data
+      names(data_out1) <- c("year", "yday", "daylength_sec", "prcp", "srad", "swe", "tmax", "tmin", "vp")
+      
+      # Convert units
+      # srad to daily total radiation
+      data_out1$radn <- (data_out1$srad * data_out1$daylength_sec) / 1000000
+      # Daylength to hours
+      data_out1$daylength <- data_out1$daylength_sec / 3600
+      
+      # Remove some variables
+      data_out2 <- data_out1[,-which(names(data_out1) %in% c("daylength_sec", "srad"))]
+      
+      # Extract elevation
+      elevation <- data_out$altitude
+      
+      ## Output a list
+      output[[i]] <- list(elevation = elevation, data = data_out2)
+      
+    }
+    
+  }
+  
+  
+  
+  ## Add elevation to the df
+  trial.info$elevation <- sapply(X = output, FUN = "[[", "elevation")
+  
+  ## Convert to tibble
+  trial_info <- as_tibble(trial.info)
+  
+  ## Add the list of results
+  trial_info$data <- lapply(X = output, FUN = "[[", "data")
+  # Return the df
+  return(trial_info)
+  
+}
+
+
+
+## A function to create .MET files using the output of the 
+## get_weather_data function
+## 
+## The default column for the data is "data"
+## The default saving directing is the current directory
+## The default saving name is trial_name.met
+## 
+## 
+create_MET <- function(trial.info, data.col = "data", dir = ".") {
+  
+  ## libraries
+  require(APSIM)
+  require(lubridate)
+  
+  # Stop if trial.info is not a data.frame
+  stopifnot(is.data.frame(trial.info))
+  # Stop if data.col is not a character
+  stopifnot(is.character(data.col))
+  # Make sure the directory exists
+  stopifnot(dir.exists(dir))
+  
+  # Make sure trial.info has correct columns
+  needed_cols <- c("trial", "latitude", "longitude", data.col)
+  if (!all(needed_cols %in% names(trial.info))) 
+    stop(paste0("The 'trial.info' data.frame does not have the required columns: ", paste0(needed_cols, collapse = ", ")))
+  
+  # Units
+  met_units <- c("(oC)", "(oC)", "(MJ/m^2/day)", "(mm)", "()", "()")
+  
+  # Loop
+  for (i in seq(nrow(trial.info))) {
+    
+    # Get the name of the trial
+    trial_name <- trial.info[["trial"]][i]
+    # Create export name
+    filename <- file.path(dir, paste0(trial_name, ".met"))
+    
+    # Get lat/long
+    lonlat <- unlist(trial.info[i,c("longitude", "latitude")])
+    
+    
+    ## Re-order the data.frame
+    trial_data_tosave <- trial.info[[data.col]][[i]]
+    ## Extract year and doy from the date
+    trial_data_tosave$year <- year(ymd(trial_data_tosave[["date"]]))
+    trial_data_tosave$day <- yday(ymd(trial_data_tosave[["date"]]))
+    
+    trial_data_tosave1 <- trial_data_tosave[c("maxt", "mint", "radn", "rain", "year", "day")]
+    
+    ## Prepare a met and then export it
+    invisible(capture.output(met_to_save <- prepareMet(data = trial_data_tosave1, lat = lonlat[2], lon = lonlat[1], units = met_units)))  
+    writeMetFile(fileName = filename, met = met_to_save)
+    
+  } # Close loop
+  
+} # Close function
+
+
+
+## A function to read in the output of APSIM 
+apsim2 <- function(files, apsim.exe, apsim.dir) {
+  
+  ## Correct the exe file
+  apsim.exe1 <- apsimr:::addCommas(apsim.exe)
+  
+  # Check if files is correct
+  stopifnot(all(grepl(pattern = "apsim$", x = files)))
+  
+  fileNames <- c(dir(path = apsim.dir, pattern = ".apsim$", ignore.case = TRUE), 
+                 dir(path = apsim.dir, pattern = ".apsimx$", ignore.case = TRUE))
+  
+  files <- match.arg(files, fileNames, several.ok = TRUE)
+  # Add full directory name
+  files1 <- file.path(apsim.dir, files)
+  nFiles <- length(files1)
+  
+  # List for output file names
+  output_file_list <- list()
+  
+  for (i in 1:nFiles) {
+    res <- suppressWarnings(system(paste(apsim.exe1, apsimr:::addCommas(files1[i]), sep = " "), show.output.on.console = FALSE))
+    
+    if (res != 0) {
+      stop("An error occured when trying to run APSIM.  Please check your arguments again, especially the path to APSIM.exe.")
+    }
+    
+    # Parse the xml
+    xml_parse <- xmlParse(file = files1[i])
+    
+    ## Get the output file prefix
+    # First check for factorials
+    check_factorials <- length(xml_parse["//factorial"]) > 0
+    out_xml <- xml_parse["//outputfile"]
+    output_file_base <- xmlValue(out_xml[[1]]["filename"][[1]])
+    
+    # If no factorials, use the output name in the xml parse
+    if (!check_factorials) {
+      output_file_list[[i]] <- file.path(apsim.dir, output_file_base)
+      
+    } else {
+      # Search for files using the output file prefix
+      output_prefix <- gsub(pattern = ".out", replacement = "", x = output_file_base)
+      base_file_list <- grep(pattern = ".out$", x = list.files(path = apsim.dir, pattern = paste0(output_prefix, ";")), 
+                             value = TRUE)
+      output_file_list[[i]] <- file.path(apsim.dir, base_file_list)
+      
+    }
+    
+  }
+  
+  ## Unlist the output file list
+  out_files <- unlist(output_file_list)
+  
+  # Iterate over the output files and read them in
+  n_out_files <- length(out_files)
+  results <- vector("list", n_out_files)
+  for (i in 1:n_out_files) {
+    skipline <- 1
+    res <- try(read.table(out_files[i], skip = skipline, 
+                          header = T), TRUE)
+    while (class(res) == "try-error" & skipline < 50) {
+      skipline <- skipline + 1
+      res <- try(read.table(out_files[i], skip = skipline, 
+                            header = T), TRUE)
+    }
+    if (skipline < 50) {
+      res <- res[-1, ]
+      res_col_names <- colnames(res)
+      if ("Date" %in% res_col_names) {
+        res$Date <- dmy(res$Date)
+        res_col_names <- res_col_names[-which(res_col_names == 
+                                                "Date")]
+      }
+      for (j in res_col_names) {
+        res[, which(colnames(res) == j)] <- as.numeric(as.character(res[, 
+                                                                        which(colnames(res) == j)]))
+      }
+      class(res) <- c("apsim", "data.frame")
+      results[[i]] <- res
+    }
+    else {
+      warning(paste0("The file \"", out_files[i], "\" could not be read properly.  Please check it exists and is nonempty."))
+    }
+  }
+  
+  names(results) <- basename(gsub(".out$", "", out_files))
+  # Return
+  return(results)
+  
+}
+
+
+
+## 
+## A function to run an APSIM model for multiple trials and collect the output
+## 
+## ## Arguments
+## trial.info contains information about each trial
+## met.dir is a directory that contains the .met files (this will also be where  the modified apsim files are copied (eventually removed))
+## apsim.dir is a directory where the .apsim should be placed
+## apsim.base is a pre-formatted .apsim file to modify
+## apsim.exe is the executable file to run the apsim function
+## 
+# # Example
+# met.dir <- "C:/GoogleDrive/PostDocGEMS/Projects/SupportingAnalyses/CropGrowthModels/APSIM/testing/apsimr/"
+# apsim.base <- "C:/GoogleDrive/PostDocGEMS/Projects/SupportingAnalyses/CropGrowthModels/APSIM/testing/apsimr/barley1.apsim"
+# apsim.exe <- "C:/Program Files (x86)/Apsim79-r4044/Model/Apsim.exe"
+## 
+## 
+run_apsim <- function(trial.info, met.dir, apsim.dir = dirname(apsim.base), apsim.base, apsim.exe) {
+  
+  ## libraries
+  require(apsimr)
+  require(stringr)
+  require(lubridate)
+  require(tibble)
+  
+  # Stop if trial.info is not a data.frame
+  stopifnot(is.data.frame(trial.info))
+  # Make sure the directories exists
+  stopifnot(dir.exists(met.dir))
+  stopifnot(dir.exists(apsim.dir))
+  
+  # Make sure the apsim.base exists
+  stopifnot(file.exists(apsim.base))
+  
+  # Make sure trial.info has correct columns
+  needed_cols <- c("trial", "planting_date")
+  if (!all(needed_cols %in% names(trial.info))) 
+    stop(paste0("The 'trial.info' data.frame does not have the required columns: ", paste0(needed_cols, collapse = ", ")))
+  
+  # Create an output list
+  output <- vector("list", length = nrow(trial.info))
+  
+  ## Loop over the trials
+  for (i in seq(nrow(trial.info))) {
+    
+    # Get the name of the trial
+    trial_name <- trial.info[["trial"]][i]
+    # Print a message
+    cat("\nRunning a crop growth model for trial: ", trial_name)
+    
+    # Planting date
+    pd <- trial.info[["planting_date"]][i]
+    
+    # Create the met filename
+    met_filename <- file.path(met.dir, paste0(trial_name, ".met"))
+    
+    # Make sure the met file exists
+    if (!file.exists(met_filename)) stop("The met file for trial ", trial_name, " does not exist.")
+    
+    # Create the name for the new apsim file
+    apsim.i <- file.path(apsim.dir, str_replace(string = basename(apsim.base), pattern = ".apsim", paste0("_", trial_name, ".apsim")))
+    # Copy the base apsim to this new file
+    invisible(file.copy(from = apsim.base, to = apsim.i, overwrite = TRUE))
+    
+    ## Convert planting date to dd-mmm
+    pd_apsim <- paste0(str_pad(string = day(pd), width = 2, side = "left", pad = 0), "-", 
+                       tolower(month(pd, abbr = TRUE, label = TRUE)))
+    
+    
+    ## List of edits to the APSIM file
+    edits <- list(
+      "clock/start_date" = paste0("01/01/", year(pd)),
+      "clock/end_date" = paste0("31/12/", year(pd)),
+      "metfile/filename" = met_filename,
+      "date1" = pd_apsim,
+      "date2" = pd_apsim
+    )
+    
+    ## Edit the apsim file and run
+    invisible(edit_apsim(file = basename(apsim.i), wd = apsim.dir, var = names(edits), value = edits, overwrite = TRUE))
+    # apsim_out <- apsim(exe = apsim.exe, wd = apsim.dir, files = basename(apsim.i))
+    apsim_out <- apsim2(files = basename(apsim.i), apsim.exe = apsim.exe, apsim.dir = apsim.dir)
+    
+    # Rename and add to the output list
+    names(apsim_out) <- tolower(names(apsim_out))
+    output[[i]] <- apsim_out
+    
+  } # close loop
+  
+  ## Convert trial.info to tibble
+  trial_info <- as_tibble(trial.info)
+  # Add output to df
+  trial_info$apsim_out <- output
+  
+  # Return the df
+  return(trial_info)
+  
+} # Close function
+
+
+
+
+
+
+
+
+
+## Table of variables, nicknames, and units for HWSD
+hwsd_variables <- read.csv(file = "C:/GoogleDrive/BarleyLab/Breeding/EnvironmentalData/RawData/SoilData/HWSD/hwsd_variable_reference.csv", stringsAsFactors = FALSE)
+
+
+
+
+
+
+
+## A function to query the HWSD database using latitude/longitude
+get_hwsd2 <- function(lat, long, gridsize, hwsd.raster, con) {
+  
+  require(raster)
+  
+  # Error check
+  stopifnot(class(hwsd.raster) == "RasterLayer")
+  stopifnot(class(con) == "SQLiteConnection")
+  
+  
+  # Create a box
+  box <- c(long, long, lat, lat) + gridsize/2 * c(-1, 1, -1, 1)
+  names(box) <- c("lon", "lon", "lat", "lat")
+  
+  # Trim the raster
+  hwsd_crop <- crop(hwsd.raster, extent(box))
+  
+  # Place a temporary table in the connection
+  dbWriteTable(con, name = "WINDOW_TMP", value = data.frame(smu_id = raster::unique(hwsd_crop)), overwrite = TRUE)
+  # Query the database
+  result <- dbGetQuery(con, "select T.* from HWSD_DATA as T join\nWINDOW_TMP as U on T.mu_global=u.smu_id order by su_sym90")
+  # Remove the temporary table
+  dbRemoveTable(con, "WINDOW_TMP")
+  
+  ## Return the results
+  return(result)
+  
+}
+
+
+
+## 
+## A function to query soil data from the HWSD (harmonized world soil database)
+## 
+## Unit information can be found here: http://www.fao.org/fileadmin/templates/nr/documents/HWSD/HWSD_Documentation.pdf
+## 
+## 
+get_soil_data <- function(trial.info, gridsize = 0.01, hwsd.bil) {
+  
+  require(rhwsd)
+  require(dplyr)
+  require(purrr)
+  require(readr)
+  require(tidyr)
+  
+  # Error check
+  stopifnot(is.data.frame(trial.info))
+  # Make sure the file exists
+  stopifnot(file.exists(hwsd.bil))
+  
+  ## Get the hwsd raster
+  hwsd <- get.hwsd.raster(hwsd.bil = hwsd.bil, download = FALSE)
+  # Establish a conection to the hwsd sql database
+  con <- get.hwsd.con()
+  
+  ## Iterate over trial.info and get data
+  soil_data_out <- list(NULL)
+  
+  for (i in seq_len(nrow(trial.info))) {
+    lat <- trial.info$latitude[i]
+    long <- trial.info$longitude[i]
+    
+    soil_data_out[[i]] <- get_hwsd2(lat = lat, long = long, gridsize = gridsize, hwsd.raster = hwsd, con = con)
+    
+  }
+  
+  ## Recode some qualitative variables
+  # First combine the list
+  soil_data_out2 <- soil_data_out1 <- map2_dfr(.x = soil_data_out, .y = trial.info$trial, ~mutate(.x, trial = .y))
+  
+  # List the tables with codes
+  code_table_names <- grep(pattern = "^D_", x = dbListTables(con), value = TRUE)
+  # Edit
+  code_table_names1 <- gsub(pattern = "^D_", replacement = "", x = code_table_names)
+  # Find the corresponding column number in soil_data_out1
+  code_table_names2 <- setNames(object = c(23, 17, 0, 15, 21, 5, 18, 20, 22, 0, 0, 0, 0, 14, 28),
+                                nm = code_table_names1)
+  # Remove 0s
+  code_table_names_use <- code_table_names2[code_table_names2 != 0]
+  
+  ## Edit these values in the df
+  soil_data_recode <- mapply(soil_data_out1[code_table_names_use], code_table_names[code_table_names2 != 0], 
+                             FUN = function(.x, .y) {
+                               # Get the lookup table
+                               lookup <- as_tibble(tbl(con, .y))
+                               # Convert values and return
+                               lookup$VALUE[match(x = .x, table = lookup$CODE)]
+                             }, SIMPLIFY = FALSE)
+  for (i in seq_along(soil_data_recode)) soil_data_out2[[code_table_names_use[i]]] <- soil_data_recode[[i]]
+  
+  # Parse guess
+  soil_data_out3 <- mutate_if(soil_data_out2, is.character, parse_guess)
+  
+  # Rename columns
+  soil_data_out4 <- rename_at(soil_data_out3, vars(-trial), ~hwsd_variables$variable[match(x = ., table = hwsd_variables$field)])
+  
+  
+  ## Disconnect
+  dbDisconnect(con)
+  
+  ## Nest this data within trial info
+  bind_cols(trial.info, nest(group_by(soil_data_out4, trial), .key = "soil_data"))
+  
+  
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

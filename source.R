@@ -203,5 +203,18 @@ f_growth_stage_replace <- function(x)
 rm(s2_discrete_mat, s2_metadata, s2_imputed_mat, s2_tidy_BLUE)
 
 
-
-
+# # Save relevant data in a single binary file
+# phenotype_data <- S2_MET_BLUEs
+# marker_data <- s2_imputed_mat_use
+# marker_metadata <- snp_info
+# phenotype_metadata <- trial_info
+# training_environments <- train_test_env
+# prediction_environments <- validation_env
+# 
+# save("phenotype_data", "phenotype_metadata", "marker_data", "marker_metadata",
+#      "training_environments", "prediction_environments",
+#      "trial_irrigation_data",
+#      file = "../../GEPredictionPipeline/data/example_data.RData")
+  
+  
+  

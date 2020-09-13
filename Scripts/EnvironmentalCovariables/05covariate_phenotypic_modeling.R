@@ -1,14 +1,11 @@
-## S2MET phenotypic modeling with covariates
+## S2MET Genomewide Environment Predictions
 ## 
-## Author: Jeff Neyhart
+## Phenotypic modeling with covariates
 ## 
-## This script will look at variable selection to determine optimal models that use
-## covariates
 ## 
 
 # Repository directory
 repo_dir <- getwd()
-
 # Source the main project script
 source(file.path(repo_dir, "source.R"))
 
@@ -177,7 +174,7 @@ concurrent_fact_reg_feature_selection <- concurrent_fact_reg %>%
 ## Wrap the feature selection within cross-validation to avoid selection
 ## bias
 ## 
-## Use lm with CV - implemented through recursive feature elimination
+## Use lm with CV - implemented through recursive feature addition
 ## 
 
 concurrent_feature_selection_list <- S2_MET_BLUEs_tomodel %>%
@@ -228,10 +225,8 @@ concurrent_all_features <- trait_covariate_df %>%
          covariates = map(covariates, ~list(optVariables = .)))
            
 
-
 ## Save
 
 save("concurrent_feature_selection",  "concurrent_fact_reg_feature_selection", "concurrent_all_features", 
      file = file.path(result_dir, "concurrent_feature_selection_results.RData"))
-
 
