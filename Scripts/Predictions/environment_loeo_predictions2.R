@@ -199,7 +199,7 @@ loeo_predictions_out <- data_train_test1 %>%
       dimnames(Eint) <- dimnames(Emain)
 
       # The genomewide prediction function is in the source_functions.R script
-      prediction_out_id <- genomewide_prediction2(x = row, model.list = models_run, K = K, E = Emain, KE = Eint)
+      prediction_out_id <- genomewide_prediction2(x = row, model.list = models_run, K = Kgeno, E = Emain, KE = Eint)
 
       ##############
       ##############
@@ -242,7 +242,7 @@ loeo_predictions_out <- data_train_test1 %>%
         }
         
         # run predictions
-        prediction_out_cov <- genomewide_prediction2(x = row, model.list = models_run, K = K, E = Emain, KE = Eint)
+        prediction_out_cov <- genomewide_prediction2(x = row, model.list = models_run, K = KKgeno, E = Emain, KE = Eint)
         
         # Add to df
         covariates_use$out[[r]] <- prediction_out_cov$prediction_out
@@ -388,7 +388,7 @@ env_external_predictions_out <- env_external_train_val1 %>%
       dimnames(Eint) <- dimnames(Emain)
 
       # The genomewide prediction function is in the source_functions.R script
-      prediction_out_id <- genomewide_prediction2(x = row, model.list = models_run, K = K, E = Emain, KE = Eint)
+      prediction_out_id <- genomewide_prediction2(x = row, model.list = models_run, K = Kgeno, E = Emain, KE = Eint)
 
       ##############
       ##############
@@ -431,7 +431,7 @@ env_external_predictions_out <- env_external_train_val1 %>%
         }
         
         # run predictions
-        prediction_out_cov <- genomewide_prediction2(x = row, model.list = models_run, K = K, E = Emain, KE = Eint)
+        prediction_out_cov <- genomewide_prediction2(x = row, model.list = models_run, K = Kgeno, E = Emain, KE = Eint)
         
         # Add to df
         covariates_use$out[[r]] <- prediction_out_cov$prediction_out

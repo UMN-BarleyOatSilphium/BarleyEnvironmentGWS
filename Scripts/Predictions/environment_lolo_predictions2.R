@@ -91,8 +91,7 @@ S2_MET_loc_BLUEs <- S2_MET_BLUEs %>%
   ungroup()
 
 ## Pull out location covariates to use
-loc_ec_tomodel_scaled <-  historical_ec_tomodel_timeframe_scaled %>%
-  bind_rows() %>%
+loc_ec_tomodel_scaled <- bind_rows(historical_ec_tomodel_timeframe_scaled, historical_ec_tomodel_window_scaled) %>%
   filter(source == source_use, time_frame %in% unique(time_frame_use_df$time_frame))
 
 # Leave-one-out -----------------------------------------------
@@ -208,7 +207,7 @@ lolo_predictions_out <- data_train_test1 %>%
       dimnames(Eint) <- dimnames(Emain)
       
       # The genomewide prediction function is in the source_functions.R script
-      prediction_out_id <- genomewide_prediction2(x = row, model.list = models_run, K = K, E = Emain, KE = Eint)
+      prediction_out_id <- genomewide_prediction2(x = row, model.list = models_run, K = Kgeno, E = Emain, KE = Eint)
       
       ##############
       ##############
@@ -249,7 +248,7 @@ lolo_predictions_out <- data_train_test1 %>%
         }
         
         # run predictions
-        prediction_out_cov <- genomewide_prediction2(x = row, model.list = models_run, K = K, E = Emain, KE = Eint)
+        prediction_out_cov <- genomewide_prediction2(x = row, model.list = models_run, K = Kgeno, E = Emain, KE = Eint)
         
         # Add to df
         covariates_use$out[[r]] <- prediction_out_cov$prediction_out
@@ -345,7 +344,7 @@ loc_external_predictions_out <- loc_external_train_val1 %>%
       dimnames(Eint) <- dimnames(Emain)
       
       # The genomewide prediction function is in the source_functions.R script
-      prediction_out_id <- genomewide_prediction2(x = row, model.list = models_run, K = K, E = Emain, KE = Eint)
+      prediction_out_id <- genomewide_prediction2(x = row, model.list = models_run, K = Kgeno, E = Emain, KE = Eint)
       
       ##############
       ##############
@@ -386,7 +385,7 @@ loc_external_predictions_out <- loc_external_train_val1 %>%
         }
         
         # run predictions
-        prediction_out_cov <- genomewide_prediction2(x = row, model.list = models_run, K = K, E = Emain, KE = Eint)
+        prediction_out_cov <- genomewide_prediction2(x = row, model.list = models_run, K = Kgeno, E = Emain, KE = Eint)
         
         # Add to df
         covariates_use$out[[r]] <- prediction_out_cov$prediction_out
