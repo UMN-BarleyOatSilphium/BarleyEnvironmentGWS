@@ -118,14 +118,15 @@ within_environment_prediction_accuracy <- predictive_ability %>%
 #   as.data.frame()
 
 
-# predictions_df %>%
-#   filter(str_detect(type, "external"), trait == "GrainYield", !selection %in% c("none", "concurrent_rfa_cv_adhoc")) %>%
-#   ggplot(aes(x = pred_complete, y = value, color = test_group)) +
-#   geom_abline(slope = 1, intercept = 0) +
-#   geom_point(size = 0.5) +
-#   scale_color_discrete(guide = FALSE) +
-#   facet_grid(type + selection ~ model + pop) +
-#   theme_presentation2(10)
+# Plot predicted versus observed values for a subset
+predictions_df %>%
+  filter(type == "lolo", selection == "rfa_adhoc", model == "model3_cov") %>%
+  ggplot(aes(x = pred_complete, y = value, color = test_group)) +
+  geom_abline(slope = 1, intercept = 0) +
+  geom_point(size = 0.5) +
+  scale_color_discrete(guide = FALSE) +
+  facet_wrap(~ type + selection + trait + model + pop, scales = "free", ncol = 2, labeller = labeller(.multi_line = FALSE)) +
+  theme_presentation2(10)
 
 
 

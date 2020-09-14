@@ -185,6 +185,60 @@ save("historical_timeframe_selection_out", file = file.path(result_dir, "histori
 
 
 
+# Identify the best timeframes using the LASSO ----------------------------
+
+# Create a setup df
+historical_timeframe_selection_lasso <- S2_MET_loc_BLUEs_tomodel %>%
+  left_join(., bind_rows(historical_ec_tomodel_centered_use), by = "location") %>%
+  group_by(trait, time_frame) %>%
+  nest() %>%
+  ungroup() %>%
+  # Output list
+  mutate(out = list(NULL))
+
+
+# Iterate over rows
+for (i in seq_len(nrow(historical_timeframe_selection_lasso))) {
+  
+  row <- historical_timeframe_selection_lasso[i,]
+  
+  # Factorize
+  df1 <- mutate_at(row$data[[1]], vars(line_name, location), ~fct_contr_sum(as.factor(.)))
+  covariates_use <- subset(trait_covariate_df, trait == row$trait, covariate, drop = TRUE)
+  
+  ## Run variable importance using LASSO
+  lasso_out <- select_features_met(data = df1, env.col = "location", covariates.use = covariates_use, 
+                                   search.method = "lasso")
+  
+  ## Reformulate for export
+  lasso_out1 <- lasso_out %>%
+    mutate(adhoc = map2(adhoc, adhoc_RMSE, ~list(optVariables = names(.x[.x != 0,]), finalResults = c("RMSE" = .y, "MSE" = .y^2),
+                                                 importance = .x)),
+           adhoc_nosoil = map2(adhoc_nosoil, adhoc_nosoil_RMSE, ~list(optVariables = names(.x[.x != 0,]), 
+                                                                      finalResults = c("RMSE" = .y, "MSE" = .y^2), importance = .x))) %>%
+    select(model, adhoc, adhoc_nosoil) %>%
+    gather(feat_sel_type, covariates, -model)
+
+  
+  ## Create a tibble
+  historical_timeframe_selection_lasso$out[[i]] <- lasso_out1
+  
+  # Notify
+  cat("LASSO analysis for trait", row$trait, "with timeframe", row$time_frame, "complete.\n")
+  
+}
+
+## Tidy up
+historical_timeframe_selection_lasso_out <- historical_timeframe_selection_lasso %>%
+  unnest(out) %>%
+  mutate(model = ifelse(model == "model2", "model4", "model5"))
+  
+
+
+
+
+
+
 
 # Analyze the results -----------------------------------------------------
 
@@ -192,7 +246,8 @@ save("historical_timeframe_selection_out", file = file.path(result_dir, "histori
 load(file.path(result_dir, "historical_covariate_timeframe_selection.RData"))
 
 # What timeframe returns the lowest RMSE per trait?
-historical_timeframe_selection_out1 <- historical_timeframe_selection_out %>%
+historical_timeframe_analysis <- bind_rows(mutate(historical_timeframe_selection_lasso_out, method = "lasso"), 
+                                           mutate(historical_timeframe_selection_out, method = "stepwise")) %>%
   filter(model == "model5") %>%
   mutate(results = map(covariates, "finalResults") %>% map(as.list) %>% map(as_tibble),
          nVariables = map(covariates, "optVariables") %>% map_dbl(., ~length(setdiff(., "line_name"))) ) %>%
@@ -207,25 +262,55 @@ historical_timeframe_selection_out1 <- historical_timeframe_selection_out %>%
   arrange(trait, RMSE, length, desc(end_year))
 
 
-# ## First, display the results of the naive selection of time_frame5
-# historical_timeframe_selection_out1 %>%
-#   filter(time_frame == "time_frame5_2010_2014")
+## First, display the results of the naive selection of time_frame5
+historical_timeframe_analysis %>%
+  filter(time_frame == "time_frame5_2010_2014")
 
 
 # Return the timeframe or window with the lowest RMSE per trait
-best_historical_timeframe <- historical_timeframe_selection_out1 %>%
+best_historical_timeframe <- historical_timeframe_analysis %>%
   filter(feat_sel_type == "adhoc") %>% 
-  group_by(trait) %>% 
+  group_by(trait, method) %>% 
   top_n(x = ., n = 1, wt = -RMSE) %>%
   ungroup()
 
 ## These will be the feature selection covariates
 historical_feature_selection <- historical_timeframe_selection_out %>%
-  inner_join(., select(best_historical_timeframe, trait, time_frame)) %>%
+  inner_join(., subset(best_historical_timeframe, method == "stepwise", c(trait, time_frame))) %>%
   select(-data) %>%
-  mutate(feat_sel_type = paste0("rfa_", feat_sel_type))
+  mutate(feat_sel_type = paste0("stepwise_cv_", feat_sel_type))
 
-## Use this timeframe for the apriori and stepwiseAIC procedures ##
+## Subset the LASSO results
+historical_feature_importance <- historical_timeframe_selection_lasso_out %>%
+  inner_join(., subset(best_historical_timeframe, method == "lasso", c(trait, time_frame))) %>%
+  mutate(feat_sel_type = paste0("lasso_cv_", feat_sel_type))
+
+
+# ## Plot
+# historical_timeframe_analysis %>%
+#   filter(method == "stepwise", feat_sel_type == "adhoc") %>%
+#   mutate(lty = ifelse(time_frame_type == "time_frame", "-", length),
+#          lty = factor(lty, levels = c("-", "5", "10", "15"))) %>%
+#   ggplot(aes(x = start_year, y = RMSE, lty = lty)) +
+#   geom_line() +
+#   facet_grid(trait ~ time_frame_type, scales = "free_y") +
+#   theme_genetics(10)
+#     
+# 
+# historical_timeframe_analysis %>%
+#   filter(method == "lasso", feat_sel_type == "adhoc") %>%
+#   mutate(lty = ifelse(time_frame_type == "time_frame", "-", length),
+#          lty = factor(lty, levels = c("-", "5", "10", "15"))) %>%
+#   ggplot(aes(x = start_year, y = RMSE, lty = lty)) +
+#   geom_line() +
+#   facet_grid(trait ~ time_frame_type, scales = "free_y") +
+#   theme_genetics(10)
+
+
+
+
+
+## Use this timeframe for the apriori  procedures ##
 
 
 ## A priori covariates - quite minimal; each should have a citation
@@ -252,22 +337,22 @@ apriori_covariate_df <- trait_covariate_df %>%
   )}
 
 
-historical_fact_reg <- S2_MET_loc_BLUEs_tomodel %>%
+historical_apriori_fact_reg <- S2_MET_loc_BLUEs_tomodel %>%
   crossing(., source = map_chr(historical_ec_tomodel_timeframe_centered, ~unique(pull(., "source")))) %>%
   left_join(., distinct(historical_feature_selection, trait, time_frame)) %>%
   group_by(trait, source, time_frame) %>%
   nest() %>%
   mutate(out = list(NULL))
 
-for (i in seq_len(nrow(historical_fact_reg))) {
+for (i in seq_len(nrow(historical_apriori_fact_reg))) {
 
-    df <- historical_fact_reg$data[[i]]
-    df$trait <- historical_fact_reg$trait[i]
+    df <- historical_apriori_fact_reg$data[[i]]
+    df$trait <- historical_apriori_fact_reg$trait[i]
 
     # data source
-    src <- historical_fact_reg$source[i]
+    src <- historical_apriori_fact_reg$source[i]
     # time frame
-    tf <- historical_fact_reg$time_frame[i]
+    tf <- historical_apriori_fact_reg$time_frame[i]
 
     # Extract the covariates data to use
     historical_ec_tomodel_centered_use <- bind_rows(historical_ec_tomodel_timeframe_centered, historical_ec_tomodel_window_centered) %>%
@@ -284,38 +369,20 @@ for (i in seq_len(nrow(historical_fact_reg))) {
     covariates_use <- subset(apriori_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
     apriori_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "apriori")
 
-    # Ad hoc
-    ## Add covariates - filter
-    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-    adhoc_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
-
-    # Ad hoc - without soil
-    ## Add covariates - filter
-    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T),
-                             covariate, drop = TRUE)
-    adhoc_nosoil_out <- fact_reg(data = df1, covariates = covariates_use, env = "location", method = "step")
-
-
     ## Return results
-    historical_fact_reg$out[[i]] <- tibble(model = c("base", "base_alt", "model4", "model5"),
-           apriori = apriori_out,
-           adhoc = adhoc_out,
-           adhoc_nosoil = adhoc_nosoil_out)
+    historical_apriori_fact_reg$out[[i]] <- tibble(model = c("base", "base_alt", "model4", "model5"), apriori = apriori_out)
 
 }
 
 
-historical_fact_reg1 <- unnest(historical_fact_reg, out)
+historical_apriori_fact_reg1 <- unnest(historical_apriori_fact_reg, out)
 
 
 ## Prepare results for saving
-historical_fact_reg_feature_selection <- historical_fact_reg1 %>%
-  mutate(feat_sel_type = "stepAIC", direction = "forward") %>%
+historical_apriori_feature_selection <- historical_apriori_fact_reg1 %>%
   filter(str_detect(model, "base", negate = TRUE)) %>%
-  mutate_at(vars(apriori, adhoc, adhoc_nosoil), ~map(., ~list(optVariables = attr(terms(.x), "term.labels")))) %>%
-  gather(selection_type, covariates, apriori, adhoc, adhoc_nosoil) %>%
-  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>%
-  mutate(feat_sel_type = ifelse(str_detect(feat_sel_type, "apriori"), "apriori", feat_sel_type))
+  mutate_at(vars(apriori), ~map(., ~list(optVariables = attr(terms(.x), "term.labels")))) %>%
+  gather(feat_sel_type, covariates, apriori)
 
 
 
@@ -333,8 +400,8 @@ historical_all_features <- trait_covariate_df %>%
 
 
 ## Save historical feature selection
-save("historical_feature_selection",
-     "historical_fact_reg_feature_selection", "historical_all_features",
+save("historical_feature_selection", "historical_feature_importance",
+     "historical_apriori_feature_selection", "historical_all_features",
      file = file.path(result_dir, "historical_feature_selection_results.RData"))
 
 
@@ -342,6 +409,7 @@ save("historical_feature_selection",
 load(file.path(result_dir, "concurrent_feature_selection_results.RData"))
 
 save("concurrent_feature_selection", "historical_feature_selection",
-     "concurrent_fact_reg_feature_selection", "historical_fact_reg_feature_selection",
+     "concurrent_feature_importance", "historical_feature_importance", 
+     "concurrent_apriori_feature_selection", "historical_apriori_feature_selection",
      "concurrent_all_features", "historical_all_features",
      file = file.path(result_dir, "feature_selection_results.RData"))

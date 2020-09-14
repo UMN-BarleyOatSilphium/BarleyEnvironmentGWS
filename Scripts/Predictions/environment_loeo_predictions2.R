@@ -31,11 +31,8 @@ n_core <- 12
 # Source of covariates
 source_use <- "daymet"
 
-# time_frame to use for the location relationship matrix
-time_frame_use <- "time_frame5_2010_2014"
-
 # If re-running predictions, should all be re-run?
-rerun_all <- FALSE
+rerun_all <- TRUE
 
 
 
@@ -100,26 +97,44 @@ concurrent_all_features <- concurrent_all_features %>%
   bind_rows(concurrent_all_features, .)
 
 # Combine feature selection df
-feature_selection_df <- bind_rows(concurrent_fact_reg_feature_selection, concurrent_feature_selection, 
-                                  concurrent_all_features)
+feature_selection_df <- bind_rows(
+  concurrent_all_features,
+  concurrent_apriori_feature_selection,
+  mutate(concurrent_feature_selection, feat_sel_type = str_replace(feat_sel_type, "rfa", "stepwise")),
+  mutate(concurrent_feature_importance, 
+         covariates = map(covariates, ~subset(rownames_to_column(as.data.frame(.x), "covariate"), importance != 0)))
+)
+
+# Give equal-weight importance to covariates except those from the LASSO
+feature_selection_df <- feature_selection_df %>%
+  mutate(covariates = pmap(select(., covariates, feat_sel_type, model), ~{
+    if (grepl("lasso", ..2)) {
+      ..1
+    } else {
+      # Subset for interaction covariates, if model is model3
+      if (..3 == "model3") {
+        vars <- str_subset(..1$optVariables, "line_name:") %>% str_remove_all(., "line_name:")
+      } else {
+        vars <- ..1$optVariables
+      }
+      
+      data.frame(covariate = setdiff(vars, "line_name"), stringsAsFactors = FALSE) %>%
+        mutate(importance = 1 / nrow(.))
+    }
+  }))
+
+
 
 # Reorganize covariate df
 covariates_tomodel <- feature_selection_df %>%
-  select(-direction) %>%
   # Filter the source to use
-  filter(source %in% source_use,
-         # Do not use stepwiseAIC covariates
-         str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
+  filter(source %in% source_use) %>%
   rename(feature_selection = feat_sel_type) %>%
-  mutate(covariates = map(covariates, "optVariables")) %>%
   unnest(covariates) %>%
-  filter(covariates != "line_name") %>%
+  filter(covariate != "line_name") %>%
   group_by(source, trait, feature_selection, model) %>%
   nest(.key = "covariates") %>%
   ungroup() %>%
-  # Collapse covariates
-  mutate(covariates = map(covariates, "covariates")) %>%
-  # nest
   group_by(trait) %>% 
   nest(.key = "model_covariates") %>%
   ungroup()
@@ -219,30 +234,31 @@ loeo_predictions_out <- data_train_test1 %>%
         src <- covariates_use$source[r]
         
         # List of covariates
-        covariate_list <- tibble(term = unique(unlist(covariates_use[r, c("model2", "model3")]))) %>% 
-          mutate(class = ifelse(str_detect(term, ":"), "interaction", "main"),
-                 covariate = str_remove(term, "line_name:")) %>%
-          split(.$class) %>% 
-          map("covariate")
+        covariate_list <- covariates_use[r,] %>%
+          select(main = model2, interaction = model3) %>%
+          as.list() %>%
+          map(1)
         
-        # Create a matrix of scaled and centered covariates
+        # Create main matrix of scaled and centered covariate values
         covariate_mat <- ec_tomodel_scaled[[src]] %>%
+          select(-source) %>%
           filter(environment %in% levels(row$train[[1]]$site1)) %>%
-          select(., environment, unique(unlist(covariate_list))) %>%
           as.data.frame() %>%
           column_to_rownames("environment") %>%
           as.matrix()
         
         ## Environmental relationship matrices
-        Emain <- Env_mat(x = covariate_mat[,covariate_list$main, drop = FALSE], method = "Jarq")
+        Emain <- Env_mat(x = covariate_mat[,covariate_list$main$covariate, drop = FALSE], 
+                         weights = covariate_list$main$importance, method = "weightedJarq")
         if (is.null(covariate_list$interaction)) {
           Eint <- diag(ncol(Emain)); dimnames(Eint) <- dimnames(Emain)
         } else {
-          Eint <- Env_mat(x = covariate_mat[,covariate_list$int, drop = FALSE], method = "Jarq")
+          Eint <- Env_mat(x = covariate_mat[,covariate_list$int$covariate, drop = FALSE], 
+                          weights = covariate_list$int$importance, method = "weightedJarq")
         }
         
         # run predictions
-        prediction_out_cov <- genomewide_prediction2(x = row, model.list = models_run, K = KKgeno, E = Emain, KE = Eint)
+        prediction_out_cov <- genomewide_prediction2(x = row, model.list = models_run, K = Kgeno, E = Emain, KE = Eint)
         
         # Add to df
         covariates_use$out[[r]] <- prediction_out_cov$prediction_out
@@ -408,26 +424,27 @@ env_external_predictions_out <- env_external_train_val1 %>%
         src <- covariates_use$source[r]
         
         # List of covariates
-        covariate_list <- tibble(term = unique(unlist(covariates_use[r, c("model2", "model3")]))) %>% 
-          mutate(class = ifelse(str_detect(term, ":"), "interaction", "main"),
-                 covariate = str_remove(term, "line_name:")) %>%
-          split(.$class) %>% 
-          map("covariate")
+        covariate_list <- covariates_use[r,] %>%
+          select(main = model2, interaction = model3) %>%
+          as.list() %>%
+          map(1)
         
-        # Create a matrix of scaled and centered covariates
+        # Create main matrix of scaled and centered covariate values
         covariate_mat <- ec_tomodel_scaled[[src]] %>%
+          select(-source) %>%
           filter(environment %in% levels(row$train[[1]]$site1)) %>%
-          select(., environment, unique(unlist(covariate_list))) %>%
           as.data.frame() %>%
           column_to_rownames("environment") %>%
           as.matrix()
         
         ## Environmental relationship matrices
-        Emain <- Env_mat(x = covariate_mat[,covariate_list$main, drop = FALSE], method = "Jarq")
+        Emain <- Env_mat(x = covariate_mat[,covariate_list$main$covariate, drop = FALSE], 
+                         weights = covariate_list$main$importance, method = "weightedJarq")
         if (is.null(covariate_list$interaction)) {
           Eint <- diag(ncol(Emain)); dimnames(Eint) <- dimnames(Emain)
         } else {
-          Eint <- Env_mat(x = covariate_mat[,covariate_list$int, drop = FALSE], method = "Jarq")
+          Eint <- Env_mat(x = covariate_mat[,covariate_list$int$covariate, drop = FALSE], 
+                          weights = covariate_list$int$importance, method = "weightedJarq")
         }
         
         # run predictions

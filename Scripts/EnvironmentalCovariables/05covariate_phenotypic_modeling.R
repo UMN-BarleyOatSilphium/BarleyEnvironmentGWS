@@ -93,7 +93,7 @@ apriori_covariate_df <- trait_covariate_df %>%
 ## Factorial regression with AIC stepwise selection ##
 
 ## Group by trait and model
-concurrent_fact_reg <- S2_MET_BLUEs_tomodel %>%
+concurrent_apriori_fact_reg <- S2_MET_BLUEs_tomodel %>%
   crossing(., source = names(ec_tomodel_centered)) %>%
   group_by(trait, source) %>%
   do({
@@ -110,27 +110,10 @@ concurrent_fact_reg <- S2_MET_BLUEs_tomodel %>%
     ## Add covariates - filter
     covariates_use <- subset(apriori_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
     apriori_out <- fact_reg(data = df1, covariates = covariates_use, method = "apriori")
-    
-
-
-    # Ad hoc
-    ## Add covariates - filter
-    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
-    adhoc_out <- fact_reg(data = df1, covariates = covariates_use, env = "environment", method = "step", criterion = "BIC")
-
-
-    # Ad hoc - without soil
-    ## Add covariates - filter
-    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait) & str_detect(covariate, "soil", negate = T),
-                             covariate, drop = TRUE)
-    adhoc_nosoil_out <- fact_reg(data = df1, covariates = covariates_use, env = "environment", method = "step", criterion = "BIC")
-
+  
 
     ## Return results
-    tibble(model = c("base", "base_alt", "model2", "model3"),
-           apriori = apriori_out,
-           adhoc = adhoc_out,
-           adhoc_nosoil = adhoc_nosoil_out)
+    tibble(model = c("base", "base_alt", "model2", "model3"), apriori = apriori_out)
 
   }) %>% ungroup()
 
@@ -154,20 +137,17 @@ concurrent_fact_reg <- S2_MET_BLUEs_tomodel %>%
 
 
 ## Prepare results for saving
-concurrent_fact_reg_feature_selection <- concurrent_fact_reg %>%
-  mutate(feat_sel_type = "stepAIC", direction = "both") %>%
+concurrent_apriori_feature_selection <- concurrent_apriori_fact_reg %>%
   filter(str_detect(model, "base", negate = TRUE)) %>%
-  mutate_at(vars(apriori, adhoc, adhoc_nosoil), ~map(., ~list(optVariables = attr(terms(.x), "term.labels")))) %>%
-  gather(selection_type, covariates, apriori, adhoc, adhoc_nosoil) %>% 
-  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>% 
-  mutate(feat_sel_type = ifelse(str_detect(feat_sel_type, "apriori"), "apriori", feat_sel_type))
+  mutate_at(vars(apriori), ~map(., ~list(optVariables = attr(terms(.x), "term.labels")))) %>%
+  gather(feat_sel_type, covariates, apriori)
   
   
 
 
 
 
-# Feature selection ############################################################
+# Stepwise feature selection ----------------------------------------------
 
 ## Use some feature selection procedures to identify covariates
 ## 
@@ -177,17 +157,17 @@ concurrent_fact_reg_feature_selection <- concurrent_fact_reg %>%
 ## Use lm with CV - implemented through recursive feature addition
 ## 
 
-concurrent_feature_selection_list <- S2_MET_BLUEs_tomodel %>%
+concurrent_stepwise_feature_selection_list <- S2_MET_BLUEs_tomodel %>%
   crossing(., source = names(ec_tomodel_centered)) %>%
   group_by(trait, source) %>%
   nest() %>%
   mutate(out = list(NULL))
 
-for (i in seq_len(nrow(concurrent_feature_selection_list))) {
+for (i in seq_len(nrow(concurrent_stepwise_feature_selection_list))) {
     
-    df <- concurrent_feature_selection_list$data[[i]] %>%
-      mutate(trait = concurrent_feature_selection_list$trait[i])
-    src <- concurrent_feature_selection_list$source[i]
+    df <- concurrent_stepwise_feature_selection_list$data[[i]] %>%
+      mutate(trait = concurrent_stepwise_feature_selection_list$trait[i])
+    src <- concurrent_stepwise_feature_selection_list$source[i]
     
     # Factorize
     df1 <- df %>%
@@ -206,13 +186,79 @@ for (i in seq_len(nrow(concurrent_feature_selection_list))) {
     ## Recursive feature addition
     rfa_out_df <- select_features_met(data = df1, env.col = "environment", search.method = "hill.climb")
     
-    concurrent_feature_selection_list$out[[i]] <- bind_rows(rfa_out_df)
+    concurrent_stepwise_feature_selection_list$out[[i]] <- bind_rows(rfa_out_df)
     
 }
 
-concurrent_feature_selection <- unnest(concurrent_feature_selection_list, out) %>%
+concurrent_stepwise_feature_selection <- unnest(concurrent_stepwise_feature_selection_list, out) %>%
   gather(selection_type, covariates, adhoc, adhoc_nosoil) %>% 
   unite(feat_sel_type, feat_sel_type, selection_type, sep = "_")
+
+
+
+
+# Determine feature importance using LASSO --------------------------------
+
+concurrent_feature_importance_list <- S2_MET_BLUEs_tomodel %>%
+  crossing(., source = names(ec_tomodel_centered)) %>%
+  group_by(trait, source) %>%
+  nest() %>%
+  mutate(out = list(NULL))
+
+for (i in seq_len(nrow(concurrent_feature_importance_list))) {
+  
+  df <- concurrent_feature_importance_list$data[[i]] %>%
+    mutate(trait = concurrent_feature_importance_list$trait[i])
+  src <- concurrent_feature_importance_list$source[i]
+  
+  # Factorize
+  df1 <- df %>%
+    # filter(location != "Aberdeen") %>%
+    droplevels() %>%
+    left_join(., ec_tomodel_centered[[src]], by = "environment") %>%
+    mutate_at(vars(line_name, environment), ~fct_contr_sum(as.factor(.)))
+  
+  loo_indices <- df1 %>%
+    group_by(environment) %>%
+    crossv_loo_grouped() %>%
+    pull(train) %>%
+    map("idx")
+  
+  ## Feature importance using the LASSO
+  lasso_importance_out <- select_features_met(data = df1, env.col = "environment", search.method = "lasso")
+  
+  concurrent_feature_importance_list$out[[i]] <- lasso_importance_out
+  
+}
+
+
+concurrent_feature_importance <- unnest(concurrent_feature_importance_list, out) %>%
+  select(-contains("RMSE")) %>%
+  gather(selection_type, covariates, adhoc, adhoc_nosoil) %>% 
+  unite(feat_sel_type, feat_sel_type, selection_type, sep = "_")
+
+
+
+# ## Test relationship matrix construction
+# impt <- concurrent_feature_importance_list$out[[1]]$adhoc[[1]]
+# 
+# x <- ec_tomodel_scaled$daymet %>%
+#   select(-source) %>%
+#   as.data.frame() %>%
+#   column_to_rownames("environment") %>%
+#   as.matrix()
+# 
+# # Multiply covariate data by importance
+# wt <- matrix(data = c(impt), nrow = nrow(x), ncol = nrow(impt), byrow = TRUE, dimnames = list(row.names(x), row.names(impt)))
+# 
+# # Subset covariates with non-zero wts - multiply weights
+# nonzero <- colMeans(wt == 0) != 1
+# x1 <- x[,colnames(wt),drop = FALSE][,nonzero, drop = FALSE] * wt[,nonzero, drop = FALSE]
+# 
+# Emat <- tcrossprod(x1)
+
+
+
 
 
 ## Create a data.frame of all covariates
@@ -227,6 +273,6 @@ concurrent_all_features <- trait_covariate_df %>%
 
 ## Save
 
-save("concurrent_feature_selection",  "concurrent_fact_reg_feature_selection", "concurrent_all_features", 
+save("concurrent_feature_selection", "concurrent_apriori_feature_selection", "concurrent_feature_importance", "concurrent_all_features", 
      file = file.path(result_dir, "concurrent_feature_selection_results.RData"))
 

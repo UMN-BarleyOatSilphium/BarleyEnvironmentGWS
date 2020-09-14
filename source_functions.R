@@ -4,355 +4,6 @@
 ## 
 
 
-
-# ## A generic prediction function that takes training and test data and returns
-# ## PGVs and accuracy
-# gblup <- function(formula, random, K, train, test, fun = c("rrblup", "sommer"), fit.env = TRUE, bootreps = NULL, add.mu = FALSE) {
-#   
-#   if (missing(formula)) formula <- value ~ 1 + environment
-#   if (missing(random)) random <- ~ line_name
-#   
-#   ## separate random and fixed terms
-#   fixed_terms <- attr(terms(formula), "term.labels")
-#   random_terms <- attr(terms(random), "term.labels")
-# 
-#   ## Combine fixed and random to one formula
-#   formula1 <- as.formula(paste(paste(as.character(formula)[c(2,1,3)], collapse = " "), as.character(random)[-1], sep = " + "))
-#   
-#   # Create a model.frame
-#   mf <- model.frame(formula1, weights = std_error, data = train)
-#   
-#   
-#   ## If the number of random terms is > 1, K must be a list
-#   if (length(random_terms) == 1) {
-#     stopifnot(levels(mf[[random_terms]]) %in% colnames(K))
-#     
-#     K <- list(K)
-#     names(K) <- random_terms
-#     
-#   } else {
-#     if (!is.list(K)) stop("If the number of random terms is > 1, K must be a list of relationship matrices.")
-#     
-#     ## Test names
-#     name_test <- map2_lgl(.x = random_terms, .y = names(K1), ~.x == .y)
-#     if (!all(name_test)) stop("If K is a list, the names of the list must match the random terms")
-#     
-#   }
-#    
-#   
-#   fun <- match.arg(fun)
-#   
-#   
-#   
-#   # Vectors and matrices
-#   y <- model.response(mf)
-#   
-#   
-#   if (nlevels(mf[[fixed_terms]]) <= 1 | !fit.env) {
-#     X <- model.matrix(~ 1, droplevels(mf))
-#   
-#     } else {
-#     X <- model.matrix(formula, droplevels(mf))
-#     
-#   }
-#   
-#   ## Random effects
-#   Z_list <- list()
-#   
-#   for (term in random_terms) {
-#     Zi <- model.matrix(as.formula(paste0("~ -1 + ", term)), mf)
-#     colnames(Zi) <- colnames(K[[term]])
-#     Z_list[[term]] <- Zi
-#     
-#   }
-#   
-#   
-#   # Split on function
-#   if (fun == "rrblup") {
-#     # Can't run with > 1 random term
-#     stopifnot(length(random_terms) == 1)
-#     
-#     fit <- mixed.solve(y = y, Z = Z_list[[1]], K = K[[1]], X = X)
-#     
-#     # Extract PGVs
-#     pgv <- fit$u %>% 
-#       data.frame(line_name = names(.), pred_value = ., row.names = NULL, stringsAsFactors = FALSE)
-#     
-#     beta <- fit$beta[1]
-#     
-#     
-#   } else if (fun == "sommer") {
-#     
-#     # R <- solve(diag(mf$`(weights)`^2))
-#     # fit <- sommer::mmer(Y = y, X = X, Z = list(g = list(Z = Z, K = K)), R = list(res = R), silent = TRUE)
-#     
-#     random_list <- map2(Z_list, K, ~list(Z = .x, K = .y))
-#     fit <- sommer::mmer(Y = y, X = X, Z = random_list, silent = TRUE)
-#   
-#     # Extract PGVs
-#     pgv <- fit$u.hat
-#     pgv <- data.frame(line_name = row.names(pgv), pred_value = pgv[,1], row.names = NULL, stringsAsFactors = FALSE)
-#     
-#     beta <- fit$beta.hat[1]
-#     
-#   }
-#   
-#   if (add.mu) pgv$pred_value <- pgv$pred_value + beta
-#   
-#   # If test is missing, just return the predictions
-#   if (missing(test)) {
-#     
-#     comb <- pgv
-#     acc <- boot <- NA
-#     
-#   } else {
-#   
-#     # Combine the PGVs with the phenotypic observations and calculate accuracy
-#     comb <- left_join(test, pgv, by = "line_name")
-#     acc <- cor(comb$value, comb$pred_value)
-#     
-#     # Bootstrap if replicates are provided
-#     if (!is.null(bootreps)) {
-#       boot <- bootstrap(x = comb$value, y = comb$pred_value, fun = "cor", boot.reps = bootreps)
-#     } else {
-#       boot <- NA
-#     }
-#     
-#   }
-#   
-#   # Return a list
-#   list(accuracy = acc, pgv = comb, boot = as_data_frame(boot))
-# }
-
-
-
-
-# ## A model fitting function
-# ## 
-# ## All models are random
-# ## 
-# ## Model1: y = G
-# ## Model2: y = G + E
-# ## Model3: y = G + E + GE
-# ## 
-# ## Note: for single traits only
-# ## 
-# 
-# predict_gv <- function(train, test, model = c("model1", "model2", "model3"), relMat.list, covariate.list = list(NULL),
-#                        object, add.fixed = FALSE, verbose = FALSE) {
-# 
-#   ## Depending on the model, make sure correct relmats are present
-#   model <- match.arg(model)
-# 
-#   ## Assign required relmats
-#   req_relmat <- switch(
-#     model,
-#     model1 = c("G"),
-#     model2 = c("G", "E"),
-#     model2a = c("G"),
-#     model2b = c("G"),
-#     model3 = c("G", "E", "GE"),
-#     model3a = c("G", "GE"),
-#     model3b = c("G", "GE")
-#   )
-# 
-#   ## Assign ranefs
-#   ranefs <- switch(
-#     model,
-#     model1 = c("line_name"),
-#     model2 = c("line_name", "environment"),
-#     model2a = c("line_name"),
-#     model2b = c("line_name"),
-#     model3 = c("line_name", "environment", "line_name:environment"),
-#     model3a = c("line_name", "line_name:environment"),
-#     model3b = c("line_name", "line_name:environment")
-#   )
-# 
-#   ## Assign fixefs
-#   fixef <- switch(
-#     model,
-#     model1 = NULL,
-#     model2 = NULL,
-#     model2a = c("environment"),
-#     model2b = NULL,
-#     model3 = NULL,
-#     model3a = c("environment"),
-#     model3b = NULL
-#   )
-# 
-#   ## Assign covariates
-#   covariates <- switch(
-#     model,
-#     model1 = NULL,
-#     model2 = NULL,
-#     model2a = NULL,
-#     model2b = "E",
-#     model3 = NULL,
-#     model3a = NULL,
-#     model3b = "E"
-#   )
-# 
-# 
-#   ## Error handling
-# 
-#   ## Check for presence of relmats
-#   stopifnot(is.list(relMat.list))
-#   stopifnot(all(req_relmat %in% names(relMat.list)))
-# 
-#   ## Check for presence of covariates
-#   stopifnot(is.list(covariate.list))
-#   stopifnot(all(covariates %in% names(covariate.list)))
-# 
-# 
-#   ## Extract covariates
-#   covariates <- unlist(covariate.list[covariates])
-# 
-# 
-#   ## Create fixed/random formula
-#   fixed_formula <- reformulate(termlabels = c("1", c(fixef, covariates)), response = "value")
-# 
-# 
-#   # If object is missing, do not include contraints on the random effects
-#   if (missing(object)) {
-#     random_formula <- reformulate(termlabels = mapply(req_relmat, ranefs, FUN = function(.x, .y) {
-#       paste0("vs(", .y, ", Gu = relMat.list$", .x, ")") }))
-# 
-# 
-#     # Residual formula
-#     rcov_form <- ~ units
-# 
-#     # If not missing, extract variance components and impose restrictions
-#   } else {
-#     # Error handling
-#     # 'object' must have element called sigma
-#     stopifnot("sigma" %in% names(object))
-# 
-#     # Extract varcomps
-#     object_varcomps <- object$sigma
-#     names(object_varcomps) <- gsub(pattern = "u:", replacement = "", x = names(object_varcomps))
-#     object_varcomps <- object_varcomps[c(ranefs, "units")]
-# 
-#     # Create formula
-#     random_formula <- reformulate(termlabels = mapply(req_relmat, ranefs, FUN = function(.x, .y) {
-#       paste0("vs(", .y, ", Gu = relMat.list$", .x, ", Gt = object_varcomps[['", .y, "']], Gtc = fixm(1))") }) )
-# 
-#     # Residual formula
-#     rcov_form <- ~ vs(units, Gt = object_varcomps$units, Gtc = fixm(1))
-#   }
-# 
-# 
-#   ## Create a model frame
-#   full_formula <- add_predictors(fixed_formula, reformulate(ranefs))
-#   mf <- model.frame(formula = full_formula, train, drop.unused.levels = FALSE)
-# 
-#   # X matrix
-#   X <- model.matrix(fixed_formula, train)
-# 
-#   # List of Z matrices
-#   Zlist <- lapply(ranefs, function(term) model.matrix(reformulate(c(-1, term)), mf))
-#   names(Zlist) <- ranefs
-# 
-#   ## Fit the model
-#   fit <- mmer(fixed = fixed_formula, random = random_formula, rcov = rcov_form, data = mf, date.warning = FALSE, verbose = verbose)
-# 
-#   # If interaction present, split and take those ranefs
-#   if (str_detect(ranefs, ":")) {
-#     ranefs_no_int <- str_split(str_subset(ranefs, ":"), pattern = ":")[[1]]
-#     
-#   } else {
-#     ranefs_no_int <- str_subset(ranefs, ":", negate = TRUE)
-#     
-#   }
-# 
-#   ## Figure out what to return
-#   # If test is missing, return the object
-#   # Create a list to return
-#   if (missing(test)) {
-#     to_return <- list(object = fit)
-# 
-#   } else {
-# 
-#     ## Get the random effects
-#     U <- lapply(X = randef(fit), FUN = "[[", "value")
-#     # Rename
-#     names(U) <- str_remove(string = names(U), pattern = "u:")
-# 
-#     ## Use incidence matrices to predict random effs
-#     Zu_list <- mapply(Zlist, U, FUN = function(Z, u) {
-#       Zu <- Z %*% u
-#       `row.names<-`(Zu, names(u)[apply(X = Z, MARGIN = 1, FUN = function(row) which(row == 1))])
-#     }, SIMPLIFY = FALSE)
-# 
-#     ## Find unique values and convert to df
-#     Zu_df <- lapply(Zu_list, function(x) as.data.frame(unique(x))) %>%
-#       map(~rownames_to_column(., "term")) %>%
-#       list(., names(.), seq_along(.)) %>%
-#       pmap(., ~`names<-`(..1, c(..2, paste0("pred", ..3)))) %>%
-#       modify_if(.x = ., .p = ~str_detect(names(.)[1], ":"), ~separate(data = .x, col = 1, into = c("line_name", "environment"), sep = ":"))
-#     
-#     # If any dfs in the list have > 2 columns, sort and merge. 
-#     # Otherwise combine and full join
-#     if (any(map_lgl(Zu_df, ~ncol(.) > 2))) {
-#       Zu_join <- reduce(.x = Zu_df[order(map_dbl(Zu_df, ncol), decreasing = TRUE)], .f = left_join)
-#       
-#     } else {
-#       combn <- Zu_df[ranefs_no_int] %>% 
-#         map(select, 1) %>% 
-#         reduce(crossing)
-#       Zu_join <- reduce(c(list(combn), Zu_df), left_join)
-#       
-#     }
-#     
-#     ## Sum for predictions
-#     rand_pred <- Zu_join %>%
-#       mutate(prediction = rowMeans(select(., contains("pred")))) %>%
-#       select(ranefs_no_int, prediction)
-#     
-#     
-#     
-#     #### Fixed effects ####
-#     beta <- as.matrix(column_to_rownames(fit$Beta[,-1], "Effect"))
-#     Xb <- X %*% beta
-#     
-#     
-#     
-#     
-# 
-#     ## Extract predictions
-#     fit_pred <- randef(fit) %>%
-#       map("value") %>%
-#       map(~tibble(term = names(.x), pred = .x), .vars = vars(term)) %>%
-#       imap(~`names<-`(.x, c(.y, "pred"))) %>%
-#       unname() %>%
-#       imap(~`names<-`(.x, c(names(.x)[1], paste0("pred", .y)))) %>%
-#       map(~rename_at(.x, vars(1), ~str_remove(., "u:"))) %>%
-#       modify_if(.x = ., .p = ~str_detect(names(.)[1], ":"), ~separate(data = .x, col = 1, into = c("line_name", "environment"), sep = ":")) %>%
-#       # Include the testing df, but only the columns (ranefs no int). This makes merging easier
-#       c(list( distinct(select(test, ranefs_no_int)) ), .) %>%
-#       reduce(.x = ., .f = left_join) %>%
-#       ## Sum predictions
-#       mutate(prediction = rowMeans(select(., contains("pred")))) %>%
-#       select(ranefs_no_int, prediction)
-# 
-# 
-#     ## Merge with test
-#     test1 <- left_join(x = test, y = fit_pred, by = ranefs_no_int)
-# 
-#     # Add intercept?
-#     if (add.intercept) {
-#       test1$prediction <- test1$prediction + intercept
-#     }
-# 
-#     to_return <- list(predictions = test1)
-# 
-#   }
-# 
-#   # Return
-#   return(to_return)
-# 
-# }
-  
-
 ## Functions to calculate heritability from lmer models
 ## Function for heritability using genotype difference basis
 ## 
@@ -474,97 +125,6 @@ herit2.merMod <- function(object, gen.var = "line_name", type = c("cullis", "pie
 }
 
 
-## A function to add or remove covariates based on AIC and vif
-step_vif <- function(object, data, scope, direction, vif.threshold) {
-  
-  ## Get the terms to keep
-  terms_keep <- terms_hold <- attr(terms(scope$lower), "term.labels")
-  
-  # Forward
-  if (direction == "forward") {
-    
-    # Vector of all terms to add
-    all_terms_add <- setdiff(attr(terms(scope$upper), "term.labels"), attr(terms(scope$lower), "term.labels"))
-    terms_add <- all_terms_add
-    
-    ## Base formula AIC (no terms added)
-    base_model <- object
-    base_model_AIC <- AIC(base_model)
-    
-    # List of model formulas
-    formula_list <- map(terms_add, ~reformulate(termlabels = c(terms_hold, .), response = "value")) %>%
-      setNames(., terms_add)
-    
-    ## Fit models one-at-a-time
-    fit_list <- map(formula_list, lm, data = data)
-    
-    # Get AIC and vif
-    tidy_diag <- imap_dfr(fit_list, ~{
-      vif_x <- vif(.x)
-      colnames(vif_x) <- c("gvif", "df", "adj.gvif")
-      as.data.frame(cbind(vif_x[.y,, drop = FALSE], AIC = AIC(.x)))
-    }) %>% mutate(term = names(fit_list))
-    
-    ## Should the term be added?
-    # Filter on suitable vif and AIC; then find lowest AIC
-    tidy_diag1 <- subset(tidy_diag, AIC < base_model_AIC & gvif < vif.threshold)
-    
-    # Which term
-    term_retain <- tidy_diag1$term[which.min(tidy_diag1$AIC)]
-    # Which model to keep
-    model_keep_which <- which(names(fit_list) == term_retain)
-    
-    
-    ## While loop
-    while (length(model_keep_which) > 0) {
-      
-      ## Set the new base model
-      base_model <- fit_list[[model_keep_which]]
-      base_model_AIC <- AIC(base_model)
-      
-      ## Remove the 'term_retain' from the list of terms to add
-      terms_add <- setdiff(terms_add, term_retain)
-      terms_hold <- c(terms_hold, term_retain)
-      
-      # List of model formulas
-      formula_list <- map(terms_add, ~reformulate(termlabels = c(terms_hold, .), response = "value")) %>%
-        setNames(., terms_add)
-      
-      ## Fit models one-at-a-time
-      fit_list <- map(formula_list, lm, data = data)
-      
-      # Get AIC and vif
-      tidy_diag <- imap_dfr(fit_list, ~{
-        vif_x <- vif(.x)
-        colnames(vif_x) <- c("gvif", "df", "adj.gvif")
-        as.data.frame(cbind(vif_x[.y,, drop = FALSE], AIC = AIC(.x)))
-      }) %>% mutate(term = names(fit_list))
-      
-      ## Should the term be added?
-      # Filter on suitable vif and AIC; then find lowest AIC
-      tidy_diag1 <- subset(tidy_diag, AIC < base_model_AIC & gvif < vif.threshold)
-      
-      # Which term
-      term_retain <- tidy_diag1$term[which.min(tidy_diag1$AIC)]
-      # Which model to keep
-      model_keep_which <- which(names(fit_list) == term_retain)
-      
-    }
-    
-    # Model to return
-    model_return <- base_model
-    
-  } # IF statement
-  
-  # Return the model
-  return(model_return)
-  
-}
-
-
-
-
-
 ## Function to perform factorial regression analysis to identify covariates
 ## 
 ## This function will fit three models - a base model, base + main covariates, 
@@ -572,9 +132,7 @@ step_vif <- function(object, data, scope, direction, vif.threshold) {
 ## 
 ## It uses stepwise elimination or aprior expectations to determine which
 ## covariates to keep
-## 
-## step.vif used variance inflation factors to remove covariates
-## 
+##  
 ## step1 removes related covariates (i.e. tmean, tmin, tmax) based on 
 ## the first pass of mean squares
 ## 
@@ -875,9 +433,6 @@ rapid_cv <- function(object, index, rapid = TRUE, return.predictions = FALSE) {
 ## A function to implement a recursive feature addition algorithm that includes
 ## featurs on the basis of the RMSE of LOO cross-validation
 ## 
-## params:
-## x - a matrix of features
-## y - a response
 ## 
 ## 
 ## 
@@ -1084,152 +639,16 @@ rfa_loo <- function(object, data, scope, metric = c("RMSE", "R2"), index, env.co
 }
 
 
-
-## Function for running genetic algorithm for variable selection
-genalg_loo <- function(base.formula, covariates.use, data, maxiter = 50, popSize = 150, reps = 5) {
-  
-  require(genalg, quietly = TRUE)
-  require(GA, quietly = TRUE)
-  require(memoise, quietly = TRUE)
-  
-  # Create an evaluation function (PRESS) to minimize
-  fitness <- function(indices, base.formula, maximize = TRUE) {
-    
-    # If the number of 1s is greater than the number of environments - 1, return Inf
-    if (sum(indices) > n_distinct(data$environment) - 1) {
-      return(ifelse(maximize, -Inf, Inf))
-      
-    } else {
-      # variable selection based on the indices
-      form <- reformulate(c(attr(terms(base.formula), "term.labels"), covariates.use[indices == 1]), response = "value")
-      # Fit the model
-      lm_fit <- lm(formula = form, data = data)
-      # Conduct rapid CV
-      rapid_cv_out <- rapid_cv(object = lm_fit, index = loo_indices)
-      # Return the statistic (RMSE)
-      
-      if (all(is.na(rapid_cv_out))) {
-        return(ifelse(maximize, -Inf, Inf))
-      } else {
-        return(ifelse(maximize, -rapid_cv_out["RMSE"], rapid_cv_out["RMSE"]))
-      }
-    }
-  }
-  
-  ## Alternative fitness function that returns BIC
-  fitnessBIC <- function(indices, base.formula) {
-    
-    # If the number of 1s is greater than the number of environments - 1, return Inf
-    if (sum(indices) > n_distinct(data$environment) - 1) {
-      return(-Inf)
-      
-    } else {
-      # variable selection based on the indices
-      form <- reformulate(c(attr(terms(base.formula), "term.labels"), covariates.use[indices == 1]), response = "value")
-      
-      # Fit the model
-      lm_fit <- lm(formula = form, data = data)
-      -BIC(lm_fit)
-      
-      # y <- data$value
-      # x <- model.matrix(form, data)
-      # lm_fit <- lm.fit(x = x, y = y)
-      # -BIC(structure(lm_fit, class = "lm"))
-
-    }
-  }
-  
-  ## Create a funciton to generate a population
-  generateBinaryPopulation <- function(object, maxNonZero = n_distinct(data$environment) - 1) {
-    # empty matrix
-    population <- matrix(as.double(0), nrow = object@popSize, ncol = object@nBits)
-    for (i in 1:object@popSize) {
-      # Sample the maxNonZero size
-      nOne <- sample(maxNonZero, 1)
-      population[i, sample(object@nBits, nOne)] <- 1
-    }
-    storage.mode(population) <- "integer"
-    return(population)
-  }
-  
-  ## Create a function to select
-  selectBinaryPopulation <- function(object) {
-    # Remove any individuals with infinite fitness
-    fitness1 <- object@fitness
-    fitness1[is.infinite(fitness1)] <- NA
-    fitnessOrder <- order(fitness1, decreasing = TRUE, na.last = NA)
-    
-    # Select
-    selectFitness <- fitnessOrder[1:object@elitism]
-    sel <- sample(x = selectFitness, size = object@popSize, replace = TRUE)
-    out <- list(population = object@population[sel, , drop = FALSE], 
-                fitness = object@fitness[sel])
-    
-  }
-
-  
-  ## Memoize the function
-  mFitness <- memoize(fitness)
-  mFitnessBIC <- memoize(fitnessBIC)
-  
-  ## Repeat the genetic algorithm x times
-  ga_out_repeats <- replicate(n = reps, expr = {
-    ga(type = "binary", fitness = mFitness, nBits = length(covariates.use), 
-       population = generateBinaryPopulation, selection = selectBinaryPopulation,
-       maxiter = maxiter, popSize = popSize, elitism = ceiling(0.1 * popSize), pmutation = 0.2,
-       base.formula = base.formula)
-  }, simplify = FALSE)
-  
-  ## Get a matrix of solutions; 
-  solutions_mat <- do.call("rbind", map(ga_out_repeats, ~slot(., "solution")))
-  # Iteratively subset the solutions matrix based on decreasing probability
-  # that a feature was selected
-  solutions_mat1 <- solutions_mat
-  optSol <- FALSE
-  
-  while (!optSol) {
-    probs_ord <- sort(colMeans(solutions_mat1), decreasing = TRUE)
-    probs_ord1 <- probs_ord[probs_ord != 1]
-    
-    # Find solutions that are positive for the most frequent features
-    which_feature_names <- names(subset(probs_ord1, probs_ord1 == max(probs_ord1)))
-    solutions_mat1_temp <- solutions_mat1[rowMeans(solutions_mat1[,which_feature_names,drop = FALSE]) == 1,, drop = FALSE]
-    
-    # If zero, return the first solution
-    if (nrow(solutions_mat1_temp) == 0) {
-      optSol <- TRUE
-      solutions_mat1 <- solutions_mat1[1,,drop = FALSE]
-    } else {
-      solutions_mat1 <- solutions_mat1_temp
-    }
-  }
-    
-  # Get the optimal variables
-  bestSolution <- as.vector(solutions_mat1)
-  optVariables <- c("line_name", covariates.use[bestSolution == 1])
-  
-  ## Combine into a list
-  ga_feat_sel_out <- list(
-    optVariables = optVariables
-  )
-  
-  ## Return result
-  return(ga_feat_sel_out)
-  
-}
-
-
-
 ## A function for the recursive feature addition procedure
-select_features_met <- function(data, env.col = "environment", search.method = c("hill.climb", "exchange", "gen.alg")) {
+select_features_met <- function(data, env.col = "environment", covariates.use, search.method = c("stepwise", "lasso")) {
   
   # 1. Fit a base model
   base_fit <- lm(value ~ 1 + line_name, data = data)
-  covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+  covariates_use <- covariates.use
   search.method <- match.arg(search.method)
   
   ## If hill climb, use stepwise approach
-  if (search.method == "hill.climb") {
+  if (search.method == "stepwise") {
     
     ## Recursive feature addition ##
     ## Main effect
@@ -1279,29 +698,66 @@ select_features_met <- function(data, env.col = "environment", search.method = c
       adhoc_nosoil = list(rfa_out_nosoil, rfa_out_int_nosoil)
     )
     
-  } else if (search.method == "exchange") {
+  } else if (search.method == "lasso") {
     
-  } else if (search.method == "gen.alg") {
+    require(glmnet)
     
-    ## Run a genetic algorithm to find the optimal variables
-    genalg_out <- genalg_loo(base.formula = formula(base_fit), covariates.use = covariates_use, data = data)
+    # Estimate feature importance using the LASSO
     
-    ## Fit a model with the selected covariates
-    base_fit_int <- update(base_fit, formula = reformulate(genalg_out$optVariables, response = "value"))
+    ## First convert data to a model frame
+    mf <- model.frame(formula = reformulate(termlabels = c("line_name", covariates_use), response = "value"), data = data)
+    # Pull response vector
+    y <- model.response(mf)
+    # Create matrix of covariates
+    X <- model.matrix(reformulate(termlabels = c("line_name", covariates_use), intercept = FALSE), mf)
+    # X <- model.matrix(reformulate(termlabels = c(covariates_use), intercept = FALSE), mf)
     
-    # Rerun the genetic algorithm to find interaction covariates
-    genalg_out_int <- genalg_loo(base.formula = formula(base_fit_int), 
-                                 covariates.use = paste0("line_name:", covariates_use), 
-                                 data = data, maxiter = 100)
+    ## Conduct leave-one-out cross-validation
+    # Determine which observation is in what fold
+    fold_id <- as.numeric(data[[env.col]])
+    cv_lasso_out <- cv.glmnet(x = X, y = y, type.measure = "mse", foldid = fold_id, alpha = 1)
+    # Record the MSE
+    min_RMSE <- sqrt(min(cv_lasso_out$cvm))
     
+    # Get the coefficients for each ec
+    ec_coef <- as.matrix(coef(object = cv_lasso_out, s = "lambda.min"))[covariates_use,,drop = FALSE]
+    
+    # Calculate relative importance as the ratio of the absolute value of each coefficient
+    # to the sum of the absolute value of the coefficients
+    ec_importance <- abs(ec_coef) / sum(abs(ec_coef))
+    colnames(ec_importance) <- "importance"
+    ec_importance[is.na(ec_importance),] <- 0
+    
+    
+    ## Do the same thing, but without soil variables
+    X <- model.matrix(reformulate(termlabels = c("line_name", covariates_use[!grepl(pattern = "soil", x = covariates_use)]), 
+                                  intercept = FALSE), mf)
 
+    ## Conduct leave-one-out cross-validation
+    # Determine which observation is in what fold
+    fold_id <- as.numeric(data[[env.col]])
+    cv_lasso_out <- cv.glmnet(x = X, y = y, type.measure = "mse", foldid = fold_id, alpha = 1)
+    # Record the MSE
+    min_RMSE_nosoil <- sqrt(min(cv_lasso_out$cvm))
+    
+    # Get the coefficients for each ec
+    ec_coef <- as.matrix(coef(object = cv_lasso_out, s = "lambda.min"))[intersect(colnames(X), covariates_use),,drop = FALSE]
+    
+    # Calculate relative importance as the ratio of the absolute value of each coefficient
+    # to the sum of the absolute value of the coefficients
+    ec_importance_nosoil <- abs(ec_coef) / sum(abs(ec_coef))
+    colnames(ec_importance_nosoil) <- "importance"
+    ec_importance_nosoil[is.na(ec_importance_nosoil),] <- 0
+    
     
     ## Create a tibble
     res <- tibble(
-      feat_sel_type = "rfa_cv",
+      feat_sel_type = "lasso_cv",
       model = c("model2", "model3"),
-      adhoc = list(rfa_out, rfa_out_int),
-      adhoc_nosoil = list(rfa_out_nosoil, rfa_out_int_nosoil)
+      adhoc = list(ec_importance, ec_importance),
+      adhoc_nosoil = list(ec_importance_nosoil, ec_importance_nosoil),
+      adhoc_RMSE = min_RMSE,
+      adhoc_nosoil_RMSE = min_RMSE_nosoil
     )
     
   }
@@ -1321,7 +777,7 @@ select_features_met <- function(data, env.col = "environment", search.method = c
 
 
 # Create a function to generate these relationship matrices
-Env_mat <- function(x, method = c("Jarquin2014", "Malosetti2016", "Rincent2019")) {
+Env_mat <- function(x, weights = NULL, method = c("Jarquin2014", "Malosetti2016", "Rincent2019", "weightedJarquin2014")) {
   
   method <- match.arg(method)
   
@@ -1340,6 +796,18 @@ Env_mat <- function(x, method = c("Jarquin2014", "Malosetti2016", "Rincent2019")
   } else if (method == "Rincent2019") {
     D <- as.matrix(dist(x))
     EMAT <- 1 - (D / max(D))
+    
+  } else if (method == "weightedJarquin2014") {
+    
+    if (is.null(weights)) stop("weights must not be null if method = 'weightedJarquin2014'.")
+    # Other error handlist
+    stopifnot(sum(weights) == 1)
+    stopifnot(length(weights) == ncol(x))
+    
+    # Multiply the covariates by the square root of the weights
+    weightMat <- matrix(data = weights, ncol = ncol(x), nrow = nrow(x), byrow = TRUE)
+    EMAT <- tcrossprod(x * sqrt(weightMat))
+    
     
   }
   
@@ -2164,7 +1632,138 @@ get_soil_data <- function(trial.info, gridsize = 0.01, hwsd.bil) {
 
 
 
-
+# ## Function for running genetic algorithm for variable selection
+# genalg_loo <- function(base.formula, covariates.use, data, maxiter = 50, popSize = 150, reps = 5) {
+#   
+#   require(genalg, quietly = TRUE)
+#   require(GA, quietly = TRUE)
+#   require(memoise, quietly = TRUE)
+#   
+#   # Create an evaluation function (PRESS) to minimize
+#   fitness <- function(indices, base.formula, maximize = TRUE) {
+#     
+#     # If the number of 1s is greater than the number of environments - 1, return Inf
+#     if (sum(indices) > n_distinct(data$environment) - 1) {
+#       return(ifelse(maximize, -Inf, Inf))
+#       
+#     } else {
+#       # variable selection based on the indices
+#       form <- reformulate(c(attr(terms(base.formula), "term.labels"), covariates.use[indices == 1]), response = "value")
+#       # Fit the model
+#       lm_fit <- lm(formula = form, data = data)
+#       # Conduct rapid CV
+#       rapid_cv_out <- rapid_cv(object = lm_fit, index = loo_indices)
+#       # Return the statistic (RMSE)
+#       
+#       if (all(is.na(rapid_cv_out))) {
+#         return(ifelse(maximize, -Inf, Inf))
+#       } else {
+#         return(ifelse(maximize, -rapid_cv_out["RMSE"], rapid_cv_out["RMSE"]))
+#       }
+#     }
+#   }
+#   
+#   ## Alternative fitness function that returns BIC
+#   fitnessBIC <- function(indices, base.formula) {
+#     
+#     # If the number of 1s is greater than the number of environments - 1, return Inf
+#     if (sum(indices) > n_distinct(data$environment) - 1) {
+#       return(-Inf)
+#       
+#     } else {
+#       # variable selection based on the indices
+#       form <- reformulate(c(attr(terms(base.formula), "term.labels"), covariates.use[indices == 1]), response = "value")
+#       
+#       # Fit the model
+#       lm_fit <- lm(formula = form, data = data)
+#       -BIC(lm_fit)
+#       
+#       # y <- data$value
+#       # x <- model.matrix(form, data)
+#       # lm_fit <- lm.fit(x = x, y = y)
+#       # -BIC(structure(lm_fit, class = "lm"))
+# 
+#     }
+#   }
+#   
+#   ## Create a funciton to generate a population
+#   generateBinaryPopulation <- function(object, maxNonZero = n_distinct(data$environment) - 1) {
+#     # empty matrix
+#     population <- matrix(as.double(0), nrow = object@popSize, ncol = object@nBits)
+#     for (i in 1:object@popSize) {
+#       # Sample the maxNonZero size
+#       nOne <- sample(maxNonZero, 1)
+#       population[i, sample(object@nBits, nOne)] <- 1
+#     }
+#     storage.mode(population) <- "integer"
+#     return(population)
+#   }
+#   
+#   ## Create a function to select
+#   selectBinaryPopulation <- function(object) {
+#     # Remove any individuals with infinite fitness
+#     fitness1 <- object@fitness
+#     fitness1[is.infinite(fitness1)] <- NA
+#     fitnessOrder <- order(fitness1, decreasing = TRUE, na.last = NA)
+#     
+#     # Select
+#     selectFitness <- fitnessOrder[1:object@elitism]
+#     sel <- sample(x = selectFitness, size = object@popSize, replace = TRUE)
+#     out <- list(population = object@population[sel, , drop = FALSE], 
+#                 fitness = object@fitness[sel])
+#     
+#   }
+# 
+#   
+#   ## Memoize the function
+#   mFitness <- memoize(fitness)
+#   mFitnessBIC <- memoize(fitnessBIC)
+#   
+#   ## Repeat the genetic algorithm x times
+#   ga_out_repeats <- replicate(n = reps, expr = {
+#     ga(type = "binary", fitness = mFitness, nBits = length(covariates.use), 
+#        population = generateBinaryPopulation, selection = selectBinaryPopulation,
+#        maxiter = maxiter, popSize = popSize, elitism = ceiling(0.1 * popSize), pmutation = 0.2,
+#        base.formula = base.formula)
+#   }, simplify = FALSE)
+#   
+#   ## Get a matrix of solutions; 
+#   solutions_mat <- do.call("rbind", map(ga_out_repeats, ~slot(., "solution")))
+#   # Iteratively subset the solutions matrix based on decreasing probability
+#   # that a feature was selected
+#   solutions_mat1 <- solutions_mat
+#   optSol <- FALSE
+#   
+#   while (!optSol) {
+#     probs_ord <- sort(colMeans(solutions_mat1), decreasing = TRUE)
+#     probs_ord1 <- probs_ord[probs_ord != 1]
+#     
+#     # Find solutions that are positive for the most frequent features
+#     which_feature_names <- names(subset(probs_ord1, probs_ord1 == max(probs_ord1)))
+#     solutions_mat1_temp <- solutions_mat1[rowMeans(solutions_mat1[,which_feature_names,drop = FALSE]) == 1,, drop = FALSE]
+#     
+#     # If zero, return the first solution
+#     if (nrow(solutions_mat1_temp) == 0) {
+#       optSol <- TRUE
+#       solutions_mat1 <- solutions_mat1[1,,drop = FALSE]
+#     } else {
+#       solutions_mat1 <- solutions_mat1_temp
+#     }
+#   }
+#     
+#   # Get the optimal variables
+#   bestSolution <- as.vector(solutions_mat1)
+#   optVariables <- c("line_name", covariates.use[bestSolution == 1])
+#   
+#   ## Combine into a list
+#   ga_feat_sel_out <- list(
+#     optVariables = optVariables
+#   )
+#   
+#   ## Return result
+#   return(ga_feat_sel_out)
+#   
+# }
 
 
 
