@@ -801,7 +801,7 @@ Env_mat <- function(x, weights = NULL, method = c("Jarquin2014", "Malosetti2016"
     
     if (is.null(weights)) stop("weights must not be null if method = 'weightedJarquin2014'.")
     # Other error handlist
-    stopifnot(sum(weights) == 1)
+    stopifnot(abs(1 - sum(weights)) < 1e-10)
     stopifnot(length(weights) == ncol(x))
     
     # Multiply the covariates by the square root of the weights

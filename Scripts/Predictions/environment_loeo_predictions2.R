@@ -26,7 +26,7 @@ library(parallel)
 
 ## Number of cores
 # n_core <- detectCores()
-n_core <- 12
+n_core <- 16
 
 # Source of covariates
 source_use <- "daymet"
