@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#PBS -l walltime=16:00:00,mem=62gb,nodes=1:ppn=12
+#PBS -l walltime=36:00:00,mem=62gb,nodes=1:ppn=16
 # #PBS -l walltime=04:00:00,mem=62gb,nodes=1:ppn=12
 # #PBS -N loeo_predictions_fr
 # #PBS -N lolo_predictions_fr
@@ -18,7 +18,7 @@ module load R/3.5.2_mkl
 ## Factorial regression 
 
 # Leave-one-environment-out
-# Rscript environment_loeo_predictions2.R
+Rscript environment_loeo_predictions2.R
 
 # # Leave-one-location-out
 # Rscript environment_lolo_predictions2.R
@@ -29,4 +29,4 @@ module load R/3.5.2_mkl
 
 
 ## Locations predictions using long-term covariates
-Rscript environment_lolo_longterm_covariates_predictions2.R
+# Rscript environment_lolo_longterm_covariates_predictions2.R
