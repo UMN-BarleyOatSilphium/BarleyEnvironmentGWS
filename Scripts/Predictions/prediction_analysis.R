@@ -102,30 +102,23 @@ within_environment_prediction_accuracy <- predictive_ability %>%
 
 
 
-# ## Quick plot of accuracy across all data points
-# predictive_ability %>%
-#   filter(type %in% c("lolo", "loeo"), selection != "stepAIC_adhoc") %>%
-#   distinct(trait, model, pop, type, selection, ability_all, rmse_all) %>%
-#   ggplot(aes(x = model, y = ability_all, fill = selection)) +
-#   geom_col(position = position_dodge(0.9)) +
-#   facet_grid(trait ~ type + pop)
-# 
-# ## Print some predictive abilities
-# predictive_ability %>%
-#   filter(type == "lolo", str_detect(model, "model3"), pop == "tp") %>%
-#   select(trait, model, selection, contains("_all")) %>%
-#   distinct() %>%
-#   as.data.frame()
+## Quick plot of accuracy across all environments/locations
+predictive_ability %>%
+  filter(type %in% c("loeo"), selection != "none") %>%
+  distinct(trait, model, pop, type, selection, ability_all, rmse_all) %>%
+  ggplot(aes(x = model, y = ability_all, fill = selection)) +
+  geom_col(position = position_dodge(0.9)) +
+  facet_grid(trait ~ type + pop)
 
 
 # Plot predicted versus observed values for a subset
 predictions_df %>%
-  filter(type == "lolo", selection == "rfa_adhoc", model == "model3_cov") %>%
+  filter(type == "env_external", model == "model3_cov", selection %in% c("lasso_cv_adhoc", "stepwise_cv_adhoc")) %>%
   ggplot(aes(x = pred_complete, y = value, color = test_group)) +
   geom_abline(slope = 1, intercept = 0) +
   geom_point(size = 0.5) +
   scale_color_discrete(guide = FALSE) +
-  facet_wrap(~ type + selection + trait + model + pop, scales = "free", ncol = 2, labeller = labeller(.multi_line = FALSE)) +
+  facet_wrap(~ type + trait + selection + model + pop, scales = "free", ncol = 4, labeller = labeller(.multi_line = FALSE)) +
   theme_presentation2(10)
 
 

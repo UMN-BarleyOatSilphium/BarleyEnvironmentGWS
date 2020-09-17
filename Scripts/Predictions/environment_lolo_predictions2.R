@@ -38,8 +38,9 @@ load(file.path(result_dir, "concurrent_historical_covariables.RData"))
 load(file.path(result_dir, "feature_selection_results.RData"))
 
 ## Data.frame of timeframes to use per trait
-time_frame_use_df <- historical_feature_selection %>%
-  distinct(trait, time_frame)
+time_frame_use_df <- bind_rows(historical_feature_selection, historical_feature_importance) %>%
+  mutate(feat_sel_type = str_remove(feat_sel_type, "_nosoil")) %>%
+  distinct(trait, time_frame, feat_sel_type)
 
 ## For either environments or locations, fit the models:
 ## 
@@ -94,11 +95,9 @@ S2_MET_loc_BLUEs <- S2_MET_BLUEs %>%
 loc_ec_tomodel_scaled <- bind_rows(historical_ec_tomodel_timeframe_scaled, historical_ec_tomodel_window_scaled) %>%
   filter(source == source_use, time_frame %in% unique(time_frame_use_df$time_frame))
 
+
+
 # Leave-one-out -----------------------------------------------
-
-
-
-
 # Data to use
 data_to_model <- S2_MET_loc_BLUEs %>% 
   filter(line_name %in% c(tp_geno, vp_geno),
@@ -111,50 +110,54 @@ data_to_model <- S2_MET_loc_BLUEs %>%
   mutate(loc = location)
 
 
-# # Use the features identified in the environment-specific analysis
-# concurrent_feature_selection <- concurrent_feature_selection %>%
-#   gather(selection_type, covariates, adhoc, adhoc_nosoil) %>% 
-#   unite(feat_sel_type, feat_sel_type, selection_type, sep = "_") %>%
-#   mutate(model = case_when(model == "model2" ~ "model4", model == "model3" ~ "model5"),
-#          feat_sel_type = paste0("concurrent_", feat_sel_type))
-
-
-
-
-# Remove soil variable from all variables
+# Remove soil variable from all variables to create a "no soil" group
 historical_all_features <- historical_all_features %>%
   mutate(covariates = map(covariates, ~modify_at(.x, "optVariables", ~str_subset(.x, "soil", negate = TRUE))), 
          feat_sel_type = "all_nosoil") %>%
   bind_rows(historical_all_features, .)
 
-
 # Combine feature selection df
-feature_selection_df <- bind_rows(historical_fact_reg_feature_selection, mutate(historical_feature_selection, source = "daymet"),
-                                  historical_all_features) %>%
-  select(-contains("time_frame"))
+feature_selection_df <- bind_rows(
+  historical_all_features,
+  historical_apriori_feature_selection,
+  mutate(mutate(historical_feature_selection, source = "daymet"), feat_sel_type = str_replace(feat_sel_type, "rfa", "stepwise")),
+  mutate(historical_feature_importance, source = "daymet", covariates = map(covariates, "importance"),
+         covariates = map(covariates, ~subset(rownames_to_column(as.data.frame(.x), "covariate"), importance != 0)))
+) %>% select(-contains("time_frame"))
+
+
+# Give equal-weight importance to covariates except those from the LASSO
+feature_selection_df <- feature_selection_df %>%
+  mutate(covariates = pmap(select(., covariates, feat_sel_type, model), ~{
+    if (grepl("lasso", ..2)) {
+      ..1
+    } else {
+      # Subset for interaction covariates, if model is model3
+      if (..3 == "model5") {
+        vars <- str_subset(..1$optVariables, "line_name:") %>% str_remove_all(., "line_name:")
+      } else {
+        vars <- ..1$optVariables
+      }
+      
+      data.frame(covariate = setdiff(vars, "line_name"), stringsAsFactors = FALSE) %>%
+        mutate(importance = 1 / nrow(.))
+    }
+  }))
 
 
 # Reorganize covariate df
 covariates_tomodel <- feature_selection_df %>%
-  # bind_rows(., concurrent_feature_selection) %>% # Add covariates selected in the concurrent analysis
   # Filter the source to use
   filter(source %in% source_use) %>%
-  # Do not use the AIC stepwise covariates
-  filter(str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
   rename(feature_selection = feat_sel_type) %>%
-  select(-direction) %>%
-  mutate(covariates = map(covariates, "optVariables"),
-         covariates = modify_if(covariates, is.null, ~character(0))) %>%
-  unnest() %>%
-  filter(covariates != "line_name") %>%
+  unnest(covariates) %>%
+  filter(covariate != "line_name") %>%
   group_by(source, trait, feature_selection, model) %>%
   nest(.key = "covariates") %>%
   ungroup() %>%
-  # Collapse covariates
-  mutate(covariates = map(covariates, "covariates")) %>%
-  # nest
   group_by(trait) %>% 
-  nest(.key = "model_covariates")
+  nest(.key = "model_covariates") %>%
+  ungroup()
 
 
 
@@ -190,8 +193,7 @@ lolo_predictions_out <- data_train_test1 %>%
       row <- core_df[i,]
       # Get covariates
       covariates_row <- row$model_covariates[[1]]
-      # Get the timeframe for this trait
-      time_frame_use <- subset(time_frame_use_df, trait == row$trait, time_frame, drop = TRUE)
+
       
       # Record the number of environment and observations used for training
       train_n <- summarize(row$train[[1]], nSite = n_distinct(site), nObs = n())
@@ -223,28 +225,36 @@ lolo_predictions_out <- data_train_test1 %>%
       # Iterate over rows
       for (r in seq_len(nrow(covariates_use))) {
         
+        # What is the feature selection method?
+        fsm <- covariates_use$feature_selection[r]
+        # Get the timeframe for this trait
+        time_frame_use <- subset(time_frame_use_df, 
+                                 trait == row$trait & feat_sel_type == ifelse(grepl("lasso", fsm), "lasso_cv_adhoc", "stepwise_cv_adhoc"),
+                                 time_frame, drop = TRUE)
+        
         # List of covariates
-        covariate_list <- tibble(term = unique(unlist(covariates_use[r, c("model4", "model5")]))) %>% 
-          mutate(class = ifelse(str_detect(term, ":"), "interaction", "main"),
-                 covariate = str_remove(term, "line_name:")) %>%
-          split(.$class) %>% 
-          map("covariate")
+        covariate_list <- covariates_use[r,] %>%
+          select(main = model4, interaction = model5) %>%
+          as.list() %>%
+          map(1)
         
         # Create a matrix of scaled and centered covariates
         covariate_mat <- loc_ec_tomodel_scaled %>%
           filter(time_frame == time_frame_use,
                  location %in% levels(row$train[[1]]$site1)) %>%
-          select(., location, unique(unlist(covariate_list))) %>%
+          select(-source, -time_frame) %>%
           as.data.frame() %>%
           column_to_rownames("location") %>%
           as.matrix()
         
         ## Environmental relationship matrices
-        Emain <- Env_mat(x = covariate_mat[,covariate_list$main, drop = FALSE], method = "Jarq")
+        Emain <- Env_mat(x = covariate_mat[,covariate_list$main$covariate, drop = FALSE], 
+                         weights = covariate_list$main$importance, method = "weightedJarq")
         if (is.null(covariate_list$interaction)) {
           Eint <- diag(ncol(Emain)); dimnames(Eint) <- dimnames(Emain)
         } else {
-          Eint <- Env_mat(x = covariate_mat[,covariate_list$int, drop = FALSE], method = "Jarq")
+          Eint <- Env_mat(x = covariate_mat[,covariate_list$int$covariate, drop = FALSE], 
+                          weights = covariate_list$int$importance, method = "weightedJarq")
         }
         
         # run predictions
@@ -327,8 +337,6 @@ loc_external_predictions_out <- loc_external_train_val1 %>%
       row <- core_df[i,]
       # Get covariates
       covariates_row <- row$model_covariates[[1]]
-      # Get the timeframe for this trait
-      time_frame_use <- subset(time_frame_use_df, trait == row$trait, time_frame, drop = TRUE)
       
       # Record the number of sites and observations used for training
       train_n <- summarize(row$train[[1]], nSite = n_distinct(site), nObs = n())
@@ -360,28 +368,36 @@ loc_external_predictions_out <- loc_external_train_val1 %>%
       # Iterate over rows
       for (r in seq_len(nrow(covariates_use))) {
         
+        # What is the feature selection method?
+        fsm <- covariates_use$feature_selection[r]
+        # Get the timeframe for this trait
+        time_frame_use <- subset(time_frame_use_df, 
+                                 trait == row$trait & feat_sel_type == ifelse(grepl("lasso", fsm), "lasso_cv_adhoc", "stepwise_cv_adhoc"),
+                                 time_frame, drop = TRUE)
+        
         # List of covariates
-        covariate_list <- tibble(term = unique(unlist(covariates_use[r, c("model4", "model5")]))) %>% 
-          mutate(class = ifelse(str_detect(term, ":"), "interaction", "main"),
-                 covariate = str_remove(term, "line_name:")) %>%
-          split(.$class) %>% 
-          map("covariate")
+        covariate_list <- covariates_use[r,] %>%
+          select(main = model4, interaction = model5) %>%
+          as.list() %>%
+          map(1)
         
         # Create a matrix of scaled and centered covariates
         covariate_mat <- loc_ec_tomodel_scaled %>%
           filter(time_frame == time_frame_use,
                  location %in% levels(row$train[[1]]$site1)) %>%
-          select(., location, unique(unlist(covariate_list))) %>%
+          select(-source, -time_frame) %>%
           as.data.frame() %>%
           column_to_rownames("location") %>%
           as.matrix()
         
         ## Environmental relationship matrices
-        Emain <- Env_mat(x = covariate_mat[,covariate_list$main, drop = FALSE], method = "Jarq")
+        Emain <- Env_mat(x = covariate_mat[,covariate_list$main$covariate, drop = FALSE], 
+                         weights = covariate_list$main$importance, method = "weightedJarq")
         if (is.null(covariate_list$interaction)) {
           Eint <- diag(ncol(Emain)); dimnames(Eint) <- dimnames(Emain)
         } else {
-          Eint <- Env_mat(x = covariate_mat[,covariate_list$int, drop = FALSE], method = "Jarq")
+          Eint <- Env_mat(x = covariate_mat[,covariate_list$int$covariate, drop = FALSE], 
+                          weights = covariate_list$int$importance, method = "weightedJarq")
         }
         
         # run predictions
