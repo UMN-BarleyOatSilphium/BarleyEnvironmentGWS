@@ -477,7 +477,8 @@ rfa_loo <- function(object, data, scope, metric = c("RMSE", "R2"), index, env.co
     while (!optMetric & !allCovUsed) {
       
       # Iterate over cov_available and build models
-      cov_addition_objects <- map(cov_available, ~update(object = base_fit, formula = reformulate(c(cov_used, .), response = "value")))
+      cov_addition_objects <- map(cov_available, 
+                                  ~update(object = base_fit, formula = reformulate(c(cov_used, .), response = "value"), data = mf))
       # Remove NAs
       object_is_na <- map_lgl(cov_addition_objects, ~any(is.na(coef(.x))))
       cov_addition_objects1 <- setNames(object = cov_addition_objects[!object_is_na], cov_available[!object_is_na])
@@ -546,7 +547,8 @@ rfa_loo <- function(object, data, scope, metric = c("RMSE", "R2"), index, env.co
         ## Create formulae where all covariates except line name and the last covariate
         ## added are eligible for removal
         cov_removable <- setdiff(cov_used, c("line_name", cov_retain))
-        cov_removal_objects <- map(cov_removable, ~update(object = base_fit, formula = reformulate(setdiff(cov_used, .), response = "value")))
+        cov_removal_objects <- map(cov_removable, 
+                                   ~update(object = base_fit, formula = reformulate(setdiff(cov_used, .), response = "value"), data = mf))
         
         # Remove NAs
         object_is_na <- map_lgl(cov_removal_objects, ~any(is.na(coef(.x))))
@@ -586,7 +588,7 @@ rfa_loo <- function(object, data, scope, metric = c("RMSE", "R2"), index, env.co
       cov_addition_objects <- cov_available %>%
         # Add lower level main effects if interactions are present
         modify_if(~str_detect(., ":"), ~paste0(str_remove(., "line_name:"), " + ", .)) %>%
-        map(~update(object = base_fit, formula = reformulate(c(cov_used, .), response = "value")))
+        map(~update(object = base_fit, formula = reformulate(c(cov_used, .), response = "value"), data = mf))
       # Remove NAs
       object_is_na <- map_lgl(cov_addition_objects, ~any(is.na(coef(.x))))
       cov_addition_objects1 <- setNames(object = cov_addition_objects[!object_is_na], cov_available[!object_is_na])
