@@ -112,9 +112,10 @@ historical_timeframe_selection <- S2_MET_loc_BLUEs_tomodel %>%
   crossing(., feat_sel_type = c("adhoc", "adhoc_nosoil"))
 
 
+
+
 ## Parallelize
 historical_timeframe_selection_out <- historical_timeframe_selection %>%
-  head(3) %>% 
   # Break up by cores
   assign_cores(df = ., n_core = n_cores, split = TRUE) %>%
   # Apply a function over cores
@@ -215,54 +216,6 @@ save("historical_timeframe_selection_out", file = file.path(result_dir, "histori
 
 
 
-# Identify the best timeframes using the LASSO ----------------------------
-
-# Create a setup df
-historical_timeframe_selection_lasso <- S2_MET_loc_BLUEs_tomodel %>%
-  left_join(., bind_rows(historical_ec_tomodel_centered_use), by = "location") %>%
-  group_by(trait, time_frame) %>%
-  nest() %>%
-  ungroup() %>%
-  # Output list
-  mutate(out = list(NULL))
-
-
-# Iterate over rows
-for (i in seq_len(nrow(historical_timeframe_selection_lasso))) {
-  
-  row <- historical_timeframe_selection_lasso[i,]
-  
-  # Factorize
-  df1 <- mutate_at(row$data[[1]], vars(line_name, location), ~fct_contr_sum(as.factor(.)))
-  covariates_use <- subset(trait_covariate_df, trait == row$trait, covariate, drop = TRUE)
-  
-  ## Run variable importance using LASSO
-  lasso_out <- select_features_met(data = df1, env.col = "location", covariates.use = covariates_use, 
-                                   search.method = "lasso")
-  
-  ## Reformulate for export
-  lasso_out1 <- lasso_out %>%
-    mutate(adhoc = map2(adhoc, adhoc_RMSE, ~list(optVariables = names(.x[.x != 0,]), finalResults = c("RMSE" = .y, "MSE" = .y^2),
-                                                 importance = .x)),
-           adhoc_nosoil = map2(adhoc_nosoil, adhoc_nosoil_RMSE, ~list(optVariables = names(.x[.x != 0,]), 
-                                                                      finalResults = c("RMSE" = .y, "MSE" = .y^2), importance = .x))) %>%
-    select(model, adhoc, adhoc_nosoil) %>%
-    gather(feat_sel_type, covariates, -model)
-
-  
-  ## Create a tibble
-  historical_timeframe_selection_lasso$out[[i]] <- lasso_out1
-  
-  # Notify
-  cat("LASSO analysis for trait", row$trait, "with timeframe", row$time_frame, "complete.\n")
-  
-}
-
-## Tidy up
-historical_timeframe_selection_lasso_out <- historical_timeframe_selection_lasso %>%
-  unnest(out) %>%
-  mutate(model = ifelse(model == "model2", "model4", "model5"))
-  
 
 
 
@@ -270,13 +223,69 @@ historical_timeframe_selection_lasso_out <- historical_timeframe_selection_lasso
 
 
 
+# # Identify the best timeframes using the LASSO ----------------------------
+# 
+# # Create a setup df
+# historical_timeframe_selection_lasso <- S2_MET_loc_BLUEs_tomodel %>%
+#   left_join(., bind_rows(historical_ec_tomodel_centered_use), by = "location") %>%
+#   group_by(trait, time_frame) %>%
+#   nest() %>%
+#   ungroup() %>%
+#   # Output list
+#   mutate(out = list(NULL))
+# 
+# 
+# # Iterate over rows
+# for (i in seq_len(nrow(historical_timeframe_selection_lasso))) {
+#   
+#   row <- historical_timeframe_selection_lasso[i,]
+#   
+#   # Factorize
+#   df1 <- mutate_at(row$data[[1]], vars(line_name, location), ~fct_contr_sum(as.factor(.)))
+#   # Vector of covariates for this trait
+#   covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+#   
+#   ## Include interactions between rainfall and soil variables
+#   interaction_covariates <- cross(list(str_subset(covariates_use, "water_balance"), str_subset(covariates_use, "soil"))) %>%
+#     map_chr(~map_chr(., 1) %>% paste0(., collapse = ":"))
+#   
+#   covariates_use <- c(covariates_use, interaction_covariates)
+#   
+#   ## Run variable importance using LASSO
+#   lasso_out <- select_features_met(data = df1, covariates.use = covariates_use, env.col = "environment", search.method = "lasso")
+#   
+#   ## Reformulate for export
+#   lasso_out1 <- lasso_out %>%
+#     mutate(adhoc = map2(adhoc, adhoc_RMSE, ~list(optVariables = names(.x[.x != 0,]), finalResults = c("RMSE" = .y, "MSE" = .y^2),
+#                                                  importance = .x)),
+#            adhoc_nosoil = map2(adhoc_nosoil, adhoc_nosoil_RMSE, ~list(optVariables = names(.x[.x != 0,]),
+#                                                                       finalResults = c("RMSE" = .y, "MSE" = .y^2), importance = .x))) %>%
+#     select(model, adhoc, adhoc_nosoil) %>%
+#     gather(feat_sel_type, covariates, -model)
+#   
+#   
+#   ## Create a tibble
+#   historical_timeframe_selection_lasso$out[[i]] <- lasso_out1
+#   
+#   # Notify
+#   cat("LASSO analysis for trait", row$trait, "with timeframe", row$time_frame, "complete.\n")
+#   
+# }
+# 
+# ## Tidy up
+# historical_timeframe_selection_lasso_out <- historical_timeframe_selection_lasso %>%
+#   unnest(out) %>%
+#   mutate(model = ifelse(model == "model2", "model4", "model5"))
+# 
+# 
+# 
 # # Analyze the results -----------------------------------------------------
 # 
 # 
 # load(file.path(result_dir, "historical_covariate_timeframe_selection.RData"))
 # 
 # # What timeframe returns the lowest RMSE per trait?
-# historical_timeframe_analysis <- bind_rows(mutate(historical_timeframe_selection_lasso_out, method = "lasso"), 
+# historical_timeframe_analysis <- bind_rows(mutate(historical_timeframe_selection_lasso_out, method = "lasso"),
 #                                            mutate(historical_timeframe_selection_out, method = "stepwise")) %>%
 #   filter(model == "model5") %>%
 #   mutate(results = map(covariates, "finalResults") %>% map(as.list) %>% map(as_tibble),
@@ -299,8 +308,8 @@ historical_timeframe_selection_lasso_out <- historical_timeframe_selection_lasso
 # 
 # # Return the timeframe or window with the lowest RMSE per trait
 # best_historical_timeframe <- historical_timeframe_analysis %>%
-#   filter(feat_sel_type == "adhoc") %>% 
-#   group_by(trait, method) %>% 
+#   filter(feat_sel_type == "adhoc") %>%
+#   group_by(trait, method) %>%
 #   top_n(x = ., n = 1, wt = -RMSE) %>%
 #   ungroup()
 # 
@@ -325,8 +334,8 @@ historical_timeframe_selection_lasso_out <- historical_timeframe_selection_lasso
 # #   geom_line() +
 # #   facet_grid(trait ~ time_frame_type, scales = "free_y") +
 # #   theme_genetics(10)
-# #     
-# # 
+# #
+# #
 # # historical_timeframe_analysis %>%
 # #   filter(method == "lasso", feat_sel_type == "adhoc") %>%
 # #   mutate(lty = ifelse(time_frame_type == "time_frame", "-", length),
@@ -439,7 +448,7 @@ historical_timeframe_selection_lasso_out <- historical_timeframe_selection_lasso
 # load(file.path(result_dir, "concurrent_feature_selection_results.RData"))
 # 
 # save("concurrent_feature_selection", "historical_feature_selection",
-#      "concurrent_feature_importance", "historical_feature_importance", 
+#      "concurrent_feature_importance", "historical_feature_importance",
 #      "concurrent_apriori_feature_selection", "historical_apriori_feature_selection",
 #      "concurrent_all_features", "historical_all_features",
 #      file = file.path(result_dir, "feature_selection_results.RData"))

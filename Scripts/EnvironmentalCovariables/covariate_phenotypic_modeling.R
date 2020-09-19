@@ -198,6 +198,9 @@ concurrent_stepwise_feature_selection <- unnest(concurrent_stepwise_feature_sele
   unite(feat_sel_type, feat_sel_type, selection_type, sep = "_")
 
 
+
+
+
 # Determine feature importance using LASSO --------------------------------
 
 # Calculate environmental means
@@ -246,7 +249,7 @@ for (i in seq_len(nrow(concurrent_feature_importance_list))) {
   df1 <- df %>%
     # filter(location != "Aberdeen") %>%
     droplevels() %>%
-    left_join(., ec_tomodel_centered[[src]], by = "environment") %>%
+    left_join(., ec_tomodel_scaled[[src]], by = "environment") %>%
     mutate_at(vars(environment), ~fct_contr_sum(as.factor(.))) %>%
     dplyr::rename(value = effect)
   
@@ -255,6 +258,15 @@ for (i in seq_len(nrow(concurrent_feature_importance_list))) {
     crossv_loo_grouped() %>%
     pull(train) %>%
     map("idx")
+  
+  # Vector of covariates for this trait
+  covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+  
+  ## Include interactions between rainfall and soil variables
+  interaction_covariates <- cross(list(str_subset(covariates_use, "water_balance"), str_subset(covariates_use, "soil"))) %>%
+    map_chr(~map_chr(., 1) %>% paste0(., collapse = ":"))
+
+  covariates_use <- c(covariates_use, interaction_covariates)
   
   ## Feature importance using the LASSO
   lasso_importance_out <- select_features_met(data = df1, covariates.use = covariates_use, env.col = "environment", search.method = "lasso")

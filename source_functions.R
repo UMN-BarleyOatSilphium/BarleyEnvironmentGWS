@@ -706,7 +706,7 @@ select_features_met <- function(data, env.col = "environment", covariates.use, s
     
     # Estimate feature importance using the LASSO
     # x terms
-    predictors <- intersect(c("line_name", covariates_use), names(data))
+    predictors <- c(intersect("line_name", names(data)), covariates_use)
     
     
     ## First convert data to a model frame
@@ -720,12 +720,13 @@ select_features_met <- function(data, env.col = "environment", covariates.use, s
     ## Conduct leave-one-out cross-validation
     # Determine which observation is in what fold
     fold_id <- as.numeric(data[[env.col]])
-    cv_lasso_loo_out <- cv.glmnet(x = X, y = y, type.measure = "mse", foldid = fold_id, alpha = 1, grouped = FALSE)
+    cv_lasso_loo_out <- cv.glmnet(x = X, y = y, type.measure = "mse", foldid = fold_id, alpha = 1, grouped = FALSE,
+                                  standardize = FALSE, nlambda = 100)
     # Record the MSE
     min_RMSE_loo <- sqrt(min(cv_lasso_loo_out$cvm))
     
     # Get the coefficients for each ec
-    ec_coef <- as.matrix(coef(object = cv_lasso_loo_out, s = "lambda.min"))[covariates_use,,drop = FALSE]
+    ec_coef <- as.matrix(coef(object = cv_lasso_loo_out, s = "lambda.min"))[predictors,,drop = FALSE]
     
     # Calculate relative importance as the ratio of the absolute value of each coefficient
     # to the sum of the absolute value of the coefficients
@@ -735,18 +736,18 @@ select_features_met <- function(data, env.col = "environment", covariates.use, s
     
     
     ## Do the same thing, but without soil variables
-    predictors <- intersect(c("line_name", covariates_use[!grepl(pattern = "soil", x = covariates_use)]), names(data))
+    predictors <- predictors[!grepl(pattern = "soil", x = predictors)] 
     X <- model.matrix(reformulate(termlabels = predictors, intercept = FALSE), mf)
 
     ## Conduct leave-one-out cross-validation
     # Determine which observation is in what fold
     fold_id <- as.numeric(data[[env.col]])
-    cv_lasso_out <- cv.glmnet(x = X, y = y, type.measure = "mse", foldid = fold_id, alpha = 1, grouped = FALSE)
+    cv_lasso_out <- cv.glmnet(x = X, y = y, type.measure = "mse", foldid = fold_id, alpha = 1, grouped = FALSE, standardize = FALSE)
     # Record the MSE
     min_RMSE_nosoil <- sqrt(min(cv_lasso_out$cvm))
     
     # Get the coefficients for each ec
-    ec_coef <- as.matrix(coef(object = cv_lasso_out, s = "lambda.min"))[intersect(colnames(X), covariates_use),,drop = FALSE]
+    ec_coef <- as.matrix(coef(object = cv_lasso_out, s = "lambda.min"))[intersect(colnames(X), predictors),,drop = FALSE]
     
     # Calculate relative importance as the ratio of the absolute value of each coefficient
     # to the sum of the absolute value of the coefficients
