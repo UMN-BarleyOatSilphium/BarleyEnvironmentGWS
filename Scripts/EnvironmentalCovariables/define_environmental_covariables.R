@@ -31,37 +31,6 @@ env_trials <- S2_MET_BLUEs %>%
 
 
 
-## Fit models to calculate environmental means
-env_means <- S2_MET_BLUEs %>%
-  filter(line_name %in% c(tp, vp)) %>%
-  group_by(trait) %>%
-  do({
-    df <- .
-    
-    ## Factorize
-    df1 <- mutate_at(df, vars(line_name, environment), ~fct_contr_sum(as.factor(.))) %>%
-      mutate(weight = std_error^2)
-    
-    # Fit the model
-    fit <- lmer(value ~ (1|line_name) + environment, data = df1, weights = weight)
-    
-    ## Return a df of environmental effects
-    fixef(fit) %>% 
-      tibble(environment = names(.), effect = .) %>% 
-      filter(environment != "(Intercept)") %>% 
-      mutate(environment = str_remove(environment, "environment"),
-             mu = fixef(fit)[1]) %>% 
-      add_row(environment = last(levels(df1$environment)), effect = -sum(.$effect), 
-              mu = .$mu[1])
-    
-  }) %>% ungroup()
-
-# Just heading date
-env_means_heading <- subset(env_means, trait == "HeadingDate") %>%
-  mutate(obs_HD = mu + effect)
-
-
-
 # Prepare environment-concurrent covariates -------------------------------
 
 

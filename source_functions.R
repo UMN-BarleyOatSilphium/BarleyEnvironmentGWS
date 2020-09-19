@@ -642,16 +642,16 @@ rfa_loo <- function(object, data, scope, metric = c("RMSE", "R2"), index, env.co
 ## A function for the recursive feature addition procedure
 select_features_met <- function(data, env.col = "environment", covariates.use, search.method = c("stepwise", "lasso")) {
   
-  # 1. Fit a base model
-  base_fit <- lm(value ~ 1 + line_name, data = data)
-  covariates_use <- covariates.use
-  search.method <- match.arg(search.method)
-  
   ## If hill climb, use stepwise approach
   if (search.method == "stepwise") {
     
     ## Recursive feature addition ##
     ## Main effect
+    
+    # 1. Fit a base model
+    base_fit <- lm(value ~ 1 + line_name, data = data)
+    covariates_use <- covariates.use
+    search.method <- match.arg(search.method)
 
     # 2. Define the scope
     scope <- list(lower = formula(base_fit), upper = reformulate(c("line_name", covariates_use), response = "value"))
@@ -703,24 +703,27 @@ select_features_met <- function(data, env.col = "environment", covariates.use, s
     require(glmnet)
     
     # Estimate feature importance using the LASSO
+    # x terms
+    predictors <- intersect(c("line_name", covariates_use), names(data))
+    
     
     ## First convert data to a model frame
-    mf <- model.frame(formula = reformulate(termlabels = c("line_name", covariates_use), response = "value"), data = data)
+    mf <- model.frame(formula = reformulate(termlabels = predictors, response = "value"), data = data)
     # Pull response vector
     y <- model.response(mf)
     # Create matrix of covariates
-    X <- model.matrix(reformulate(termlabels = c("line_name", covariates_use), intercept = FALSE), mf)
+    X <- model.matrix(reformulate(termlabels = predictors, intercept = FALSE), mf)
     # X <- model.matrix(reformulate(termlabels = c(covariates_use), intercept = FALSE), mf)
     
     ## Conduct leave-one-out cross-validation
     # Determine which observation is in what fold
     fold_id <- as.numeric(data[[env.col]])
-    cv_lasso_out <- cv.glmnet(x = X, y = y, type.measure = "mse", foldid = fold_id, alpha = 1)
+    cv_lasso_loo_out <- cv.glmnet(x = X, y = y, type.measure = "mse", foldid = fold_id, alpha = 1, grouped = FALSE)
     # Record the MSE
-    min_RMSE <- sqrt(min(cv_lasso_out$cvm))
+    min_RMSE_loo <- sqrt(min(cv_lasso_loo_out$cvm))
     
     # Get the coefficients for each ec
-    ec_coef <- as.matrix(coef(object = cv_lasso_out, s = "lambda.min"))[covariates_use,,drop = FALSE]
+    ec_coef <- as.matrix(coef(object = cv_lasso_loo_out, s = "lambda.min"))[covariates_use,,drop = FALSE]
     
     # Calculate relative importance as the ratio of the absolute value of each coefficient
     # to the sum of the absolute value of the coefficients
@@ -730,13 +733,13 @@ select_features_met <- function(data, env.col = "environment", covariates.use, s
     
     
     ## Do the same thing, but without soil variables
-    X <- model.matrix(reformulate(termlabels = c("line_name", covariates_use[!grepl(pattern = "soil", x = covariates_use)]), 
-                                  intercept = FALSE), mf)
+    predictors <- intersect(c("line_name", covariates_use[!grepl(pattern = "soil", x = covariates_use)]), names(data))
+    X <- model.matrix(reformulate(termlabels = predictors, intercept = FALSE), mf)
 
     ## Conduct leave-one-out cross-validation
     # Determine which observation is in what fold
     fold_id <- as.numeric(data[[env.col]])
-    cv_lasso_out <- cv.glmnet(x = X, y = y, type.measure = "mse", foldid = fold_id, alpha = 1)
+    cv_lasso_out <- cv.glmnet(x = X, y = y, type.measure = "mse", foldid = fold_id, alpha = 1, grouped = FALSE)
     # Record the MSE
     min_RMSE_nosoil <- sqrt(min(cv_lasso_out$cvm))
     
@@ -756,7 +759,7 @@ select_features_met <- function(data, env.col = "environment", covariates.use, s
       model = c("model2", "model3"),
       adhoc = list(ec_importance, ec_importance),
       adhoc_nosoil = list(ec_importance_nosoil, ec_importance_nosoil),
-      adhoc_RMSE = min_RMSE,
+      adhoc_RMSE = min_RMSE_loo,
       adhoc_nosoil_RMSE = min_RMSE_nosoil
     )
     
