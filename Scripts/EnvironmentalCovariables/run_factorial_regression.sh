@@ -12,5 +12,5 @@ cd /panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/S2MET_Predictions_Mode
 module load R/3.5.2_mkl
 
 # Run the historical covariate timeframe selection
-Rscript 06covariate_phenotypic_modeling_location.R
+Rscript covariate_phenotypic_modeling_location.R
 

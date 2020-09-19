@@ -71,7 +71,7 @@ vp <- subset(entry_list, Class == "S2C1R", Line, drop = T)
 # Vector of relevant traits
 # traits <- c("GrainYield", "HeadingDate", "PlantHeight", "MaturityDate")
 traits <- c("GrainYield", "HeadingDate", "PlantHeight", "TestWeight", "GrainProtein")
-trials <- subset(trial_info, project2 == "S2MET", trial, drop = TRUE)
+trials <- subset(trial_info, project2 == "S2MET" & str_detect(trial, "S2C1", negate = TRUE), trial, drop = TRUE)
 
 
 # ## Traits by environment
@@ -104,13 +104,9 @@ K <- K[sort(row.names(K)), sort(row.names(K))]
 ## Rank the environments according to heritability
 env_trait_herit <- s2_metadata %>% 
   select(trial, trait, heritability, varR) %>% 
-  left_join(., distinct(s2_tidy_BLUE, trial, environment), by = "trial") %>%
-  filter(!str_detect(trial, "S2C1"),
-         trial %in% trials) %>%
-  select(trait, environment, varR, heritability) %>%
-  # filter for relevant traits
-  filter(trait %in% traits) %>%
-  filter(., heritability >= 0.10)
+  inner_join(., distinct(trial_info, trial, environment), by = "trial") %>%
+  filter(trial %in% trials, trait %in% traits, heritability >= 0.10) %>%
+  select(trait, environment, varR, heritability)
 
 ## 3 trait-trials were removed
 
@@ -120,13 +116,13 @@ S2_MET_BLUEs <- s2_tidy_BLUE %>%
   filter(trial %in% subset(trial_info, project2 == "S2MET", trial, drop = T),
          line_name %in% c(tp, vp),
          trait %in% traits) %>%
+  # Add full location names and rename environments according to trial_info
+  select(-location, -environment) %>%
+  inner_join(., distinct(trial_info, trial, environment, location), by = "trial") %>% # 150 env-traits here
   # Filter out environments with low heritability
-  left_join(select(env_trait_herit, -heritability), .) %>%
-  # Add full location name
-  select(-location) %>%
-  left_join(., distinct(trial_info, environment, location)) %>%
+  inner_join(., select(env_trait_herit, trait, environment), by = c("trait", "environment")) %>% # 147 env-traits here
   # Remove irrigated trials - these will eventually be included
-  filter(!str_detect(environment, "HTM")) %>%
+  filter(!str_detect(environment, "HTM")) %>% # 138 env-traits here
   # Remove environments deemed failures (i.e. HNY16 for grain yield)
   filter(!(environment == "HNY16" & trait == "GrainYield"),
          !(environment == "EON17" & trait == "HeadingDate"),
@@ -134,9 +130,12 @@ S2_MET_BLUEs <- s2_tidy_BLUE %>%
          !(location %in% c("Charlottetown", "Alburgh", "Grande_rhonde_valley") & trait == "HeadingDate"),
          !(trait %in% c("PlantHeight", "TestWeight") & location %in% c("Grande_rhonde_valley")) ) %>%
   # Rename and reorder
-  select(trial, environment, location, year, trait, line_name, value, std_error = std.error)
+  select(trial, environment, location, year, trait, line_name, value, std_error = std.error) # 130 env-traits here
 
-# 10 more trait-trials removed
+# 17 more trait-trials removed
+
+
+
 
 ## Separate environments into those for training/testing and those for external validation
 train_test_env <- S2_MET_BLUEs %>% 

@@ -90,7 +90,7 @@ apriori_covariate_df <- trait_covariate_df %>%
   )}
 
 
-## Factorial regression with AIC stepwise selection ##
+## Perform factorial regression with the apriori covariates
 
 ## Group by trait and model
 concurrent_apriori_fact_reg <- S2_MET_BLUEs_tomodel %>%
@@ -183,8 +183,11 @@ for (i in seq_len(nrow(concurrent_stepwise_feature_selection_list))) {
       pull(train) %>%
       map("idx")
     
+    # Vector of covariates for this trait
+    covariates_use <- subset(trait_covariate_df, trait == unique(df$trait), covariate, drop = TRUE)
+    
     ## Recursive feature addition
-    rfa_out_df <- select_features_met(data = df1, env.col = "environment", search.method = "hill.climb")
+    rfa_out_df <- select_features_met(data = df1, covariates.use = covariates_use, env.col = "environment", search.method = "stepwise")
     
     concurrent_stepwise_feature_selection_list$out[[i]] <- bind_rows(rfa_out_df)
     
@@ -195,11 +198,39 @@ concurrent_stepwise_feature_selection <- unnest(concurrent_stepwise_feature_sele
   unite(feat_sel_type, feat_sel_type, selection_type, sep = "_")
 
 
-
-
 # Determine feature importance using LASSO --------------------------------
 
-concurrent_feature_importance_list <- S2_MET_BLUEs_tomodel %>%
+# Calculate environmental means
+env_means <- S2_MET_BLUEs_tomodel %>%
+  group_by(trait) %>%
+  do({
+    df <- .
+    
+    ## Factorize
+    df1 <- df %>%
+      droplevels() %>%
+      mutate_at(vars(line_name, environment), ~fct_contr_sum(as.factor(.))) %>%
+      mutate(weight = std_error^2)
+    
+    # Fit the model
+    fit <- lmer(value ~ (1|line_name) + environment, data = df1, weights = weight)
+    
+    ## Return a df of environmental effects
+    fixef(fit) %>% 
+      tibble(environment = names(.), effect = .) %>% 
+      filter(environment != "(Intercept)") %>% 
+      mutate(environment = str_remove(environment, "environment"),
+             mu = fixef(fit)[1]) %>% 
+      add_row(environment = last(levels(df1$environment)), effect = -sum(.$effect), 
+              mu = .$mu[1])
+    
+  }) %>% ungroup()
+
+
+
+
+
+concurrent_feature_importance_list <- env_means %>%
   crossing(., source = names(ec_tomodel_centered)) %>%
   group_by(trait, source) %>%
   nest() %>%
@@ -216,7 +247,8 @@ for (i in seq_len(nrow(concurrent_feature_importance_list))) {
     # filter(location != "Aberdeen") %>%
     droplevels() %>%
     left_join(., ec_tomodel_centered[[src]], by = "environment") %>%
-    mutate_at(vars(line_name, environment), ~fct_contr_sum(as.factor(.)))
+    mutate_at(vars(environment), ~fct_contr_sum(as.factor(.))) %>%
+    dplyr::rename(value = effect)
   
   loo_indices <- df1 %>%
     group_by(environment) %>%
@@ -225,7 +257,7 @@ for (i in seq_len(nrow(concurrent_feature_importance_list))) {
     map("idx")
   
   ## Feature importance using the LASSO
-  lasso_importance_out <- select_features_met(data = df1, env.col = "environment", search.method = "lasso")
+  lasso_importance_out <- select_features_met(data = df1, covariates.use = covariates_use, env.col = "environment", search.method = "lasso")
   
   concurrent_feature_importance_list$out[[i]] <- lasso_importance_out
   
@@ -273,6 +305,7 @@ concurrent_all_features <- trait_covariate_df %>%
 
 ## Save
 
-save("concurrent_feature_selection", "concurrent_apriori_feature_selection", "concurrent_feature_importance", "concurrent_all_features", 
+save("concurrent_stepwise_feature_selection", "concurrent_apriori_feature_selection", 
+     "concurrent_feature_importance", "concurrent_all_features", 
      file = file.path(result_dir, "concurrent_feature_selection_results.RData"))
 
