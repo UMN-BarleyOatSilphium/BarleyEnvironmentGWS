@@ -26,13 +26,13 @@ library(parallel)
 
 ## Number of cores
 # n_core <- detectCores()
-n_core <- 16
+n_core <- 8
 
 # Source of covariates
 source_use <- "daymet"
 
 # If re-running predictions, should all be re-run?
-rerun_all <- FALSE
+rerun_all <- TRUE
 
 
 
@@ -100,7 +100,7 @@ concurrent_all_features <- concurrent_all_features %>%
 feature_selection_df <- bind_rows(
   concurrent_all_features,
   concurrent_apriori_feature_selection,
-  mutate(concurrent_feature_selection, feat_sel_type = str_replace(feat_sel_type, "rfa", "stepwise")),
+  mutate(concurrent_stepwise_feature_selection, feat_sel_type = str_replace(feat_sel_type, "rfa", "stepwise")),
   mutate(concurrent_feature_importance, 
          covariates = map(covariates, ~subset(rownames_to_column(as.data.frame(.x), "covariate"), importance != 0)))
 )
@@ -248,13 +248,13 @@ loeo_predictions_out <- data_train_test1 %>%
           as.matrix()
         
         ## Environmental relationship matrices
-        Emain <- Env_mat(x = covariate_mat[,covariate_list$main$covariate, drop = FALSE], 
+        Emain <- Env_mat(x = covariate_mat, terms = covariate_list$main$covariate,
                          weights = covariate_list$main$importance, method = "weightedJarq")
         if (is.null(covariate_list$interaction)) {
           Eint <- diag(ncol(Emain)); dimnames(Eint) <- dimnames(Emain)
         } else {
-          Eint <- Env_mat(x = covariate_mat[,covariate_list$int$covariate, drop = FALSE], 
-                          weights = covariate_list$int$importance, method = "weightedJarq")
+          Eint <- Env_mat(x = covariate_mat, terms = covariate_list$interaction$covariate,
+                          weights = covariate_list$interaction$importance, method = "weightedJarq")
         }
         
         # run predictions
@@ -438,13 +438,13 @@ env_external_predictions_out <- env_external_train_val1 %>%
           as.matrix()
         
         ## Environmental relationship matrices
-        Emain <- Env_mat(x = covariate_mat[,covariate_list$main$covariate, drop = FALSE], 
+        Emain <- Env_mat(x = covariate_mat, terms = covariate_list$main$covariate,
                          weights = covariate_list$main$importance, method = "weightedJarq")
         if (is.null(covariate_list$interaction)) {
           Eint <- diag(ncol(Emain)); dimnames(Eint) <- dimnames(Emain)
         } else {
-          Eint <- Env_mat(x = covariate_mat[,covariate_list$int$covariate, drop = FALSE], 
-                          weights = covariate_list$int$importance, method = "weightedJarq")
+          Eint <- Env_mat(x = covariate_mat, terms = covariate_list$interaction$covariate,
+                          weights = covariate_list$interaction$importance, method = "weightedJarq")
         }
         
         # run predictions

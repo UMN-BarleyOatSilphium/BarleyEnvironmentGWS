@@ -14,7 +14,7 @@ library(cowplot)
 
 
 ## Add new packages to load
-pkgs <- union(pkgs, c("modelr", "broom", "lme4", "car", "patchwork", "caret"))
+pkgs <- union(pkgs, c("modelr", "broom", "lme4", "car", "patchwork", "caret", "glmnet"))
 # Load these packages
 invisible(lapply(X = pkgs, library, character.only = TRUE))
 
