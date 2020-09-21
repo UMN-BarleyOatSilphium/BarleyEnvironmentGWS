@@ -722,6 +722,9 @@ select_features_met <- function(data, env.col = "environment", covariates.use, s
     fold_id <- as.numeric(data[[env.col]])
     cv_lasso_loo_out <- cv.glmnet(x = X, y = y, type.measure = "mse", foldid = fold_id, alpha = 1, grouped = FALSE,
                                   standardize = FALSE, nlambda = 100)
+    
+    
+    
     # Record the MSE
     min_RMSE_loo <- sqrt(min(cv_lasso_loo_out$cvm))
     
@@ -783,16 +786,22 @@ select_features_met <- function(data, env.col = "environment", covariates.use, s
 
 
 # Create a function to generate these relationship matrices
-Env_mat <- function(x, weights = NULL, method = c("Jarquin2014", "Malosetti2016", "Rincent2019", "weightedJarquin2014")) {
+Env_mat <- function(x, terms, weights = NULL, method = c("Jarquin2014", "Malosetti2016", "Rincent2019", "weightedJarquin2014")) {
   
   method <- match.arg(method)
   
+  # Get a list of terms from the terms vector
+  form <- reformulate(terms, intercept = FALSE)
+  # create a model matrix using the formula and the x matrix
+  x1 <- model.matrix(object = form, data = as.data.frame(x))
+  
   if (method == "Jarquin2014") {
-    EMAT <- (tcrossprod(x) / ncol(x))
+    
+    EMAT <- (tcrossprod(x1) / ncol(x1))
     
   } else if (method == "Malosetti2016") {
     # Calculate pairwise euclidian distance
-    euc_dist <- apply(X = x, MARGIN = 2, FUN = function(z) list( as.matrix(dist(z)) / ( max(z) - min(z) ) ) )
+    euc_dist <- apply(X = x1, MARGIN = 2, FUN = function(z) list( as.matrix(dist(z)) / ( max(z) - min(z) ) ) )
     # Get the first element of each list
     euc_dist <- lapply(euc_dist, "[[", 1)
     
@@ -800,7 +809,7 @@ Env_mat <- function(x, weights = NULL, method = c("Jarquin2014", "Malosetti2016"
     EMAT <- Reduce(f = `+`, x = euc_dist)
     
   } else if (method == "Rincent2019") {
-    D <- as.matrix(dist(x))
+    D <- as.matrix(dist(x1))
     EMAT <- 1 - (D / max(D))
     
   } else if (method == "weightedJarquin2014") {
@@ -808,11 +817,11 @@ Env_mat <- function(x, weights = NULL, method = c("Jarquin2014", "Malosetti2016"
     if (is.null(weights)) stop("weights must not be null if method = 'weightedJarquin2014'.")
     # Other error handlist
     stopifnot(abs(1 - sum(weights)) < 1e-10)
-    stopifnot(length(weights) == ncol(x))
+    stopifnot(length(weights) == ncol(x1))
     
     # Multiply the covariates by the square root of the weights
-    weightMat <- matrix(data = weights, ncol = ncol(x), nrow = nrow(x), byrow = TRUE)
-    EMAT <- tcrossprod(x * sqrt(weightMat))
+    weightMat <- matrix(data = weights, ncol = ncol(x1), nrow = nrow(x1), byrow = TRUE)
+    EMAT <- tcrossprod(x1 * sqrt(weightMat))
     
     
   }

@@ -248,13 +248,13 @@ lolo_predictions_out <- data_train_test1 %>%
           as.matrix()
         
         ## Environmental relationship matrices
-        Emain <- Env_mat(x = covariate_mat[,covariate_list$main$covariate, drop = FALSE], 
+        Emain <- Env_mat(x = covariate_mat, terms = covariate_list$main$covariate,
                          weights = covariate_list$main$importance, method = "weightedJarq")
         if (is.null(covariate_list$interaction)) {
           Eint <- diag(ncol(Emain)); dimnames(Eint) <- dimnames(Emain)
         } else {
-          Eint <- Env_mat(x = covariate_mat[,covariate_list$int$covariate, drop = FALSE], 
-                          weights = covariate_list$int$importance, method = "weightedJarq")
+          Eint <- Env_mat(x = covariate_mat, terms = covariate_list$interaction$covariate,
+                          weights = covariate_list$interaction$importance, method = "weightedJarq")
         }
         
         # run predictions
@@ -391,13 +391,13 @@ loc_external_predictions_out <- loc_external_train_val1 %>%
           as.matrix()
         
         ## Environmental relationship matrices
-        Emain <- Env_mat(x = covariate_mat[,covariate_list$main$covariate, drop = FALSE], 
+        Emain <- Env_mat(x = covariate_mat, terms = covariate_list$main$covariate,
                          weights = covariate_list$main$importance, method = "weightedJarq")
         if (is.null(covariate_list$interaction)) {
           Eint <- diag(ncol(Emain)); dimnames(Eint) <- dimnames(Emain)
         } else {
-          Eint <- Env_mat(x = covariate_mat[,covariate_list$int$covariate, drop = FALSE], 
-                          weights = covariate_list$int$importance, method = "weightedJarq")
+          Eint <- Env_mat(x = covariate_mat, terms = covariate_list$interaction$covariate,
+                          weights = covariate_list$interaction$importance, method = "weightedJarq")
         }
         
         # run predictions
