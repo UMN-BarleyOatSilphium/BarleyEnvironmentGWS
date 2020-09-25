@@ -723,13 +723,15 @@ select_features_met <- function(data, env.col = "environment", covariates.use, s
     cv_lasso_loo_out <- cv.glmnet(x = X, y = y, type.measure = "mse", foldid = fold_id, alpha = 1, grouped = FALSE,
                                   standardize = FALSE, nlambda = 100)
     
-    
-    
-    # Record the MSE
+    # Record the lambda value and MSE for that lambda
     min_RMSE_loo <- sqrt(min(cv_lasso_loo_out$cvm))
+    min_lambda <- cv_lasso_loo_out$lambda[which.min(cv_lasso_loo_out$cvm)]
+
+    # Calculate R2
+    R2 <- c(cor(y, predict(object = cv_lasso_loo_out, newx = X, s = min_lambda))^2)
     
     # Get the coefficients for each ec
-    ec_coef <- as.matrix(coef(object = cv_lasso_loo_out, s = "lambda.min"))[predictors,,drop = FALSE]
+    ec_coef <- as.matrix(coef(object = cv_lasso_loo_out, s = min_lambda))[predictors,,drop = FALSE]
     
     # Calculate relative importance as the ratio of the absolute value of each coefficient
     # to the sum of the absolute value of the coefficients
@@ -748,9 +750,14 @@ select_features_met <- function(data, env.col = "environment", covariates.use, s
     cv_lasso_out <- cv.glmnet(x = X, y = y, type.measure = "mse", foldid = fold_id, alpha = 1, grouped = FALSE, standardize = FALSE)
     # Record the MSE
     min_RMSE_nosoil <- sqrt(min(cv_lasso_out$cvm))
+    min_lambda_nosoil <- cv_lasso_out$lambda[which.min(cv_lasso_out$cvm)]
+    
+    # Calculate R2
+    R2_nosoil <- c(cor(y, predict(object = cv_lasso_out, newx = X, s = min_lambda_nosoil))^2)
+    
     
     # Get the coefficients for each ec
-    ec_coef <- as.matrix(coef(object = cv_lasso_out, s = "lambda.min"))[intersect(colnames(X), predictors),,drop = FALSE]
+    ec_coef <- as.matrix(coef(object = cv_lasso_out, s = min_lambda_nosoil))[intersect(colnames(X), predictors),,drop = FALSE]
     
     # Calculate relative importance as the ratio of the absolute value of each coefficient
     # to the sum of the absolute value of the coefficients
@@ -766,7 +773,9 @@ select_features_met <- function(data, env.col = "environment", covariates.use, s
       adhoc = list(ec_importance, ec_importance),
       adhoc_nosoil = list(ec_importance_nosoil, ec_importance_nosoil),
       adhoc_RMSE = min_RMSE_loo,
-      adhoc_nosoil_RMSE = min_RMSE_nosoil
+      adhoc_nosoil_RMSE = min_RMSE_nosoil,
+      adhoc_R2 = R2,
+      adhoc_nosoil_R2 = R2_nosoil
     )
     
   }

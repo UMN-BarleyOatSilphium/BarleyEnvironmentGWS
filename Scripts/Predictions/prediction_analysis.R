@@ -104,7 +104,7 @@ within_environment_prediction_accuracy <- predictive_ability %>%
 
 ## Quick plot of accuracy across all environments/locations
 predictive_ability %>%
-  filter(type %in% c("lolo"), selection != "none") %>%
+  filter(selection != "none") %>%
   distinct(trait, model, pop, type, selection, ability_all, rmse_all) %>%
   ggplot(aes(x = model, y = ability_all, fill = selection)) +
   geom_col(position = position_dodge(0.9)) +
@@ -113,7 +113,7 @@ predictive_ability %>%
 
 # Plot predicted versus observed values for a subset
 predictions_df %>%
-  filter(type == "lolo", model == "model3_cov", pop == "tp", str_detect(selection, "lasso|stepwise")) %>%
+  filter(str_detect(type, "external"), model == "model3_cov", str_detect(selection, "lasso|stepwise")) %>%
   ggplot(aes(x = pred_complete, y = value, color = test_group)) +
   geom_abline(slope = 1, intercept = 0) +
   geom_point(size = 0.5) +
