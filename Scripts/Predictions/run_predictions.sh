@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#PBS -l walltime=36:00:00,mem=62gb,nodes=1:ppn=8
+#PBS -l walltime=48:00:00,mem=62gb,nodes=1:ppn=8
 # #PBS -l walltime=04:00:00,mem=62gb,nodes=1:ppn=12
 #PBS -N loeo_predictions_fr
 # #PBS -N lolo_predictions_fr
