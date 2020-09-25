@@ -39,8 +39,8 @@ load(file.path(result_dir, "feature_selection_results.RData"))
 
 ## Data.frame of timeframes to use per trait
 time_frame_use_df <- bind_rows(historical_feature_selection, historical_feature_importance) %>%
-  mutate(feat_sel_type = str_remove(feat_sel_type, "_nosoil")) %>%
-  distinct(trait, time_frame, feat_sel_type)
+  distinct(trait, time_frame, feat_sel_type, selection) %>%
+  arrange(trait, feat_sel_type, selection)
 
 ## For either environments or locations, fit the models:
 ## 
@@ -97,7 +97,8 @@ loc_ec_tomodel_scaled <- bind_rows(historical_ec_tomodel_timeframe_scaled, histo
 
 
 
-# Leave-one-out -----------------------------------------------
+# Leave-one-location-out -----------------------------------------------
+
 # Data to use
 data_to_model <- S2_MET_loc_BLUEs %>% 
   filter(line_name %in% c(tp_geno, vp_geno),
@@ -110,20 +111,14 @@ data_to_model <- S2_MET_loc_BLUEs %>%
   mutate(loc = location)
 
 
-# Remove soil variable from all variables to create a "no soil" group
-historical_all_features <- historical_all_features %>%
-  mutate(covariates = map(covariates, ~modify_at(.x, "optVariables", ~str_subset(.x, "soil", negate = TRUE))), 
-         feat_sel_type = "all_nosoil") %>%
-  bind_rows(historical_all_features, .)
-
 # Combine feature selection df
 feature_selection_df <- bind_rows(
   historical_all_features,
   historical_apriori_feature_selection,
-  mutate(mutate(historical_feature_selection, source = "daymet"), feat_sel_type = str_replace(feat_sel_type, "rfa", "stepwise")),
-  mutate(historical_feature_importance, source = "daymet", covariates = map(covariates, "importance"),
+  historical_feature_selection,
+  mutate(historical_feature_importance, covariates = map(covariates, "importance"),
          covariates = map(covariates, ~subset(rownames_to_column(as.data.frame(.x), "covariate"), importance != 0)))
-) %>% select(-contains("time_frame"))
+)
 
 
 # Give equal-weight importance to covariates except those from the LASSO
@@ -147,12 +142,15 @@ feature_selection_df <- feature_selection_df %>%
 
 # Reorganize covariate df
 covariates_tomodel <- feature_selection_df %>%
+  select(-selection) %>%
+  # Remove duplicates
+  filter(!duplicated(.)) %>%
   # Filter the source to use
-  filter(source %in% source_use) %>%
+  # filter(source %in% source_use) %>%
   rename(feature_selection = feat_sel_type) %>%
   unnest(covariates) %>%
   filter(covariate != "line_name") %>%
-  group_by(source, trait, feature_selection, model) %>%
+  group_by(trait, feature_selection, model, time_frame) %>%
   nest(.key = "covariates") %>%
   ungroup() %>%
   group_by(trait) %>% 
@@ -227,10 +225,8 @@ lolo_predictions_out <- data_train_test1 %>%
         
         # What is the feature selection method?
         fsm <- covariates_use$feature_selection[r]
-        # Get the timeframe for this trait
-        time_frame_use <- subset(time_frame_use_df, 
-                                 trait == row$trait & feat_sel_type == ifelse(grepl("lasso", fsm), "lasso_cv_adhoc", "stepwise_cv_adhoc"),
-                                 time_frame, drop = TRUE)
+        # Get the timeframe
+        time_frame_use <- covariates_use$time_frame[r]
         
         # List of covariates
         covariate_list <- covariates_use[r,] %>%

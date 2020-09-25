@@ -2,7 +2,9 @@
 ## 
 ## Leave-one-location-out prediction
 ## 
-## Use 10-year covariates instead of shorter timeframes
+## Compare different timeframes of historical covariates
+## 5-year window from beginning of trials
+## 10-year window " " "
 ## 
 ## Author: Jeff Neyhart
 ## 
@@ -38,8 +40,12 @@ load(file.path(result_dir, "feature_selection_results.RData"))
 
 
 ## Data.frame of timeframes to use per trait
-time_frame_use_df <- historical_feature_selection_longterm %>%
-  distinct(trait, time_frame)
+time_frame_use_df <- names(historical_ec_tomodel_window_scaled) %>% 
+  str_subset(., source_use) %>% 
+  str_remove(., paste0(source_use, "\\.")) %>% 
+  str_subset(., "window5|window10") %>% 
+  str_subset(., "2014") %>%
+  crossing(trait = sort(traits), time_frame = .)
 
 ## For either environments or locations, fit the models:
 ## 
@@ -52,22 +58,16 @@ time_frame_use_df <- historical_feature_selection_longterm %>%
 ## Create a list of model formulas
 model_fixed_forms <- formulas(
   .response = ~ value,
-  model1 = ~ 1,
-  model2_cov = model1,
-  model2_id = model1,
-  model3_cov = model1,
-  model3_id = model1
+  model2_cov = ~ 1,
+  model3_cov = ~ 1,
 )
 
 ## Models for de novo fitting 
 ## Create a list of model formulas
 model_rand_forms <- formulas(
   .response = ~ value,
-  model1 = ~ vs(line_name, Gu = K),
-  model2_cov = add_predictors(model1, ~ vs(site1, Gu = E)),
-  model2_id = add_predictors(model1, ~ vs(site1, Gu = I)),
+  model2_cov = ~vs(line_name, Gu = K) + vs(site1, Gu = E),
   model3_cov = add_predictors(model2_cov, ~ vs(line_name:site1, Gu = GE)),
-  model3_id = add_predictors(model2_id, ~ vs(line_name:site1, Gu = GI))
 ) %>% map(~ formula(delete.response(terms(.)))) # Remove response
 
 
