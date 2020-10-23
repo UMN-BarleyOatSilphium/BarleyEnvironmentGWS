@@ -13,61 +13,65 @@ library(tidyverse)
 
 ```
 
-# S2MET Genomewide Predictions Across Environments
+# BarleyEnvironmentGWS
 
 ## Description
 
+This repository contains information and code for replicating the analyses performed in the article below:
 
-## Script Order
-
-This is the order in which scripts should be executed to replicate the results. All scripts are located in the [Scripts](`r file.path(gsub(pattern = "\\.git", replacement = "", x = git2r::remote_url()), "tree/master/Scripts")`) directory.
-
-
-Phenotypic data  
-  1. `phenotype_data_adjustment.R` - Calculate genotypic means and calculate heritability in each environment.  
-  2. `phenotype_data_summary.R` - Summarize phenotypic data across all environments, including distributions and heritability.
-  
-Environmental variables  
-  1. `collect_environmental_variables.R` - Collect environmental covariate data from NOAA and Soil Survey databases.  
-  2. `manipulate_analyze_environmental_variables.R` - Calculate summary variables, including growing degree days (GDD), accumulated GDD (AGDD), and photothermality.  
-  3. `model_environmental_variables.R` - Find the variables that are highly correlated with the environmental mean and create covariance and distance matrices.
-  
-Clustering  
-  1. `environmental_clustering.R` - Calculate great circle distance and phenotypic distance, then create hierarchical clusters based on the distance objects. 
-
-Prediction
-  1. 
+Article Title: *Accurate genomewide predictions of barley phenotypes across North American environments*  
+Journal: *Science* (under review)  
+Authors: Jeffrey L. Neyhart, Kevin A.T. Silverstein, and Kevin P. Smith  
+Link to article  
 
 
 
+## Navigation
 
-## Software version
+### Data
+
+Data used in this study are available from the [Triticeae Toolbox](https://triticeaetoolbox.org/barley). See [this README](`r file.path(gsub(pattern = "\\.git", replacement = "", x = git2r::remote_url()), "tree/master/Data")`) for instructions on accessing this data.
+
+### Code
+
+Scripts used to complete the analysis and generate figures outlined in the article above are available in the "Scripts" subfolder. See [this README](`r file.path(gsub(pattern = "\\.git", replacement = "", x = git2r::remote_url()), "tree/master/Scripts")`) for information on the scripts and their intended execution order.
+
+Three scripts in this directory are used by all other scripts:
+
+1. `source.R` - loads packages, creates directory links, and loads data.
+2. `source_MSI.R` - runs script #1 with modifications for high-performance computing supported by the [Minnesota Supercomputing Institute](https://www.msi.umn.edu/).
+3. `source_functions.R` - loads additional functions into the environment. 
+
+
+## Software/package versions
 
 *R* version `r paste0(version$major, ".", version$minor)` was used to complete analyses in this project.
+
 
 The following packages (with version information) were used to complete this project:
 
 
 ```{r version, warning=FALSE, message=FALSE, echo=FALSE}
 
-## Package version information
 # Scan the source function and all scripts for packages
 packages <- list.files(path = getwd(), full.names = TRUE, pattern = ".R$", recursive = TRUE) %>% 
+  str_subset(string = ., pattern = "archive", negate = TRUE) %>%
   map(readLines) %>% 
-  map(~str_subset(., "library\\(")) %>% 
+  map(~str_subset(., "library\\(|require\\(")) %>% 
   unlist() %>% 
+  str_subset(., "#", negate = TRUE) %>%
+  str_trim() %>%
   str_extract("\\(.*\\)") %>% 
   str_remove_all("\\(|\\)") %>% 
   unique()
 
-# Load the packages
-temp <- map(packages, ~require(., character.only = TRUE, quietly = T))
+# get descriptions of each package; create a tibble
+package_info <- installed.packages() %>% 
+  as_tibble() %>% 
+  filter(Package %in% packages) %>% 
+  select(package = Package, version = Version) %>%
+  arrange(package)
 
-# get descriptions of each package
-packages_desc <- sessionInfo()$otherPkgs
-
-# Create a tibble
-package_info <- tibble(package = names(packages_desc), version = map_chr(packages_desc, "Version"))
 # Output a table
 knitr::kable(package_info)
 

@@ -48,11 +48,7 @@ source(file.path(proj_dir, "source_functions.R"))
 load(file.path(pheno_dir, "S2_tidy_BLUE.RData"))
 
 # Load the trial metadata
-trial_info <- read_csv(file = file.path(meta_dir, "trial_metadata.csv")) %>%
-  filter(population %in% c("s2tp", "s2c1", "s2c1r", "s2met"), type == "spy") %>%
-  filter(year >= 2015) %>%
-  ## Replace Ithaca1 and Ithaca2 with Ithaca
-  mutate(location = str_replace_all(location, "Ithaca1|Ithaca2", "Ithaca"))
+trial_info <- read_csv(file = file.path(data_dir, "trial_metadata.csv"))
 
 
 # Load the genotypic data

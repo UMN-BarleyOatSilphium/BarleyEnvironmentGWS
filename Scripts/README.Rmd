@@ -8,7 +8,7 @@ output: github_document
 knitr::opts_chunk$set(collapse = TRUE, eval = FALSE)
 ```
 
-# S2MET Genomewide Environment Prediction - Scripts
+# BarleyEnvironmentGWS - Scripts
 
 Below is a description of scripts used in this analysis. Scripts are listed in order of intended execution.
 

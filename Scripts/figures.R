@@ -1,4 +1,4 @@
-## S2MET Predictions Models
+## BarleyEnvironmentGWS
 ## 
 ## Scripts to generate manuscript figures
 ## 

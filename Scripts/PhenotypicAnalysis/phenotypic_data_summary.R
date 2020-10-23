@@ -15,7 +15,6 @@ repo_dir <- getwd()
 source(file.path(repo_dir, "source.R"))
 
 ## Load additional packages
-library(lme4qtl)
 library(modelr)
 library(broom)
 
