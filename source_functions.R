@@ -786,14 +786,6 @@ select_features_met <- function(data, env.col = "environment", covariates.use, s
 
 
 
-
-
-
-
-
-
-
-
 # Create a function to generate these relationship matrices
 Env_mat <- function(x, terms, weights = NULL, method = c("Jarquin2014", "Malosetti2016", "Rincent2019", "weightedJarquin2014")) {
   

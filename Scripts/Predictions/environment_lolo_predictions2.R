@@ -191,7 +191,7 @@ lolo_predictions_out <- data_train_test1 %>%
       row <- core_df[i,]
       # Get covariates
       covariates_row <- row$model_covariates[[1]]
-
+      
       
       # Record the number of environment and observations used for training
       train_n <- summarize(row$train[[1]], nSite = n_distinct(site), nObs = n())

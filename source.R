@@ -193,8 +193,8 @@ f_pop_replace <- function(x) str_replace_all(x, c("all" = "All", "tp" = "FP", "v
 f_type_replace <- function(x) c("loeo" = "New environment", "lolo" = "New location", "loyo" = "New year",
                                 "env_external" = "Holdout environment", "loc_external" = "Holdout location")[x]
 # Replace ec selection
-f_ec_selection_replace <- function(x)  c("rfa_cv_adhoc" = "StepwiseCV", "stepAIC_adhoc" = "StepwiseAIC", 
-                                         "concurrent_rfa_cv_adhoc" = "ConcurrentStepwiseCV", "apriori" = "KnownStresses", 
+f_ec_selection_replace <- function(x)  c("stepwise_cv_adhoc" = "StepwiseCV", "stepAIC_adhoc" = "StepwiseAIC", 
+                                         "lasso_cv_adhoc" = "LASSO",  "apriori" = "KnownStresses", 
                                          "all" = "All", "none" = "None")[x]
 f_growth_stage_replace <- function(x) 
   c("early_vegetative" = "EV", "late_vegetative" = "LV", "heading" = "HD", "flowering" = "FL", "grain_fill" = "GF")[x]

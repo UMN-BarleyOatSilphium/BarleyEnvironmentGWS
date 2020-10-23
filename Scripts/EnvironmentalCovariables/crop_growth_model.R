@@ -184,10 +184,11 @@ cgm_pred_HD_summary <- pred_obs_heading %>%
   group_by(cultivar, stage) %>%
   summarize(cor = cor(obs_HD, pred_HD), 
             mae = mean(abs(pred_HD - obs_HD)),
-            rmse = sqrt(mean((pred_HD - obs_HD)^2)))
+            rmse = sqrt(mean((pred_HD - obs_HD)^2))) %>%
+  ungroup()
 
 ## Save these for plotting later
-save("cgm_pred_HD_summary", "cgm_pred_HD_summary", file = file.path(result_dir, "apsim_cultivar_predicted_flowering_results.RData"))
+save("pred_obs_heading", "cgm_pred_HD_summary", file = file.path(result_dir, "apsim_cultivar_predicted_flowering_results.RData"))
 
 ## Find the cultivar that results in the most accuracy prediction
 (repr_cultivar <- cgm_pred_HD_summary %>%
