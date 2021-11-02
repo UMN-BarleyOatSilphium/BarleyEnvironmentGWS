@@ -12,14 +12,18 @@ invisible(lapply(X = pkgs, library, character.only = TRUE))
 ## Directories
 proj_dir <- repo_dir
 
-## Google drive directory
-gdrive_dir <- "C:/GoogleDrive"
+# Root directory
+root <- proj_dir %>% 
+  str_split("/") %>% 
+  .[[1]] %>% 
+  {.[seq_len(which(. == "OldProjects"))]} %>% 
+  paste0(collapse = "/")
 
 # Geno, pheno, and enviro data
-geno_dir <-  file.path(gdrive_dir, "BarleyLab/Breeding/GenotypicData/GBS_Genotype_Data/")
-pheno_dir <- file.path(gdrive_dir, "BarleyLab/Breeding/PhenotypicData/Final/MasterPhenotypes/")
-meta_dir <- file.path(gdrive_dir, "BarleyLab/Breeding/PhenotypicData/Metadata/")
-enviro_dir <- file.path(gdrive_dir, "BarleyLab/Breeding/EnvironmentalData/")
+geno_dir <-  file.path(root, "ProjectData/GenotypicData/")
+pheno_dir <- file.path(root, "ProjectData/PhenotypicData/")
+meta_dir <- pheno_dir
+enviro_dir <- file.path(root, "ProjectData/EnvironmentalData/")
 
 # Other directories
 fig_dir <- file.path(proj_dir, "Figures")
@@ -29,7 +33,8 @@ result_dir <- file.path(proj_dir, "Results")
 
 # Load variable csv
 ## Table of variables, nicknames, and units for HWSD
-hwsd_variables <- read.csv(file = "C:/GoogleDrive/BarleyLab/Breeding/EnvironmentalData/RawData/SoilData/HWSD/hwsd_variable_reference.csv", stringsAsFactors = FALSE)
+hwsd_variables <- read.csv(file = file.path(enviro_dir, "RawData/SoilData/HWSD/hwsd_variable_reference.csv"), 
+                           stringsAsFactors = FALSE)
 
 
 
@@ -172,16 +177,10 @@ trait_sign <- tibble(trait = traits, sign = c(1, -1, -1, 1, -1))
 
 ## Functions that might be useful for plotting ##
 
-
-## A vector to rename models
-model_replace <- c("model1" = "g", "model2_id" = "g + e", "model2_cov" = "g + e", 
-                   "model3_id" = "g + e + (ge)", "model3_cov" = "g + e + (ge)", "model3_cov1" = "g + e + (ge)",
-                   "model4_id" = "g + l", "model4_cov" = "g + l", "model5_id" = "g + l + (gl)", 
-                   "model5_cov" = "g + l + (gl)", "model5_cov1" = "g + l + (gl)")
-
-
+model_replace <- c("model1" = "g", "model2_cov" = "g + e", "model2_id" = "g + e", "model3_cov" = "g + e + (ge)", 
+                   "model3_id" = "g + e + (ge)", "model4_cov" = "g + l", "model4_id" = "g + l", 
+                   "model5_cov" = "g + l + (gl)", "model5_id" = "g + l + (gl)")
 f_model_replace <- function(x) model_replace[x]
-# f_model_replace <- function(x) paste0("M", toupper(str_extract(x, "[0-9]{1}[a-z]{0,1}")))
 # Vector to rename validation schemes
 f_validation_replace <- function(x) str_replace_all(x, c("tp" = "Tested founders", "vp" = "Untested offspring"))
 f_pop_replace <- function(x) str_replace_all(x, c("all" = "All", "tp" = "FP", "vp" = "OP"))
@@ -197,7 +196,7 @@ f_growth_stage_replace <- function(x)
 
 
 
-
+##
 
 
 

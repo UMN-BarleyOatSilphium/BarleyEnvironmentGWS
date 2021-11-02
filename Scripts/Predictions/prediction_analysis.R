@@ -44,7 +44,7 @@ prediction_list <- object_list %>%
   # Bind rows if necessary
   modify_if(is.list, bind_rows) %>%
   subset(., map_lgl(., ~nrow(.) > 1)) %>%
-  map(~unnest(., out)) %>%
+  map(~unnest(., out, names_repair = tidyr_legacy)) %>%
   set_names(x = ., nm = str_remove(names(.), "_predictions_out"))
 
 
@@ -55,7 +55,7 @@ prediction_list <- object_list %>%
 
 ## Combine data.frames and mutate columns
 predictions_df <- prediction_list %>%
-  imap(~unnest(.x, prediction) %>% mutate(type = .y) ) %>%
+  imap(~unnest(.x, prediction, names_repair = tidyr_legacy) %>% mutate(type = .y) ) %>%
   modify_if(., str_detect(names(.), "lo[a-z]o"), ~mutate(.x, .id = as.character("01"))) %>%
   # Combine time_frame and feature selection for LOLO longterm
   map(~rename_at(.x, vars(which(names(.x) %in% c("env", "loc"))),
@@ -77,15 +77,17 @@ predictions_df <- prediction_list %>%
 
 # Add information about time frame selection
 time_frame_selection_info <- historical_feature_selection %>%
-  select(trait, time_frame, time_frame_selection = selection) %>%
+  select(trait, time_frame, time_frame_selection = selection, feat_sel_type) %>%
   distinct() %>%
   full_join(., map_df(list(historical_all_features, historical_apriori_feature_selection, historical_feature_selection), 
-                      ~distinct_at(., vars(trait, time_frame, feat_sel_type)))) %>%
+                      ~distinct_at(., vars(trait, time_frame, feat_sel_type, feat_sel_type)))) %>%
   bind_rows(., distinct_at(historical_feature_importance, vars(trait, time_frame, time_frame_selection = selection, feat_sel_type))) %>%
   rename(selection = feat_sel_type)
 
 predictions_df <- predictions_df %>%
-  full_join(., time_frame_selection_info)
+  full_join(., time_frame_selection_info) %>%
+  # Remove columns that are lists
+  select_if(~!is.list(.))
 
 
 
@@ -125,45 +127,45 @@ within_environment_prediction_accuracy <- predictive_ability %>%
 ## 
 ## The plot below is specifically designed for LOLO
 ## 
-predictive_ability %>%
-  filter(type == "loc_external", selection != "none", model == "model3_cov") %>%
-  distinct(trait, model, pop, type, selection, time_frame, time_frame_selection, ability_all, rmse_all) %>%
-  unite(selection1, selection, time_frame, sep = ":", remove = FALSE) %>%
-  ggplot(aes(x = time_frame_selection, y = ability_all, fill = selection, group = selection1)) +
-  geom_col(position = position_dodge(0.9)) +
-  facet_grid(pop + type ~ trait, labeller = labeller(.multi_line = FALSE)) +
-  theme(legend.position = "bottom")
+# predictive_ability %>%
+#   filter(type == "loc_external", selection != "none", model == "model3_cov") %>%
+#   distinct(trait, model, pop, type, selection, time_frame, time_frame_selection, ability_all, rmse_all) %>%
+#   unite(selection1, selection, time_frame, sep = ":", remove = FALSE) %>%
+#   ggplot(aes(x = time_frame_selection, y = ability_all, fill = selection, group = selection1)) +
+#   geom_col(position = position_dodge(0.9)) +
+#   facet_grid(pop + type ~ trait, labeller = labeller(.multi_line = FALSE)) +
+#   theme(legend.position = "bottom")
 
 
-# Plot these predicted/observed values
-predictions_df %>%
-  filter(type == "lolo", model == "model3_cov", str_detect(selection, "lasso|stepwise"), pop == "tp") %>%
-  unite(selection1, selection, time_frame, sep = ":", remove = FALSE) %>%
-  ggplot(aes(x = pred_complete, y = value, color = test_group)) +
-  geom_abline(slope = 1, intercept = 0) +
-  geom_point(size = 0.5) +
-  scale_color_discrete(guide = FALSE) +
-  facet_wrap(~ type + pop + trait + selection1 + time_frame_selection, scales = "free", ncol = 4, labeller = labeller(.multi_line = FALSE)) +
-  theme_presentation2(10)
+# # Plot these predicted/observed values
+# predictions_df %>%
+#   filter(type == "lolo", model == "model3_cov", str_detect(selection, "lasso|stepwise"), pop == "tp") %>%
+#   unite(selection1, selection, time_frame, sep = ":", remove = FALSE) %>%
+#   ggplot(aes(x = pred_complete, y = value, color = test_group)) +
+#   geom_abline(slope = 1, intercept = 0) +
+#   geom_point(size = 0.5) +
+#   scale_color_discrete(guide = FALSE) +
+#   facet_wrap(~ type + pop + trait + selection1 + time_frame_selection, scales = "free", ncol = 4, labeller = labeller(.multi_line = FALSE)) +
+#   theme_presentation2(10)
 
 
 
 
 
-# Plot predicted versus observed values for a subset
-predictions_df %>%
-  filter(str_detect(type, "external"), model == "model3_cov", str_detect(selection, "lasso|stepwise")) %>%
-  ggplot(aes(x = pred_complete, y = value, color = test_group)) +
-  geom_abline(slope = 1, intercept = 0) +
-  geom_point(size = 0.5) +
-  scale_color_discrete(guide = FALSE) +
-  facet_wrap(~ type + trait + selection + model + pop, scales = "free", ncol = 4, labeller = labeller(.multi_line = FALSE)) +
-  theme_presentation2(10)
-
-
-predictive_ability %>%
-  filter(model == "model3_cov", pop == "tp", selection == "rfa_cv_adhoc") %>%
-  distinct(trait, model, type, selection, ability_all)
+# # Plot predicted versus observed values for a subset
+# predictions_df %>%
+#   filter(str_detect(type, "external"), model == "model3_cov", str_detect(selection, "lasso|stepwise")) %>%
+#   ggplot(aes(x = pred_complete, y = value, color = test_group)) +
+#   geom_abline(slope = 1, intercept = 0) +
+#   geom_point(size = 0.5) +
+#   scale_color_discrete(guide = FALSE) +
+#   facet_wrap(~ type + trait + selection + model + pop, scales = "free", ncol = 4, labeller = labeller(.multi_line = FALSE)) +
+#   theme_presentation2(10)
+# 
+# 
+# predictive_ability %>%
+#   filter(model == "model3_cov", pop == "tp", selection == "rfa_cv_adhoc") %>%
+#   distinct(trait, model, type, selection, ability_all)
 
 
 
@@ -182,24 +184,24 @@ across_site_prediction_accuracy_annotation <- accuracy_bias_all %>%
 
 
 
-## Quick plot of LOLO long-term covariates
-
-lolo_longterm_plotlist <- predictions_df %>%
-  filter(type == "lolo_longterm_covariates") %>%
-  split(.$trait) %>%
-  map(~{
-    ann_df <- left_join(.x, across_site_prediction_accuracy_annotation) %>%
-      distinct(trait, model, selection, pop, ability_ann)
-    
-    ggplot(data = .x, aes(x = pred_complete, y = value, color = test_group)) +
-      geom_abline(slope = 1, intercept = 0) +
-      geom_point(size = 0.5) +
-      geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = ability_ann), size = 2, inherit.aes = FALSE, 
-                vjust = -1, parse = TRUE, hjust = 1.1) +
-      scale_color_discrete(guide = FALSE) +
-      facet_grid(selection ~ model + pop) +
-      theme_presentation2(10)
-  })
+# ## Quick plot of LOLO long-term covariates
+# 
+# lolo_longterm_plotlist <- predictions_df %>%
+#   filter(type == "lolo_longterm_covariates") %>%
+#   split(.$trait) %>%
+#   map(~{
+#     ann_df <- left_join(.x, across_site_prediction_accuracy_annotation) %>%
+#       distinct(trait, model, selection, pop, ability_ann)
+#     
+#     ggplot(data = .x, aes(x = pred_complete, y = value, color = test_group)) +
+#       geom_abline(slope = 1, intercept = 0) +
+#       geom_point(size = 0.5) +
+#       geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = ability_ann), size = 2, inherit.aes = FALSE, 
+#                 vjust = -1, parse = TRUE, hjust = 1.1) +
+#       scale_color_discrete(guide = FALSE) +
+#       facet_grid(selection ~ model + pop) +
+#       theme_presentation2(10)
+#   })
 
 
 
