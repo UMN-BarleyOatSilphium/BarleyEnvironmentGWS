@@ -1860,11 +1860,10 @@ g_ext_env_all_list <- loo_pred_obs_df %>%
   split(.$trait) %>%
   map(~{
     # Extract annotations
-    ann_df <- distinct(select(.x, trait, pop, type,  test_group, ability, model, selection)) %>% 
+    ann_df <- distinct(select(.x, trait, pop, type,  test_group, ability_ann, model, selection)) %>% 
       mutate(test_group1 =  ifelse(str_detect(test_group, "[0-9]{2}"), test_group, 
                                         str_to_title(str_replace_all(test_group, "_", " "))),
-             ann1 = paste0("r[MP]==", formatC(signif(ability, 2), digits = 2, format = "f", flag = "0")),
-             annotation = paste0(abbreviate(test_group1, 5), "~", ann1)) %>%
+             annotation = paste0(abbreviate(test_group1, 5), "~", ability_ann)) %>%
       mutate(x = case_when(trait == "TestWeight" & selection == "StepwiseCV" ~ -Inf,
                            TRUE ~ Inf),
              y = case_when(trait == "GrainYield" & str_detect(selection, "None|StepwiseCV", negate = TRUE) ~ Inf,
@@ -1880,7 +1879,8 @@ g_ext_env_all_list <- loo_pred_obs_df %>%
       scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
       scale_fill_manual(values = environment_colors, guide = FALSE) +
       scale_color_manual(values = environment_colors, guide = FALSE) +
-      facet_grid(. ~ model + selection, switch = "y", scales = "free_x") +
+      facet_grid(. ~ model + selection, switch = "y", scales = "free_x",
+                 labeller = labeller(selection = label_parsed)) +
       labs(subtitle = parse(text = unique(.x$trait1))) +
       theme_genetics(base_size = 6) +
       theme(strip.placement = "outside", strip.background = element_blank())
@@ -1908,11 +1908,10 @@ g_ext_loc_all_list <- loo_pred_obs_df %>%
   map(~{
     
     # Extract annotations
-    ann_df <- distinct(select(.x, trait, pop, type,  test_group, ability, model, selection)) %>% 
+    ann_df <- distinct(select(.x, trait, pop, type,  test_group, ability_ann, model, selection)) %>% 
       mutate(test_group1 =  ifelse(str_detect(test_group, "[0-9]{2}"), test_group, 
                                         str_to_title(str_replace_all(test_group, "_", " "))),
-             ann1 = paste0("r[MP]==", formatC(signif(ability, 2), digits = 2, format = "f", flag = "0")),
-             annotation = paste0(abbreviate(test_group1, 5), "~", ann1)) %>%
+             annotation = paste0(abbreviate(test_group1, 5), "~", ability_ann)) %>%
       mutate(x = case_when(trait == "GrainYield" & selection %in% c("All", "Literature") ~ -Inf,
                            TRUE ~ Inf),
              y = case_when(trait == "GrainYield" & selection == "All" ~ Inf,
@@ -1928,7 +1927,8 @@ g_ext_loc_all_list <- loo_pred_obs_df %>%
       scale_y_continuous(name = "Observed phenotypic value", breaks = pretty) +
       scale_fill_manual(values = location_colors, guide = FALSE) +
       scale_color_manual(values = location_colors, guide = FALSE) +
-      facet_grid(. ~ model + selection, switch = "y", scales = "free_x") +
+      facet_grid(. ~ model + selection, switch = "y", scales = "free_x",
+                 labeller = labeller(selection = label_parsed)) +
       labs(subtitle = parse(text = unique(.x$trait1))) +
       theme_genetics(base_size = 6) +
       theme(strip.placement = "outside", strip.background = element_blank())
@@ -1951,7 +1951,7 @@ ggsave(filename = "figure_S10_external_location_across_site_prediction_accuracy.
 # Plot LOLO results when using longer-term historical data
 loc_longterm_pred_obs_df <- loo_pred_obs_df %>%
   # Extract data from the GxE model and both the recent and best timeframes
-  filter(type %in% c("lolo", "loc_external"), selection == "StepwiseCV", model == "g + e + (ge)") %>%
+  filter(type %in% c("lolo", "loc_external"), str_detect(selection, "stepwise"), model == "g + e + (ge)") %>%
   mutate(time_frame = str_extract(time_frame, "[0-9]{4}_[0-9]{4}") %>% str_replace(., "_", "-"),
          time_frame_facet = paste0(time_frame_selection, "Timeframe: ", time_frame),
          group = paste0(f_validation_replace(pop), ", ", f_type_replace(type)),
@@ -2189,8 +2189,8 @@ phenCor_concurrent_features1 <- phenCor_concurrent_features %>%
 ## Plot
 g_phenCor_concurrent_features1 <- phenCor_concurrent_features1 %>%
   filter(str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
-  unnest(phenoCor_corMat) %>%
-  ggplot(aes(x = correlation, y = phenoCor)) +
+  unnest(phenoCor_corMat, names_repair = tidyr_legacy) %>%
+  ggplot(aes(x = correlation, y = phenoCor1)) +
   geom_point(size = 0.5) +
   geom_smooth(method = "lm", se = FALSE, lwd = 0.5) +
   geom_text(aes(x = Inf, y = Inf, label = annotation), color = "blue", size = base_geom_text_size, hjust = 1.05, vjust = 1.2) +
@@ -2224,7 +2224,8 @@ concurrent_features_heatmap_plots <- concurrent_features_env_cormat %>%
     clust_data <- dendro_data(model = env_clust)
     # Label data
     clust_lab_data <- mutate(clust_data$labels, group = ifelse(label %in% train_test_env, "Train/test", "Holdout"),
-                             group = fct_relevel(group, "Holdout", after = Inf))
+                             group = fct_relevel(group, "Holdout", after = Inf),
+                             label = fct_inorder(label))
     segment_data <- segment(clust_data)
     
     # Factor order of environments
