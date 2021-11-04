@@ -1859,16 +1859,31 @@ g_ext_env_all_list <- loo_pred_obs_df %>%
   filter(type == "env_external", selection != "LASSO") %>%
   split(.$trait) %>%
   map(~{
-    # Extract annotations
-    ann_df <- distinct(select(.x, trait, pop, type,  test_group, ability_ann, model, selection)) %>% 
-      mutate(test_group1 =  ifelse(str_detect(test_group, "[0-9]{2}"), test_group, 
-                                        str_to_title(str_replace_all(test_group, "_", " "))),
-             annotation = paste0(abbreviate(test_group1, 5), "~", ability_ann)) %>%
-      mutate(x = case_when(trait == "TestWeight" & selection == "StepwiseCV" ~ -Inf,
+    
+    # Get the annotation for across environment prediction
+    across_env_ann <- distinct(select(.x, trait, pop, type, ability_ann, model, selection)) %>% 
+      mutate(annotation = paste0("'All:'~", ability_ann),
+             x = case_when(trait == "TestWeight" & selection == "StepwiseCV" ~ -Inf,
                            TRUE ~ Inf),
              y = case_when(trait == "GrainYield" & str_detect(selection, "None|StepwiseCV", negate = TRUE) ~ Inf,
-                           TRUE ~ -Inf))
+                           TRUE ~ -Inf),
+             test_group = "All")
+             
+                           
+    # Annotation for accuracy within environments
+    within_env_ann <- distinct(within_environment_prediction_accuracy, trait, pop, type, selection, model, test_group, ability) %>% 
+      mutate(model = f_model_replace(model), 
+             selection = f_ec_selection_replace(selection, parse = FALSE),
+             selection = ifelse(selection == "None" & model == "g", "Covariate~Set: None", selection),
+             model = ifelse(model == "g", "Model: g", model)) %>%
+      left_join(distinct(.x, trait, pop, type, selection, model, test_group), .) %>%
+      mutate(annotation = paste0("'", test_group, ":'~r[MP]==", format_numbers(ability, 2)))
     
+    # Combine annotations
+    ann_df <- select(across_env_ann, -annotation) %>% 
+      full_join(., within_env_ann) %>%
+      bind_rows(., across_env_ann)
+
     ggplot(.x, aes(x = pred_complete, y = value, fill = test_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
       geom_point(size = 0.1, shape = 21, color = alpha("white", 0)) +
@@ -2039,9 +2054,10 @@ env_means %>%
 
 
 ## Calculate environmental correlation
+## Use all available lines
 
 env_phenoCor <- S2_MET_BLUEs %>%
-  filter(line_name %in% tp) %>%
+  # filter(line_name %in% tp) %>%
   group_by(trait) %>%
   do(phenoCor = {
     select(., line_name, environment, value) %>%
@@ -2107,199 +2123,192 @@ concurrent_features_env_cormat <- concurrent_features_env_relmat1 %>%
 
 
 
-## Plot the distance between environmental means versus the correlation due to covariates
-env_mean_concurrent_features <- concurrent_features_env_cormat %>%
-  left_join(., env_mean_dist) %>%
-  # mutate(corMat = map2(corMat, dist, ~.x[row.names(.y), row.names(.y)]))
-  mutate(corMat = map2(main, dist, ~.x[row.names(.y), row.names(.y)]))
+# ## Plot the distance between environmental means versus the correlation due to covariates
+# env_mean_concurrent_features <- concurrent_features_env_cormat %>%
+#   left_join(., env_mean_dist) %>%
+#   # mutate(corMat = map2(corMat, dist, ~.x[row.names(.y), row.names(.y)]))
+#   mutate(corMat = map2(main, dist, ~.x[row.names(.y), row.names(.y)]))
+# 
+# env_mean_cor_concurrent_features <- env_mean_concurrent_features %>%
+#   mutate(corMat_envMean_df = map2(corMat, dist, ~{
+#     .x[lower.tri(.x, diag = TRUE)] <- NA
+#     .y[lower.tri(.y, diag = TRUE)] <- NA
+#     
+#     .x1 <- as.data.frame(.x) %>% 
+#       rownames_to_column("environment") %>% 
+#       gather(environment2, correlation, -environment) %>% 
+#       filter(!is.na(correlation))
+#     
+#     .y1 <- as.data.frame(.y) %>% 
+#       rownames_to_column("environment") %>% 
+#       gather(environment2, env_mean_dist, -environment) %>% 
+#       filter(!is.na(env_mean_dist))
+#     
+#     full_join(.x1, .y1, by = c("environment", "environment2"))
+#     
+#   })) %>% ungroup() %>%
+#   # Calculate correlations and annotate
+#   mutate(cor_test = map(corMat_envMean_df, ~cor.test(x = .x$correlation, y = .x$env_mean_dist)),
+#          cor_estimate = map_dbl(cor_test, "estimate"), p_value = map_dbl(cor_test, "p.value"),
+#          annotation = paste0("r = ", format_numbers(x = cor_estimate, 2), "; P = ", formatC(x = p_value, digits = 2, width = 2, format = "g")))
+# 
+# ## Plot
+# g_env_mean_cor_concurrent_features <- env_mean_cor_concurrent_features %>%
+#   filter(str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
+#   unnest(corMat_envMean_df) %>%
+#   mutate(env_mean_dist = ifelse(trait == "GrainYield", env_mean_dist / 1000, env_mean_dist)) %>%
+#   ggplot(aes(x = correlation, y = env_mean_dist)) +
+#   geom_point(size = 0.5) +
+#   geom_smooth(method = "lm", se = FALSE, lwd = 0.5, color = "blue") +
+#   geom_text(aes(x = Inf, y = Inf, label = annotation), color = "blue", size = base_geom_text_size, hjust = 1.05, vjust = 1.2) +
+#   facet_grid(trait ~ feat_sel_type, scales = "free_y", switch = "y", 
+#              labeller = labeller(feat_sel_type = f_ec_selection_replace, trait = str_add_space)) +
+#   scale_x_continuous(name = "Covariate-estimated\nenvironmental correlation", breaks = pretty) +
+#   scale_y_continuous(name = "Difference in environmental mean", breaks = pretty) +
+#   theme_genetics(base_size = 8) +
+#   theme(panel.border = element_rect(color = "grey85", fill = alpha("white", 0)), strip.placement = "outside")
+# 
+# # Save
+# ggsave(filename = "concurrent_ec_correlation_vs_env_mean_dist.jpg", plot = g_env_mean_cor_concurrent_features,
+#        path = fig_dir, height = 5, width = 5, dpi = 1000)
 
-env_mean_cor_concurrent_features <- env_mean_concurrent_features %>%
-  mutate(corMat_envMean_df = map2(corMat, dist, ~{
-    .x[lower.tri(.x, diag = TRUE)] <- NA
-    .y[lower.tri(.y, diag = TRUE)] <- NA
-    
-    .x1 <- as.data.frame(.x) %>% 
-      rownames_to_column("environment") %>% 
-      gather(environment2, correlation, -environment) %>% 
-      filter(!is.na(correlation))
-    
-    .y1 <- as.data.frame(.y) %>% 
-      rownames_to_column("environment") %>% 
-      gather(environment2, env_mean_dist, -environment) %>% 
-      filter(!is.na(env_mean_dist))
-    
-    full_join(.x1, .y1, by = c("environment", "environment2"))
-    
-  })) %>% ungroup() %>%
-  # Calculate correlations and annotate
-  mutate(cor_test = map(corMat_envMean_df, ~cor.test(x = .x$correlation, y = .x$env_mean_dist)),
-         cor_estimate = map_dbl(cor_test, "estimate"), p_value = map_dbl(cor_test, "p.value"),
-         annotation = paste0("r = ", format_numbers(x = cor_estimate, 2), "; P = ", formatC(x = p_value, digits = 2, width = 2, format = "g")))
-
-## Plot
-g_env_mean_cor_concurrent_features <- env_mean_cor_concurrent_features %>%
-  filter(str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
-  unnest(corMat_envMean_df) %>%
-  mutate(env_mean_dist = ifelse(trait == "GrainYield", env_mean_dist / 1000, env_mean_dist)) %>%
-  ggplot(aes(x = correlation, y = env_mean_dist)) +
-  geom_point(size = 0.5) +
-  geom_smooth(method = "lm", se = FALSE, lwd = 0.5, color = "blue") +
-  geom_text(aes(x = Inf, y = Inf, label = annotation), color = "blue", size = base_geom_text_size, hjust = 1.05, vjust = 1.2) +
-  facet_grid(trait ~ feat_sel_type, scales = "free_y", switch = "y", 
-             labeller = labeller(feat_sel_type = f_ec_selection_replace, trait = str_add_space)) +
-  scale_x_continuous(name = "Covariate-estimated\nenvironmental correlation", breaks = pretty) +
-  scale_y_continuous(name = "Difference in environmental mean", breaks = pretty) +
-  theme_genetics(base_size = 8) +
-  theme(panel.border = element_rect(color = "grey85", fill = alpha("white", 0)), strip.placement = "outside")
-
-# Save
-ggsave(filename = "concurrent_ec_correlation_vs_env_mean_dist.jpg", plot = g_env_mean_cor_concurrent_features,
-       path = fig_dir, height = 5, width = 5, dpi = 1000)
 
 
+# ## Plot the phenotypic correlation versus the correlation due to covariates
+# phenCor_concurrent_features <- concurrent_features_env_cormat %>%
+#   left_join(., env_phenoCor) %>%
+#   mutate(corMat = map2(corMat, phenoCor, ~.x[row.names(.y), row.names(.y)]))
+# 
+# phenCor_concurrent_features1 <- phenCor_concurrent_features %>%
+#   mutate(phenoCor_corMat = map2(corMat, phenoCor, ~{
+#     .x[lower.tri(.x, diag = TRUE)] <- NA
+#     .y[lower.tri(.y, diag = TRUE)] <- NA
+#     
+#     .x1 <- as.data.frame(.x) %>% 
+#       rownames_to_column("environment") %>% 
+#       gather(environment2, correlation, -environment) %>% 
+#       filter(!is.na(correlation))
+#     
+#     .y1 <- as.data.frame(.y) %>% 
+#       rownames_to_column("environment") %>% 
+#       gather(environment2, phenoCor, -environment) %>% 
+#       filter(!is.na(phenoCor))
+#     
+#     full_join(.x1, .y1, by = c("environment", "environment2"))
+#     
+#   })) %>% ungroup() %>%
+#   # Calculate correlations and annotate
+#   mutate(cor_test = map(phenoCor_corMat, ~cor.test(x = .x$correlation, y = .x$phenoCor)),
+#          cor_estimate = map_dbl(cor_test, "estimate"), p_value = map_dbl(cor_test, "p.value"),
+#          annotation = paste0("r = ", format_numbers(x = cor_estimate, 2), "; P = ", formatC(x = p_value, digits = 2, width = 2, format = "g")))
+# 
+# ## Plot
+# g_phenCor_concurrent_features1 <- phenCor_concurrent_features1 %>%
+#   filter(str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
+#   unnest(phenoCor_corMat, names_repair = tidyr_legacy) %>%
+#   ggplot(aes(x = correlation, y = phenoCor1)) +
+#   geom_point(size = 0.5) +
+#   geom_smooth(method = "lm", se = FALSE, lwd = 0.5) +
+#   geom_text(aes(x = Inf, y = Inf, label = annotation), color = "blue", size = base_geom_text_size, hjust = 1.05, vjust = 1.2) +
+#   facet_grid(trait ~ feat_sel_type, scales = "free_y", switch = "y",
+#              labeller = labeller(feat_sel_type = f_ec_selection_replace, trait = str_add_space)) +
+#   scale_x_continuous(name = "Covariate-estimated\nenvironmental correlation", breaks = pretty) +
+#   scale_y_continuous(name = "Phenotypic correlation between environments", breaks = pretty) +
+#   theme_genetics(base_size = 8) +
+#   theme(panel.border = element_rect(color = "grey85", fill = alpha("white", 0)), strip.placement = "outside")
+# 
+# # Save
+# ggsave(filename = "concurrent_ec_correlation_vs_phenoCor.jpg", plot = g_phenCor_concurrent_features1,
+#        path = fig_dir, height = 5, width = 5, dpi = 1000)
 
-## Plot the phenotypic correlation versus the correlation due to covariates
-phenCor_concurrent_features <- concurrent_features_env_cormat %>%
+
+
+
+# Plot a joint heatmap of the estimate phenotypic correlation versus the correlation
+# between environments estimated by the EC-covariance matrix
+phenoCor_ec_heatmaps <- concurrent_features_env_cormat %>%
   left_join(., env_phenoCor) %>%
-  mutate(corMat = map2(corMat, phenoCor, ~.x[row.names(.y), row.names(.y)]))
-
-phenCor_concurrent_features1 <- phenCor_concurrent_features %>%
-  mutate(phenoCor_corMat = map2(corMat, phenoCor, ~{
-    .x[lower.tri(.x, diag = TRUE)] <- NA
-    .y[lower.tri(.y, diag = TRUE)] <- NA
-    
-    .x1 <- as.data.frame(.x) %>% 
-      rownames_to_column("environment") %>% 
-      gather(environment2, correlation, -environment) %>% 
-      filter(!is.na(correlation))
-    
-    .y1 <- as.data.frame(.y) %>% 
-      rownames_to_column("environment") %>% 
-      gather(environment2, phenoCor, -environment) %>% 
-      filter(!is.na(phenoCor))
-    
-    full_join(.x1, .y1, by = c("environment", "environment2"))
-    
-  })) %>% ungroup() %>%
-  # Calculate correlations and annotate
-  mutate(cor_test = map(phenoCor_corMat, ~cor.test(x = .x$correlation, y = .x$phenoCor)),
-         cor_estimate = map_dbl(cor_test, "estimate"), p_value = map_dbl(cor_test, "p.value"),
-         annotation = paste0("r = ", format_numbers(x = cor_estimate, 2), "; P = ", formatC(x = p_value, digits = 2, width = 2, format = "g")))
-
-## Plot
-g_phenCor_concurrent_features1 <- phenCor_concurrent_features1 %>%
-  filter(str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
-  unnest(phenoCor_corMat, names_repair = tidyr_legacy) %>%
-  ggplot(aes(x = correlation, y = phenoCor1)) +
-  geom_point(size = 0.5) +
-  geom_smooth(method = "lm", se = FALSE, lwd = 0.5) +
-  geom_text(aes(x = Inf, y = Inf, label = annotation), color = "blue", size = base_geom_text_size, hjust = 1.05, vjust = 1.2) +
-  facet_grid(trait ~ feat_sel_type, scales = "free_y", switch = "y",
-             labeller = labeller(feat_sel_type = f_ec_selection_replace, trait = str_add_space)) +
-  scale_x_continuous(name = "Covariate-estimated\nenvironmental correlation", breaks = pretty) +
-  scale_y_continuous(name = "Phenotypic correlation between environments", breaks = pretty) +
-  theme_genetics(base_size = 8) +
-  theme(panel.border = element_rect(color = "grey85", fill = alpha("white", 0)), strip.placement = "outside")
-
-# Save
-ggsave(filename = "concurrent_ec_correlation_vs_phenoCor.jpg", plot = g_phenCor_concurrent_features1,
-       path = fig_dir, height = 5, width = 5, dpi = 1000)
-
-
-## For each trait and covariate type (interaction/main), plot a heatmap and
-## a dendrogram
-concurrent_features_heatmap_plots <- concurrent_features_env_cormat %>%
-  filter(str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
-  group_by(feat_sel_type) %>%
-  mutate(n = seq(n())) %>%
   group_by(trait, feat_sel_type) %>%
   do(plot = {
     row <- .
     
-    corMat <- row$corMat[[1]]
+    # Find the common set of environments
+    common_envs <- intersect(row.names(row$phenoCor[[1]]), row.names(row$main[[1]]))
     
-    # First perform clustering on the relationship matrix
-    env_clust <- hclust(dist(corMat, method = "euclidean"), method = "average")
-    # get the data
-    clust_data <- dendro_data(model = env_clust)
-    # Label data
-    clust_lab_data <- mutate(clust_data$labels, group = ifelse(label %in% train_test_env, "Train/test", "Holdout"),
-                             group = fct_relevel(group, "Holdout", after = Inf),
-                             label = fct_inorder(label))
-    segment_data <- segment(clust_data)
+    # Subset each correlation matrix, convert to a df
+    pheno_cor_df <- row$phenoCor[[1]] %>%
+      as.data.frame() %>%
+      rownames_to_column("environment1") %>%
+      gather(environment2, phenoCor, -environment1) %>%
+      filter_at(vars(contains("environment")), all_vars(. %in% common_envs))
     
-    # Factor order of environments
-    env_order <- levels(clust_lab_data$label)
+    # Calculate the average phenotypic correlation of each environment with all others; each with 
+    # only training environments
+    pheno_cor_df1 <- pheno_cor_df %>% 
+      mutate(environment2_training = environment2 %in% train_test_env)
     
-    # Re-orient the correlation matrix
-    corMat <- corMat1 <- corMat[env_order, env_order]
-    # Set the lower triangle to NA
-    corMat1[upper.tri(corMat)] <- NA
+    avg_phenocor <- bind_rows(
+      mutate(aggregate(phenoCor ~ environment1, data = pheno_cor_df1, FUN = mean), scope = "all_env"),
+      mutate(aggregate(phenoCor ~ environment1, data = pheno_cor_df1, FUN = mean, subset = environment2_training), scope = "train_env")
+    ) %>%
+      rename(avg_phenoCor = phenoCor)
     
-    # Create the plotting data.frame
-    dat1 <- corMat1 %>%
-      as.data.frame(.) %>%
-      rownames_to_column(., "environment") %>%
-      gather(environment2, correlation, -environment)
-    
-    ## Add correlation annotation for the lower triangle
-    dat <- corMat %>%
-      as.data.frame(.) %>%
-      rownames_to_column(., "environment") %>%
-      gather(environment2, correlation, -environment) %>%
-      mutate(annotation = format_numbers(correlation, 2))
-    
-    # Merge
-    dat2 <- left_join(dat1, select(dat, -correlation), by = c("environment", "environment2")) %>%
-      # Refactor the environments
-      mutate_at(vars(contains("environment")), ~factor(., levels = env_order)) %>%
-      mutate_at(vars(contains("environment")), list(group = ~ifelse(. %in% train_test_env, "training", "external"))) %>%
-      mutate(annotation = ifelse(is.na(correlation), annotation, NA)) %>%
-      # Add continuous x/y coordinates
-      left_join(., clust_lab_data, by = c("environment" = "label")) %>%
-      left_join(., clust_lab_data, by = c("environment2" = "label")) %>%
-      select(x_center = x.x, y_center = x.y, correlation)
-    
-    # Generate common axis limit
-    env_axis_limits <- with(clust_lab_data, c(min(x - 0.5), max(x + 0.5))) + 0.1 * c(-1, 1)
+    ec_cor_df <- row$main[[1]] %>%
+      as.data.frame() %>%
+      rownames_to_column("environment1") %>%
+      gather(environment2, ecCor, -environment1) %>%
+      filter_at(vars(contains("environment")), all_vars(. %in% common_envs))
     
     
-    # Plot
-    g_heat <- dat2 %>%
-      ggplot(aes(x = x_center, y = y_center)) +
+    # Cluster based on phenotypic correlations
+    clust <- hclust(as.dist(-row$phenoCor[[1]]))
+    # Order of factors
+    env_fact_order <- factor(common_envs, levels = clust$labels[clust$order])
+    
+    # Upper triangle df
+    upper_tri_df <- row$corMat[[1]][levels(env_fact_order), levels(env_fact_order)] %>%
+      upper.tri() %>% 
+      as.data.frame() %>% 
+      rownames_to_column("environment1") %>% 
+      gather(environment2, upper_tri, -environment1) %>%
+      mutate_at(vars(contains("environment")), ~parse_number(.) %>% {levels(env_fact_order)[.]})
+    
+    # Combine df
+    cor_df <- full_join(pheno_cor_df, ec_cor_df, by = c("environment1", "environment2")) %>%
+      # Decide what elements will go on the upper versus lower diagonal
+      full_join(., upper_tri_df, by = c("environment1", "environment2")) %>%
+      # Add the average phenotypic correlations
+      left_join(., subset(avg_phenocor, scope == "train_env"), by = c("environment1")) %>%
+      mutate(heatvalue = ifelse(upper_tri, phenoCor, ecCor),
+             heatvalue = ifelse(environment1 == environment2, as.numeric(NA), heatvalue),
+             label = ifelse(environment1 == environment2, format_numbers(avg_phenoCor, 2), as.character(NA))) %>%
+      # Set environments as factors with levels in the following order: first holdout environments, then 
+      # based on phenocor clustering
+      mutate_at(vars(contains("environment")), ~factor(., levels = levels(env_fact_order))) %>%
+      mutate(x = "Phenotypic correlation", y = "EC-correlation")
+
+    # Bold font for validation environments
+    font_face <- ifelse(levels(env_fact_order) %in% validation_env, "bold", "plain")
+    
+    # plot the heatmap
+    g_heat <- cor_df %>%
+      ggplot(aes(x = environment1, y = environment2)) +
       # geom_tile(aes(fill = correlation), color = ifelse(is.na(dat2$correlation), "black", NA), lwd = 0.1) +
-      geom_tile(aes(fill = correlation), lwd = 0.1) +
-      # geom_text(aes(label = annotation), size = 1) +
+      geom_tile(aes(fill = heatvalue)) +
+      # Include text
+      geom_text(aes(label = label), size = 2) +
       scale_fill_gradient2(low = heat_colors[1], mid = heat_colors[2], high = heat_colors[3], na.value = "white",
                            midpoint = 0, limits = c(-1.01, 1.01), breaks = pretty,
-                           name = "Estimated environmental\ncorrelation", guide = guide_colorbar(title.position = "top")) +
-      scale_x_continuous(breaks = clust_lab_data$x, labels = clust_lab_data$label, limits = env_axis_limits, expand = c(0, 0)) +
-      scale_y_continuous(breaks = clust_lab_data$x, labels = clust_lab_data$label, expand = c(0, 0), position = "right") +
-      # facet_grid(row$trait ~ ., switch = "y", labeller = labeller(trait = str_add_space)) +
-      # labs(subtitle = paste(str_add_space(row$trait), f_ec_selection_replace(row$feat_sel_type), sep = ", ")) +
+                           name = "Correlation", guide = guide_colorbar(title.position = "top")) +
+      facet_grid(x ~ y, switch = "both") +
+      labs(subtitle = str_add_space(row$trait)) +
       theme_genetics(8) +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1), panel.spacing = unit(0.25, "line"),
-            strip.placement = "outside", axis.title = element_blank(), legend.position = c(0.25, 0.75),
-            axis.text.y = element_blank(), legend.direction = "horizontal")
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, face = font_face), 
+            axis.text.y = element_text(face = font_face), axis.title = element_blank(),
+            strip.background = element_blank())
     
-    # Remove legend if n != 1
-    if (row$n != 1) {
-      g_heat <- g_heat + theme(legend.position = "none")
-    }
-    
-    ## Plot dendrogram
-    g_dendro <- ggplot(data = segment_data) +
-      geom_segment(aes(x = x, y = y, xend = xend, yend = yend)) +
-      coord_flip() +
-      scale_x_continuous(breaks = clust_lab_data$x, labels = clust_lab_data$label, limits = env_axis_limits, expand = c(0, 0)) +
-      scale_y_continuous(expand = c(0, 0)) +
-      scale_color_manual(name = NULL, values = c("black", "red")) +
-      theme_genetics(base_size = 8) +
-      theme(legend.key.height = unit(5, "pt"), axis.title = element_blank(), axis.text.x = element_blank(), axis.line = element_blank(),
-            axis.ticks.x = element_blank())
-    
-    # Combine plots
-    plot_grid(g_heat, g_dendro, align = "h", rel_widths = c(1, 0.8))
+    # Output the heatmap
+    g_heat
     
   }) %>% ungroup()
 
@@ -2307,32 +2316,13 @@ concurrent_features_heatmap_plots <- concurrent_features_env_cormat %>%
 
 ## Combine plots for use in the supplemental figure
 
-# First edit each plot
-g_env_mean_cor_concurrent_features1 <- g_env_mean_cor_concurrent_features %>%
-  modify_at("data", ~filter(.x, feat_sel_type == "stepwise_cv_adhoc")) +
-  facet_grid(trait ~ ., scales = "free_y", switch = "y", labeller = labeller(trait = str_add_space))
-
-g_phenCor_concurrent_features2 <- g_phenCor_concurrent_features1 %>%
-  modify_at("data", ~filter(.x, feat_sel_type == "stepwise_cv_adhoc")) +
-  facet_grid(trait ~ ., scales = "free_y", switch = "y", labeller = labeller(trait = str_add_space))
-
-# Merge heatmaps
-g_heat_dendro_select <- subset(concurrent_features_heatmap_plots, feat_sel_type == "stepwise_cv_adhoc", plot, drop = TRUE) %>%
-  modify_at(-1, ~. + theme(legend.position = "none")) %>%
-  plot_grid(plotlist = ., ncol = 1)
-
-# Merge all plots
-g_heatmap_cor_compare <- plot_grid(g_env_mean_cor_concurrent_features1, 
-                                   g_phenCor_concurrent_features2 + theme(strip.text = element_blank()),
-                                   plot_spacer() + theme(panel.background = element_rect(fill = alpha("white", 0))), 
-                                   g_heat_dendro_select,
-                                   nrow = 1, align = "h", axis = "tblr", rel_widths = c(0.5, 0.5, 0.05, 1),
-                                   labels = subfigure_labels[c(1,2,NA,3)], label_size = subfigure_label_size)
+g_heatmap_combined <- plot_grid(plotlist = subset(phenoCor_ec_heatmaps, feat_sel_type == "stepwise_cv_adhoc", plot, drop = TRUE),
+                                ncol = 2)
 
 
 # Save
-ggsave(filename = "figure_s12_environmental_covariate_heatmap.jpg", plot = g_heatmap_cor_compare,
-       path = fig_dir, width = 10, height = 12, dpi = 1000)
+ggsave(filename = "figure_s12_environmental_covariate_heatmap.jpg", plot = g_heatmap_combined,
+       path = fig_dir, width = 12, height = 12, dpi = 1000)
 
 
 
@@ -2356,7 +2346,7 @@ S2_MET_loc_BLUEs <- S2_MET_BLUEs %>%
 # Calculate location phenotypic correlation
 
 loc_phenoCor <- S2_MET_loc_BLUEs %>%
-  filter(line_name %in% tp) %>%
+  # filter(line_name %in% tp) %>%
   group_by(trait) %>%
   do(phenoCor = {
     select(., line_name, location, value) %>%
@@ -2449,197 +2439,194 @@ historical_features_loc_cormat <- historical_features_loc_relmat1 %>%
 
 
 
-## Plot the distance between environmental means versus the correlation due to covariates
-env_mean_concurrent_features <- historical_features_loc_cormat %>%
-  left_join(., loc_mean_dist) %>%
-  # mutate(corMat = map2(corMat, dist, ~.x[row.names(.y), row.names(.y)]))
-  mutate(corMat = map2(main, dist, ~.x[row.names(.y), row.names(.y)]))
+# ## Plot the distance between environmental means versus the correlation due to covariates
+# env_mean_concurrent_features <- historical_features_loc_cormat %>%
+#   left_join(., loc_mean_dist) %>%
+#   # mutate(corMat = map2(corMat, dist, ~.x[row.names(.y), row.names(.y)]))
+#   mutate(corMat = map2(main, dist, ~.x[row.names(.y), row.names(.y)]))
+# 
+# env_mean_cor_concurrent_features <- env_mean_concurrent_features %>%
+#   mutate(corMat_envMean_df = map2(corMat, dist, ~{
+#     .x[lower.tri(.x, diag = TRUE)] <- NA
+#     .y[lower.tri(.y, diag = TRUE)] <- NA
+# 
+#     .x1 <- as.data.frame(.x) %>%
+#       rownames_to_column("environment") %>%
+#       gather(environment2, correlation, -environment) %>%
+#       filter(!is.na(correlation))
+# 
+#     .y1 <- as.data.frame(.y) %>%
+#       rownames_to_column("environment") %>%
+#       gather(environment2, env_mean_dist, -environment) %>%
+#       filter(!is.na(env_mean_dist))
+# 
+#     full_join(.x1, .y1, by = c("environment", "environment2"))
+# 
+#   })) %>% ungroup() %>%
+#   # Calculate correlations and annotate
+#   mutate(cor_test = map(corMat_envMean_df, ~cor.test(x = .x$correlation, y = .x$env_mean_dist)),
+#          cor_estimate = map_dbl(cor_test, "estimate"), p_value = map_dbl(cor_test, "p.value"),
+#          annotation = paste0("r = ", format_numbers(x = cor_estimate, 2), "; P = ", formatC(x = p_value, digits = 2, width = 2, format = "g")))
+# 
+# ## Plot
+# g_env_mean_cor_concurrent_features <- env_mean_cor_concurrent_features %>%
+#   filter(str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
+#   unnest(corMat_envMean_df) %>%
+#   mutate(env_mean_dist = ifelse(trait == "GrainYield", env_mean_dist / 1000, env_mean_dist)) %>%
+#   ggplot(aes(x = correlation, y = env_mean_dist)) +
+#   geom_point(size = 0.5) +
+#   geom_smooth(method = "lm", se = FALSE, lwd = 0.5, color = "blue") +
+#   geom_text(aes(x = Inf, y = Inf, label = annotation), color = "blue", size = base_geom_text_size, hjust = 1.05, vjust = 1.2) +
+#   facet_grid(trait ~ feat_sel_type, scales = "free_y", switch = "y",
+#              labeller = labeller(feat_sel_type = f_ec_selection_replace, trait = str_add_space)) +
+#   scale_x_continuous(name = "Covariate-estimated\nlocation correlation", breaks = pretty) +
+#   scale_y_continuous(name = "Difference in location mean", breaks = pretty) +
+#   theme_genetics(base_size = 8) +
+#   theme(panel.border = element_rect(color = "grey85", fill = alpha("white", 0)), strip.placement = "outside")
+# 
+# 
+# ## Plot the phenotypic correlation versus the correlation due to covariates
+# phenCor_concurrent_features <- historical_features_loc_cormat %>%
+#   left_join(., loc_phenoCor) %>%
+#   mutate(corMat = map2(corMat, phenoCor, ~.x[row.names(.y), row.names(.y)]))
+# 
+# phenCor_concurrent_features1 <- phenCor_concurrent_features %>%
+#   mutate(phenoCor_corMat = map2(corMat, phenoCor, ~{
+#     .x[lower.tri(.x, diag = TRUE)] <- NA
+#     .y[lower.tri(.y, diag = TRUE)] <- NA
+# 
+#     .x1 <- as.data.frame(.x) %>%
+#       rownames_to_column("environment") %>%
+#       gather(environment2, correlation, -environment) %>%
+#       filter(!is.na(correlation))
+# 
+#     .y1 <- as.data.frame(.y) %>%
+#       rownames_to_column("environment") %>%
+#       gather(environment2, phenoCor, -environment) %>%
+#       filter(!is.na(phenoCor))
+# 
+#     full_join(.x1, .y1, by = c("environment", "environment2"))
+# 
+#   })) %>% ungroup() %>%
+#   # Calculate correlations and annotate
+#   mutate(cor_test = map(phenoCor_corMat, ~cor.test(x = .x$correlation, y = .x$phenoCor)),
+#          cor_estimate = map_dbl(cor_test, "estimate"), p_value = map_dbl(cor_test, "p.value"),
+#          annotation = paste0("r = ", format_numbers(x = cor_estimate, 2), "; P = ", formatC(x = p_value, digits = 2, width = 2, format = "g")))
+# 
+# ## Plot
+# g_phenCor_concurrent_features1 <- phenCor_concurrent_features1 %>%
+#   filter(str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
+#   unnest(phenoCor_corMat) %>%
+#   ggplot(aes(x = correlation, y = phenoCor)) +
+#   geom_point(size = 0.5) +
+#   geom_smooth(method = "lm", se = FALSE, lwd = 0.5) +
+#   geom_text(aes(x = Inf, y = Inf, label = annotation), color = "blue", size = base_geom_text_size, hjust = 1.05, vjust = 1.2) +
+#   facet_grid(trait ~ feat_sel_type, scales = "free_y", switch = "y",
+#              labeller = labeller(feat_sel_type = f_ec_selection_replace, trait = str_add_space)) +
+#   scale_x_continuous(name = "Covariate-estimated\nlocation correlation", breaks = pretty) +
+#   scale_y_continuous(name = "Phenotypic correlation between locations", breaks = pretty) +
+#   theme_genetics(base_size = 8) +
+#   theme(panel.border = element_rect(color = "grey85", fill = alpha("white", 0)), strip.placement = "outside")
 
-env_mean_cor_concurrent_features <- env_mean_concurrent_features %>%
-  mutate(corMat_envMean_df = map2(corMat, dist, ~{
-    .x[lower.tri(.x, diag = TRUE)] <- NA
-    .y[lower.tri(.y, diag = TRUE)] <- NA
-    
-    .x1 <- as.data.frame(.x) %>% 
-      rownames_to_column("environment") %>% 
-      gather(environment2, correlation, -environment) %>% 
-      filter(!is.na(correlation))
-    
-    .y1 <- as.data.frame(.y) %>% 
-      rownames_to_column("environment") %>% 
-      gather(environment2, env_mean_dist, -environment) %>% 
-      filter(!is.na(env_mean_dist))
-    
-    full_join(.x1, .y1, by = c("environment", "environment2"))
-    
-  })) %>% ungroup() %>%
-  # Calculate correlations and annotate
-  mutate(cor_test = map(corMat_envMean_df, ~cor.test(x = .x$correlation, y = .x$env_mean_dist)),
-         cor_estimate = map_dbl(cor_test, "estimate"), p_value = map_dbl(cor_test, "p.value"),
-         annotation = paste0("r = ", format_numbers(x = cor_estimate, 2), "; P = ", formatC(x = p_value, digits = 2, width = 2, format = "g")))
 
-## Plot
-g_env_mean_cor_concurrent_features <- env_mean_cor_concurrent_features %>%
-  filter(str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
-  unnest(corMat_envMean_df) %>%
-  mutate(env_mean_dist = ifelse(trait == "GrainYield", env_mean_dist / 1000, env_mean_dist)) %>%
-  ggplot(aes(x = correlation, y = env_mean_dist)) +
-  geom_point(size = 0.5) +
-  geom_smooth(method = "lm", se = FALSE, lwd = 0.5, color = "blue") +
-  geom_text(aes(x = Inf, y = Inf, label = annotation), color = "blue", size = base_geom_text_size, hjust = 1.05, vjust = 1.2) +
-  facet_grid(trait ~ feat_sel_type, scales = "free_y", switch = "y", 
-             labeller = labeller(feat_sel_type = f_ec_selection_replace, trait = str_add_space)) +
-  scale_x_continuous(name = "Covariate-estimated\nlocation correlation", breaks = pretty) +
-  scale_y_continuous(name = "Difference in location mean", breaks = pretty) +
-  theme_genetics(base_size = 8) +
-  theme(panel.border = element_rect(color = "grey85", fill = alpha("white", 0)), strip.placement = "outside")
+# Function to abbreviate location names
+f_abbreviate_locations <- function(x) {
+  locations_short <- distinct(trial_info, location, environment) %>%
+    mutate(environment = str_sub(environment, 1, 3)) %>% 
+    distinct() %>%
+    {setNames(.$environment, .$location)}
+  locations_short[x]
+}
 
 
-## Plot the phenotypic correlation versus the correlation due to covariates
-phenCor_concurrent_features <- historical_features_loc_cormat %>%
+
+# Plot a joint heatmap of the estimate phenotypic correlation versus the correlation
+# between environments estimated by the EC-covariance matrix
+loc_phenoCor_ec_heatmaps <- historical_features_loc_cormat %>%
   left_join(., loc_phenoCor) %>%
-  mutate(corMat = map2(corMat, phenoCor, ~.x[row.names(.y), row.names(.y)]))
-
-phenCor_concurrent_features1 <- phenCor_concurrent_features %>%
-  mutate(phenoCor_corMat = map2(corMat, phenoCor, ~{
-    .x[lower.tri(.x, diag = TRUE)] <- NA
-    .y[lower.tri(.y, diag = TRUE)] <- NA
-    
-    .x1 <- as.data.frame(.x) %>% 
-      rownames_to_column("environment") %>% 
-      gather(environment2, correlation, -environment) %>% 
-      filter(!is.na(correlation))
-    
-    .y1 <- as.data.frame(.y) %>% 
-      rownames_to_column("environment") %>% 
-      gather(environment2, phenoCor, -environment) %>% 
-      filter(!is.na(phenoCor))
-    
-    full_join(.x1, .y1, by = c("environment", "environment2"))
-    
-  })) %>% ungroup() %>%
-  # Calculate correlations and annotate
-  mutate(cor_test = map(phenoCor_corMat, ~cor.test(x = .x$correlation, y = .x$phenoCor)),
-         cor_estimate = map_dbl(cor_test, "estimate"), p_value = map_dbl(cor_test, "p.value"),
-         annotation = paste0("r = ", format_numbers(x = cor_estimate, 2), "; P = ", formatC(x = p_value, digits = 2, width = 2, format = "g")))
-
-## Plot
-g_phenCor_concurrent_features1 <- phenCor_concurrent_features1 %>%
-  filter(str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
-  unnest(phenoCor_corMat) %>%
-  ggplot(aes(x = correlation, y = phenoCor)) +
-  geom_point(size = 0.5) +
-  geom_smooth(method = "lm", se = FALSE, lwd = 0.5) +
-  geom_text(aes(x = Inf, y = Inf, label = annotation), color = "blue", size = base_geom_text_size, hjust = 1.05, vjust = 1.2) +
-  facet_grid(trait ~ feat_sel_type, scales = "free_y", switch = "y",
-             labeller = labeller(feat_sel_type = f_ec_selection_replace, trait = str_add_space)) +
-  scale_x_continuous(name = "Covariate-estimated\nlocation correlation", breaks = pretty) +
-  scale_y_continuous(name = "Phenotypic correlation between locations", breaks = pretty) +
-  theme_genetics(base_size = 8) +
-  theme(panel.border = element_rect(color = "grey85", fill = alpha("white", 0)), strip.placement = "outside")
-
-# Location abbreviations
-lop_abbr <- trial_info %>%
-  distinct(location) %>%
-  mutate(loc = str_replace_all(location, "_", " ") %>% str_to_title() %>% 
-           str_remove_all(" ") %>% abbreviate() )
-
-## For each trait and covariate type (interaction/main), plot a heatmap and
-## a dendrogram
-features_heatmap_plots <- historical_features_loc_cormat %>%
-  filter(str_detect(feat_sel_type, "AIC", negate = TRUE)) %>%
-  group_by(feat_sel_type) %>%
-  mutate(n = seq(n())) %>%
   group_by(trait, feat_sel_type) %>%
   do(plot = {
     row <- .
     
-    corMat <- row$corMat[[1]]
+    # Find the common set of environments
+    common_envs <- intersect(row.names(row$phenoCor[[1]]), row.names(row$main[[1]]))
     
-    # First perform clustering on the relationship matrix
-    env_clust <- hclust(dist(corMat, method = "euclidean"), method = "average")
-    # get the data
-    clust_data <- dendro_data(model = env_clust)
-    # Label data
-    clust_lab_data <- mutate(clust_data$labels, group = ifelse(label %in% train_test_loc, "Train/test", "Holdout"),
-                             group = fct_relevel(group, "Holdout", after = Inf),
-                             location = label) %>%
-      left_join(., lop_abbr, by = c("location")) %>%
-      mutate(location = label, label = loc, loc = location)
-    segment_data <- segment(clust_data)
+    # Subset each correlation matrix, convert to a df
+    pheno_cor_df <- row$phenoCor[[1]] %>%
+      as.data.frame() %>%
+      rownames_to_column("environment1") %>%
+      gather(environment2, phenoCor, -environment1) %>%
+      filter_at(vars(contains("environment")), all_vars(. %in% common_envs))
     
-    # Factor order of environments
-    env_order <- levels(clust_lab_data$loc)
+    # Calculate the average phenotypic correlation of each environment with all others; each with 
+    # only training environments
+    pheno_cor_df1 <- pheno_cor_df %>% 
+      mutate(environment2_training = environment2 %in% train_test_loc)
     
-    # Re-orient the correlation matrix
-    corMat <- corMat1 <- corMat[env_order, env_order]
-    # Set the lower triangle to NA
-    corMat1[upper.tri(corMat)] <- NA
+    avg_phenocor <- bind_rows(
+      mutate(aggregate(phenoCor ~ environment1, data = pheno_cor_df1, FUN = mean), scope = "all_env"),
+      mutate(aggregate(phenoCor ~ environment1, data = pheno_cor_df1, FUN = mean, subset = environment2_training), scope = "train_env")
+    ) %>%
+      rename(avg_phenoCor = phenoCor)
     
-    # Create the plotting data.frame
-    dat1 <- corMat1 %>%
-      as.data.frame(.) %>%
-      rownames_to_column(., "environment") %>%
-      gather(environment2, correlation, -environment)
-    
-    ## Add correlation annotation for the lower triangle
-    dat <- corMat %>%
-      as.data.frame(.) %>%
-      rownames_to_column(., "environment") %>%
-      gather(environment2, correlation, -environment) %>%
-      mutate(annotation = format_numbers(correlation, 2))
-    
-    # Merge
-    dat2 <- left_join(dat1, select(dat, -correlation), by = c("environment", "environment2")) %>%
-      # Refactor the environments
-      mutate_at(vars(contains("environment")), ~factor(., levels = env_order)) %>%
-      mutate_at(vars(contains("environment")), list(group = ~ifelse(. %in% train_test_env, "training", "external"))) %>%
-      mutate(annotation = ifelse(is.na(correlation), annotation, NA)) %>%
-      # Add continuous x/y coordinates
-      left_join(., clust_lab_data, by = c("environment" = "loc")) %>%
-      left_join(., clust_lab_data, by = c("environment2" = "loc")) %>%
-      select(x_center = x.x, y_center = x.y, correlation)
-    
-    # Generate common axis limit
-    env_axis_limits <- with(clust_lab_data, c(min(x - 0.5), max(x + 0.5))) + 0.1 * c(-1, 1)
+    ec_cor_df <- row$main[[1]] %>%
+      as.data.frame() %>%
+      rownames_to_column("environment1") %>%
+      gather(environment2, ecCor, -environment1) %>%
+      filter_at(vars(contains("environment")), all_vars(. %in% common_envs))
     
     
-    # Plot
-    g_heat <- dat2 %>%
-      ggplot(aes(x = x_center, y = y_center)) +
+    # Cluster based on phenotypic correlations
+    clust <- hclust(as.dist(-row$phenoCor[[1]]))
+    # Order of factors
+    env_fact_order <- factor(common_envs, levels = clust$labels[clust$order])
+    
+    # Upper triangle df
+    upper_tri_df <- row$corMat[[1]][levels(env_fact_order), levels(env_fact_order)] %>%
+      upper.tri() %>% 
+      as.data.frame() %>% 
+      rownames_to_column("environment1") %>% 
+      gather(environment2, upper_tri, -environment1) %>%
+      mutate_at(vars(contains("environment")), ~parse_number(.) %>% {levels(env_fact_order)[.]})
+    
+    # Combine df
+    cor_df <- full_join(pheno_cor_df, ec_cor_df, by = c("environment1", "environment2")) %>%
+      # Decide what elements will go on the upper versus lower diagonal
+      full_join(., upper_tri_df, by = c("environment1", "environment2")) %>%
+      # Add the average phenotypic correlations
+      left_join(., subset(avg_phenocor, scope == "train_env"), by = c("environment1")) %>%
+      mutate(heatvalue = ifelse(upper_tri, phenoCor, ecCor),
+             heatvalue = ifelse(environment1 == environment2, as.numeric(NA), heatvalue),
+             label = ifelse(environment1 == environment2, format_numbers(avg_phenoCor, 2), as.character(NA))) %>%
+      # Set environments as factors with levels in the following order: first holdout environments, then 
+      # based on phenocor clustering
+      mutate_at(vars(contains("environment")), ~factor(., levels = levels(env_fact_order))) %>%
+      mutate(x = "Phenotypic correlation", y = "EC-correlation")
+    
+    # Bold font for validation environments
+    font_face <- ifelse(levels(env_fact_order) %in% validation_loc, "bold", "plain")
+    
+    # plot the heatmap
+    g_heat <- cor_df %>%
+      ggplot(aes(x = environment1, y = environment2)) +
       # geom_tile(aes(fill = correlation), color = ifelse(is.na(dat2$correlation), "black", NA), lwd = 0.1) +
-      geom_tile(aes(fill = correlation), lwd = 0.1) +
-      # geom_text(aes(label = annotation), size = 1) +
+      geom_tile(aes(fill = heatvalue)) +
+      # Include text
+      geom_text(aes(label = label), size = 2) +
       scale_fill_gradient2(low = heat_colors[1], mid = heat_colors[2], high = heat_colors[3], na.value = "white",
                            midpoint = 0, limits = c(-1.01, 1.01), breaks = pretty,
-                           name = "Estimated location\ncorrelation", guide = guide_colorbar(title.position = "top")) +
-      scale_x_continuous(breaks = clust_lab_data$x, labels = clust_lab_data$label, limits = env_axis_limits, expand = c(0, 0)) +
-      scale_y_continuous(breaks = clust_lab_data$x, labels = clust_lab_data$label, expand = c(0, 0), position = "right") +
-      # facet_grid(row$trait ~ ., switch = "y", labeller = labeller(trait = str_add_space)) +
-      # labs(subtitle = paste(str_add_space(row$trait), f_ec_selection_replace(row$feat_sel_type), sep = ", ")) +
+                           name = "Correlation", guide = guide_colorbar(title.position = "top")) +
+      scale_x_discrete(labels = f_abbreviate_locations) +
+      scale_y_discrete(labels = f_abbreviate_locations) +
+      facet_grid(x ~ y, switch = "both") +
+      labs(subtitle = str_add_space(row$trait)) +
       theme_genetics(8) +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1), panel.spacing = unit(0.25, "line"),
-            strip.placement = "outside", axis.title = element_blank(), legend.position = c(0.25, 0.75),
-            axis.text.y = element_blank(), legend.direction = "horizontal")
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, face = font_face), 
+            axis.text.y = element_text(face = font_face), axis.title = element_blank(),
+            strip.background = element_blank())
     
-    # Remove legend if n != 1
-    if (row$n != 1) {
-      g_heat <- g_heat + theme(legend.position = "none")
-    }
-    
-    ## Plot dendrogram
-    g_dendro <- ggplot(data = segment_data) +
-      geom_segment(aes(x = x, y = y, xend = xend, yend = yend)) +
-      coord_flip() +
-      scale_x_continuous(breaks = clust_lab_data$x, labels = clust_lab_data$label, limits = env_axis_limits, expand = c(0, 0)) +
-      scale_y_continuous(expand = c(0, 0)) +
-      scale_color_manual(name = NULL, values = c("black", "red")) +
-      theme_genetics(base_size = 8) +
-      theme(legend.key.height = unit(5, "pt"), axis.title = element_blank(), axis.text.x = element_blank(), axis.line = element_blank(),
-            axis.ticks.x = element_blank())
-    
-    # Combine plots
-    plot_grid(g_heat, g_dendro, align = "h", rel_widths = c(1, 0.8))
+    # Output the heatmap
+    g_heat
     
   }) %>% ungroup()
 
@@ -2647,32 +2634,13 @@ features_heatmap_plots <- historical_features_loc_cormat %>%
 
 ## Combine plots for use in the supplemental figure
 
-# First edit each plot
-g_mean_cor_features1 <- g_env_mean_cor_concurrent_features %>%
-  modify_at("data", ~filter(.x, feat_sel_type == "stepwise_cv_adhoc")) +
-  facet_grid(trait ~ ., scales = "free_y", switch = "y", labeller = labeller(trait = str_add_space))
-
-g_phenCor_features2 <- g_phenCor_concurrent_features1 %>%
-  modify_at("data", ~filter(.x, feat_sel_type == "stepwise_cv_adhoc")) +
-  facet_grid(trait ~ ., scales = "free_y", switch = "y", labeller = labeller(trait = str_add_space))
-
-# Merge heatmaps
-g_heat_dendro_select <- subset(features_heatmap_plots, feat_sel_type == "stepwise_cv_adhoc", plot, drop = TRUE) %>%
-  modify_at(-1, ~. + theme(legend.position = "none")) %>%
-  plot_grid(plotlist = ., ncol = 1)
-
-# Merge all plots
-g_heatmap_cor_compare <- plot_grid(g_mean_cor_features1, 
-                                   g_phenCor_features2 + theme(strip.text = element_blank()),
-                                   plot_spacer() + theme(panel.background = element_rect(fill = alpha("white", 0))), 
-                                   g_heat_dendro_select,
-                                   nrow = 1, align = "h", axis = "tblr", rel_widths = c(0.5, 0.5, 0.05, 1),
-                                   labels = subfigure_labels[c(1,2,NA,3)], label_size = subfigure_label_size)
+g_heatmap_combined <- plot_grid(plotlist = subset(loc_phenoCor_ec_heatmaps, feat_sel_type == "stepwise_cv_adhoc", plot, drop = TRUE),
+                                ncol = 2)
 
 
 # Save
-ggsave(filename = "figure_s13_location_covariate_heatmap.jpg", plot = g_heatmap_cor_compare,
-       path = fig_dir, width = 10, height = 12, dpi = 1000)
+ggsave(filename = "figure_s13_location_covariate_heatmap.jpg", plot = g_heatmap_combined,
+       path = fig_dir, width = 12, height = 12, dpi = 1000)
 
 
 
