@@ -589,12 +589,15 @@ accuracy_bias_within_env_toplot <- within_environment_prediction_accuracy %>%
   mutate(selection = fct_inorder(selection),
          # trait1 = paste0(str_add_space(trait), " (n = ", nGroup+1, ")"),
          trait1 = paste0(abbreviate(str_add_space(trait), 2), " (n = ", nGroup+1, ")"),
+         trait2 = paste0("'", abbreviate(str_add_space(trait), 2), "'~(", trait_units1[trait], ")"),
          model = str_replace(model, "_id", "_cov"),
          pop = paste0("Prediction target: ", pop),
-         bias = bias * 100) %>%
+         bias = bias * 100,
+         # Convert RMSE for GY to Mg ha
+         rmse = ifelse(trait == "GrainYield", rmse / 1000, rmse)) %>%
   unite(group, trait, model, pop, selection, remove = FALSE) %>%
-  select(-rmse, -varR, -heritability, -ability) %>%
-  gather(statistic, value, accuracy, bias)
+  select(-varR, -heritability, -ability) %>%
+  gather(statistic, value, accuracy, bias, rmse)
 
 
 ## Common plot modifier
@@ -949,6 +952,66 @@ table_towrite_combined <- bind_rows(table_towrite, table_towrite2)
 # Save
 write_csv(x = table_towrite_combined, 
           file = file.path(fig_dir, "table1_holdout_environment_prediction_accuracy.csv"))
+
+
+
+
+## Compare average accuracy in the LOLO or LEOE set versus the holdout environments/locations
+loeo_prediction_accuracy_summary <- predictive_ability %>%
+  filter(type == "loeo", (is.na(time_frame_selection) | time_frame_selection == "bestOverall"),
+         str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
+  distinct(trait, site, selection, model, pop, ability, bias, rmse) %>% 
+  left_join(., env_trait_herit, by = c("trait", "site" = "environment")) %>%
+  mutate(accuracy = ability / sqrt(heritability)) %>%
+  group_by(trait, pop, selection, model) %>%
+  summarize_at(vars(ability, accuracy, bias, rmse), mean) %>%
+  ungroup() %>%
+  arrange(model, pop, trait) %>%
+  as.data.frame()
+
+loeo_envExternal_accuracy_summary <- full_join(loeo_prediction_accuracy_summary, env_external_pred_accuracy_summary,
+                                               by = c("trait", "pop", "selection", "model")) %>%
+  filter(pop == "vp") %>%
+  mutate(ability_cv_ts_diff = ability.x - ability.y, ability_cv_ts_diff_per = ability_cv_ts_diff / ability.x,
+         accuracy_cv_ts_diff = accuracy.x - accuracy.y, accuracy_cv_ts_diff_per = accuracy_cv_ts_diff / accuracy.x,
+         rmse_cv_ts_diff = rmse.x - rmse.y, rmse_cv_ts_diff_per = rmse_cv_ts_diff / rmse.x) %>%
+  # Summarize by trait
+  group_by(trait) %>%
+  summarize_at(vars(contains("cv_ts_diff")), list(mean = mean, min = min, max = max)) %>%
+  as.data.frame()
+
+loeo_envExternal_accuracy_summary
+
+
+lolo_prediction_accuracy_summary <- predictive_ability %>%
+  filter(type == "lolo", (is.na(time_frame_selection) | time_frame_selection == "bestOverall"),
+         str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
+  distinct(trait, site, selection, model, pop, ability, bias, rmse) %>% 
+  left_join(., env_trait_herit, by = c("trait", "site" = "environment")) %>%
+  mutate(accuracy = ability / sqrt(heritability)) %>%
+  group_by(trait, pop, selection, model) %>%
+  summarize_at(vars(ability, accuracy, bias, rmse), mean) %>%
+  ungroup() %>%
+  arrange(model, pop, trait) %>%
+  as.data.frame()
+
+lolo_envExternal_accuracy_summary <- full_join(lolo_prediction_accuracy_summary, loc_external_pred_accuracy_summary,
+                                               by = c("trait", "pop", "selection", "model")) %>%
+  filter(pop == "vp") %>%
+  mutate(ability_cv_ts_diff = ability.x - ability.y, ability_cv_ts_diff_per = ability_cv_ts_diff / ability.x,
+         # accuracy_cv_ts_diff = accuracy.x - accuracy.y, accuracy_cv_ts_diff_per = accuracy_cv_ts_diff / accuracy.x,
+         rmse_cv_ts_diff = rmse.x - rmse.y, rmse_cv_ts_diff_per = rmse_cv_ts_diff / rmse.x) %>%
+  # Summarize by trait
+  group_by(trait) %>%
+  summarize_at(vars(contains("cv_ts_diff")), list(mean = mean, min = min, max = max)) %>%
+  as.data.frame()
+
+
+
+
+
+
+
 
 
 
@@ -1484,48 +1547,44 @@ ggsave(filename = "figure_S4_loeo_across_site_prediction_accuracy.jpg", plot = g
 
 
 
-# Figure S5 - LOEO prediction bias within environments ----------
+# Figure S5 - LOEO RMSEP within environments ----------
 
 
 
 ## Common plot modifier
 g_mod <- list(
   scale_x_discrete(name = "Covariate set", labels = f_ec_selection_replace),
-  scale_fill_manual(name = "Model", values = model_colors, labels = f_model_replace,
-                    guide = guide_legend(label.position = "left", title = NULL)),
-  scale_color_manual(name = "Model", values = model_colors, labels = f_model_replace,
-                     guide = guide_legend(label.position = "left", title = NULL)),
-  facet_grid(trait1 ~ pop, switch = "y", labeller = labeller(pop = f_pop_replace), scales = "free_y"),
+  scale_fill_manual(name = "Model", values = model_colors, labels = f_model_replace),
+  scale_color_manual(name = "Model", values = model_colors, labels = f_model_replace),
+  facet_grid(trait2 ~ pop, switch = "y", labeller = labeller(pop = f_pop_replace, trait2 = label_parsed), 
+             scales = "free_y"),
   theme_genetics(base_size = base_font_size),
   theme(strip.placement = "outside", axis.line.x = element_blank(),
         # panel.border = element_rect(color = "grey85", fill = alpha("white", 0)),
-        panel.spacing.y = unit(0.5, "line"),
-        panel.grid.major.y = element_line(color = "grey85"),
-        legend.text.align = 1, legend.position = c(0.89, 0.97), legend.key.size = unit(0.4, "line"),
-        legend.title.align = 1, legend.background = element_rect(color = "grey85", fill = alpha("white", 1)),
-        legend.margin = margin(0, 2, 2, 2),
-        legend.text = element_text(size = 5), legend.key.height = unit(0.3, "line"))
+        panel.spacing.y = unit(0.5, "line"), panel.grid.major.y = element_line(color = "grey85"),
+        legend.position = c(0.89, 0.97),  legend.title.align = 1, 
+        legend.margin = margin(0, 2, 2, 2))
 )
 
 
 
 # Plot point and line range for bias
-g_bias_within_env <- accuracy_bias_within_env_toplot %>%
-  filter(statistic == "bias") %>%
+g_rmsep_within_env <- accuracy_bias_within_env_toplot %>%
+  filter(statistic == "rmse") %>%
   mutate(pop = paste0("Prediction target: ", pop)) %>%
   ggplot(aes(x = selection, y = value, color = model, fill = model, group = group)) +
   # jitter points
   geom_jitter(aes(y = value), position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.9), 
               size = 0.1, color = "grey85") +
   geom_boxplot(fill = alpha("white", 0), position = position_dodge(0.9), outlier.shape = NA, lwd = 0.35) +
-  scale_y_continuous(name = "Within-environment bias (%)", breaks = pretty) +
+  scale_y_continuous(name = "Within-environment RMSEP", breaks = pretty) +
   g_mod +
-  theme(legend.position = "none")
+  theme(legend.position = "top")
 
 
 
 ## Save
-ggsave(filename = "figure_S5_loeo_bias_within_environments.jpg", plot = g_bias_within_env, 
+ggsave(filename = "figure_S5_loeo_bias_within_environments.jpg", plot = g_rmsep_within_env, 
        path = fig_dir, width = figwidth_onecol + 1, height = 5, dpi = dpi_use)
 
 
@@ -1791,7 +1850,7 @@ ggsave(filename = "lolo_prediction_example_vp.jpg", plot = g_lolo_pred_obs_vp, p
 
 
 
-# Figure S8 - LOLO prediction bias within locations ----------
+# Figure S8 - LOLO RMSEP within locations ----------
 
 ## Filter for relevant within-location cases 
 accuracy_within_loc_toplot <- predictive_ability %>%
@@ -1807,7 +1866,11 @@ accuracy_within_loc_toplot <- predictive_ability %>%
          # trait1 = paste0(str_add_space(trait), " (n = ", nGroup+1, ")"),
          trait1 = paste0(abbreviate(str_add_space(trait), 2), " (n = ", nGroup+1, ")"),
          model = str_replace(model, "_id", "_cov"),
-         pop = paste0("Prediction target: ", pop)) %>%
+         trait2 = paste0("'", abbreviate(str_add_space(trait), 2), "'~(", trait_units1[trait], ")"),
+         pop = paste0("Prediction target: ", pop),
+         bias = bias * 100,
+         # Convert RMSE for GY to Mg ha
+         rmse = ifelse(trait == "GrainYield", rmse / 1000, rmse)) %>%
   unite(group, trait, model, pop, selection, remove = FALSE) %>%
   # Add a test name for faceting
   mutate(type_facet_x = "'Within-location'~italic(r[MP])")
@@ -1816,40 +1879,36 @@ accuracy_within_loc_toplot <- predictive_ability %>%
 
 ## Common plot modifier
 g_mod <- list(
-  scale_x_discrete(name = "Covariate set", labels = f_ec_selection_replace,
-                   guide = guide_axis(check.overlap = TRUE, n.dodge = 2)),
-  scale_fill_manual(name = "Model", values = model_colors, labels = f_model_replace,
-                    guide = guide_legend(label.position = "left", title = NULL)),
-  scale_color_manual(name = "Model", values = model_colors, labels = f_model_replace,
-                     guide = guide_legend(label.position = "left", title = NULL)),
-  facet_grid(trait1 ~ pop, switch = "y", labeller = labeller(pop = f_pop_replace), scales = "free_y"),
+  scale_x_discrete(name = "Covariate set", labels = f_ec_selection_replace),
+  scale_fill_manual(name = "Model", values = model_colors, labels = f_model_replace),
+  scale_color_manual(name = "Model", values = model_colors, labels = f_model_replace),
+  facet_grid(trait2 ~ pop, switch = "y", labeller = labeller(pop = f_pop_replace, trait2 = label_parsed), 
+             scales = "free_y"),
   theme_genetics(base_size = base_font_size),
   theme(strip.placement = "outside", axis.line.x = element_blank(),
         # panel.border = element_rect(color = "grey85", fill = alpha("white", 0)),
-        panel.spacing.y = unit(0.5, "line"),
-        panel.grid.major.y = element_line(color = "grey85"),
-        legend.text.align = 1, legend.position = c(0.10, 0.82), legend.key.size = unit(0.4, "line"),
-        legend.title.align = 1, legend.background = element_rect(color = "grey85", fill = alpha("white", 1)),
-        legend.margin = margin(0, 2, 2, 2),
-        legend.text = element_text(size = 5), legend.key.height = unit(0.3, "line"))
+        panel.spacing.y = unit(0.5, "line"), panel.grid.major.y = element_line(color = "grey85"),
+        legend.position = c(0.89, 0.97),  legend.title.align = 1, 
+        legend.margin = margin(0, 2, 2, 2))
 )
 
 
 # Plot boxplot for accuracy
-g_bias_within_loc <- accuracy_within_loc_toplot %>%
-  ggplot(aes(x = selection, y = bias, color = model, fill = model, group = group)) +
+g_rmsep_within_loc <- accuracy_within_loc_toplot %>%
+  ggplot(aes(x = selection, y = rmse, color = model, fill = model, group = group)) +
   # jitter points
   geom_jitter(position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.9), 
               size = 0.1, color = "grey85") +
   geom_boxplot(fill = alpha("white", 0), position = position_dodge(0.9), outlier.shape = NA, lwd = 0.35) +
-  scale_y_continuous(name = expression('Within-location'~italic(r[MP])), breaks = pretty) +
-  g_mod
+  scale_y_continuous(name = "Within-location RMSEP", breaks = pretty) +
+  g_mod +
+  theme(legend.position = "top")
 
 
 
 ## Save
-ggsave(filename = "figure_S8_lolo_bias_within_locations.jpg", plot = g_bias_within_loc, 
-       path = fig_dir, width = figwidth_onecol, height = 5, dpi = dpi_use)
+ggsave(filename = "figure_S8_lolo_bias_within_locations.jpg", plot = g_rmsep_within_loc, 
+       path = fig_dir, width = figwidth_onecol + 1, height = 5, dpi = dpi_use)
 
 
 # Figure S9 - external predictive ability across environments ----------
@@ -2071,6 +2130,20 @@ env_phenoCor <- S2_MET_BLUEs %>%
       rownames_to_column("environment") %>%
       gather(environment2, phenoCorrelation, -environment)
   }))
+
+
+
+
+# Average train/holdout environment phenotypic correlations
+env_phenoCor %>%
+  mutate(phenoCor = map(phenoCor, ~as.dist(.) %>% broom::tidy())) %>%
+  unnest(phenoCor) %>%
+  select(-phenoCor_df) %>%
+  rename_at(vars(contains("item")), ~str_replace(., "item", "environment")) %>%
+  filter(environment1 %in% train_test_env) %>%
+  mutate(environment2_group = ifelse(environment2 %in% train_test_env, "train", "holdout")) %>%
+  group_by(trait, environment2_group) %>%
+  summarize(env1_env2_dist = mean(distance))
 
 
 
@@ -2314,6 +2387,7 @@ phenoCor_ec_heatmaps <- concurrent_features_env_cormat %>%
 
 
 
+
 ## Combine plots for use in the supplemental figure
 
 g_heatmap_combined <- plot_grid(plotlist = subset(phenoCor_ec_heatmaps, feat_sel_type == "stepwise_cv_adhoc", plot, drop = TRUE),
@@ -2360,6 +2434,18 @@ loc_phenoCor <- S2_MET_loc_BLUEs %>%
       rownames_to_column("location") %>%
       gather(location2, phenoCorrelation, -location)
   }))
+
+# Average train/holdout environment phenotypic correlations
+loc_phenoCor %>%
+  mutate(phenoCor = map(phenoCor, ~as.dist(.) %>% broom::tidy())) %>%
+  unnest(phenoCor) %>%
+  select(-phenoCor_df) %>%
+  rename_at(vars(contains("item")), ~str_replace(., "item", "environment")) %>%
+  filter(environment1 %in% train_test_loc) %>%
+  mutate(environment2_group = ifelse(environment2 %in% train_test_loc, "train", "holdout")) %>%
+  group_by(trait, environment2_group) %>%
+  summarize(env1_env2_dist = mean(distance))
+
 
 
 
@@ -2885,7 +2971,7 @@ accuracy_within_loc_toplot %>%
   summarize_at(vars(ability, bias, rmse), mean) %>%
   ungroup() %>%
   arrange(trait, model, pop, desc(ability)) %>%
-  as.data.frame()
+  as.data.frame() %>% filter(model == "model5_cov", selection == "stepwise_cv_adhoc") %>% arrange(pop)
 
 
 predictive_ability %>%
