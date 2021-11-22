@@ -3063,6 +3063,23 @@ loeo_average_location_predictions_accuracy_acrossLoc <- loeo_average_location_pr
 
 
 
+# Examine outlier environments for rmsep for yield
+outlier_env_yield <- predictive_ability %>%
+  filter(trait == "GrainYield", type == "loeo", model == "model3_cov", selection == "stepwise_cv_adhoc", pop == "tp") %>%
+  filter(rmse == max(rmse))
+
+# Plot pred vs obs values
+predictions_df %>%
+  left_join(outlier_env_yield, .) %>%
+  plot(value ~ pred_complete, .)
+
+predictions_df %>%
+  left_join(select(outlier_env_yield, trait, type, model, selection, pop), .) %>%
+  filter(str_detect(site, "WLI")) %>%
+  ggplot(aes(x = pred_complete, y = value, color = site))+
+  geom_point()
+
+
 
 
 
