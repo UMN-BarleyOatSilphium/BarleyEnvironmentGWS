@@ -883,129 +883,6 @@ ggsave(filename = "figure6_lolo_predictions_across_locations.jpg", plot = g_loo_
 
 
 
-# Table 1: Holdout environment/location accuracy --------------------------
-
-
-# External environment predictions
-env_external_pred_accuracy <- predictive_ability %>%
-  filter(type == "env_external", (is.na(time_frame_selection) | time_frame_selection == "bestOverall"),
-         str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
-  distinct(trait, site, selection, model, pop, ability, bias, rmse) %>% 
-  left_join(., env_trait_herit, by = c("trait", "site" = "environment")) %>%
-  mutate(accuracy = ability / sqrt(heritability))
-
-as.data.frame(env_external_pred_accuracy)
-
-(env_external_pred_accuracy_summary <- env_external_pred_accuracy %>%
-    group_by(trait, pop, selection, model) %>%
-    summarize_at(vars(ability, accuracy, bias, rmse), mean) %>%
-    ungroup() %>%
-    arrange(model, pop, trait) %>%
-    as.data.frame())
-
-# Create a table to save
-table_towrite <- env_external_pred_accuracy_summary %>%
-  select(trait, selection, model, accuracy, rmse) %>%
-  mutate(selection = f_ec_selection_replace(selection, parse = FALSE) %>% fct_inorder(),
-         model = f_model_replace(model)) %>%
-  mutate_at(vars(accuracy, rmse), ~format_numbers(.) %>% str_remove(., "\\.$")) %>%
-  mutate(annotation = paste0(accuracy, " (", rmse, ")")) %>%
-  select(-accuracy, -rmse) %>%
-  spread(trait, annotation) %>%
-  mutate(scenario = "Holdout environments") %>%
-  select(scenario, model, covariate_set = selection, names(.)) %>%
-  arrange(model, covariate_set)
-
-# Same thing for locations
-# External location predictions
-loc_external_pred_accuracy <- predictive_ability %>%
-  filter(type == "loc_external", (is.na(time_frame_selection) | time_frame_selection == "bestOverall"),
-         str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
-  distinct(trait, site, selection, model, pop, ability, bias, rmse)
-
-as.data.frame(loc_external_pred_accuracy)
-
-(loc_external_pred_accuracy_summary <- loc_external_pred_accuracy %>%
-    group_by(trait, pop, selection, model) %>%
-    summarize_at(vars(ability, ability, bias, rmse), mean) %>%
-    ungroup() %>%
-    arrange(model, pop, trait) %>%
-    as.data.frame())
-
-# Create a table to save
-table_towrite2 <- loc_external_pred_accuracy_summary %>%
-  select(trait, selection, model, ability, rmse) %>%
-  mutate(selection = f_ec_selection_replace(selection, parse = FALSE) %>% fct_inorder(),
-         model = f_model_replace(model)) %>%
-  mutate_at(vars(ability, rmse), ~format_numbers(.) %>% str_remove(., "\\.$")) %>%
-  mutate(annotation = paste0(ability, " (", rmse, ")")) %>%
-  select(-ability, -rmse) %>%
-  spread(trait, annotation) %>%
-  mutate(scenario = "Holdout locations") %>%
-  select(scenario, model, covariate_set = selection, names(.)) %>%
-  arrange(model, covariate_set)
-
-# Combine
-table_towrite_combined <- bind_rows(table_towrite, table_towrite2)
-
-
-# Save
-write_csv(x = table_towrite_combined, 
-          file = file.path(fig_dir, "table1_holdout_environment_prediction_accuracy.csv"))
-
-
-
-
-## Compare average accuracy in the LOLO or LEOE set versus the holdout environments/locations
-loeo_prediction_accuracy_summary <- predictive_ability %>%
-  filter(type == "loeo", (is.na(time_frame_selection) | time_frame_selection == "bestOverall"),
-         str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
-  distinct(trait, site, selection, model, pop, ability, bias, rmse) %>% 
-  left_join(., env_trait_herit, by = c("trait", "site" = "environment")) %>%
-  mutate(accuracy = ability / sqrt(heritability)) %>%
-  group_by(trait, pop, selection, model) %>%
-  summarize_at(vars(ability, accuracy, bias, rmse), mean) %>%
-  ungroup() %>%
-  arrange(model, pop, trait) %>%
-  as.data.frame()
-
-loeo_envExternal_accuracy_summary <- full_join(loeo_prediction_accuracy_summary, env_external_pred_accuracy_summary,
-                                               by = c("trait", "pop", "selection", "model")) %>%
-  filter(pop == "vp") %>%
-  mutate(ability_cv_ts_diff = ability.x - ability.y, ability_cv_ts_diff_per = ability_cv_ts_diff / ability.x,
-         accuracy_cv_ts_diff = accuracy.x - accuracy.y, accuracy_cv_ts_diff_per = accuracy_cv_ts_diff / accuracy.x,
-         rmse_cv_ts_diff = rmse.x - rmse.y, rmse_cv_ts_diff_per = rmse_cv_ts_diff / rmse.x) %>%
-  # Summarize by trait
-  group_by(trait) %>%
-  summarize_at(vars(contains("cv_ts_diff")), list(mean = mean, min = min, max = max)) %>%
-  as.data.frame()
-
-loeo_envExternal_accuracy_summary
-
-
-lolo_prediction_accuracy_summary <- predictive_ability %>%
-  filter(type == "lolo", (is.na(time_frame_selection) | time_frame_selection == "bestOverall"),
-         str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
-  distinct(trait, site, selection, model, pop, ability, bias, rmse) %>% 
-  left_join(., env_trait_herit, by = c("trait", "site" = "environment")) %>%
-  mutate(accuracy = ability / sqrt(heritability)) %>%
-  group_by(trait, pop, selection, model) %>%
-  summarize_at(vars(ability, accuracy, bias, rmse), mean) %>%
-  ungroup() %>%
-  arrange(model, pop, trait) %>%
-  as.data.frame()
-
-lolo_envExternal_accuracy_summary <- full_join(lolo_prediction_accuracy_summary, loc_external_pred_accuracy_summary,
-                                               by = c("trait", "pop", "selection", "model")) %>%
-  filter(pop == "vp") %>%
-  mutate(ability_cv_ts_diff = ability.x - ability.y, ability_cv_ts_diff_per = ability_cv_ts_diff / ability.x,
-         # accuracy_cv_ts_diff = accuracy.x - accuracy.y, accuracy_cv_ts_diff_per = accuracy_cv_ts_diff / accuracy.x,
-         rmse_cv_ts_diff = rmse.x - rmse.y, rmse_cv_ts_diff_per = rmse_cv_ts_diff / rmse.x) %>%
-  # Summarize by trait
-  group_by(trait) %>%
-  summarize_at(vars(contains("cv_ts_diff")), list(mean = mean, min = min, max = max)) %>%
-  as.data.frame()
-
 
 
 
@@ -2926,21 +2803,189 @@ selected_features %>%
   write_csv(x = ., path = file.path(fig_dir, "table_s3_ecs_per_trait.csv"), na = "")
 
 
-# Table S4: within-trait reliability ------------------------------------------
-
-# Add location and year information to the heritability estimates;
-# clean-up and save as a table
-env_herit_table_plot <- env_trait_herit %>% 
-  select(-varR) %>% 
-  left_join(distinct(trial_info, environment, location, year)) %>% 
-  select(environment, location, year, trait, heritability) %>%
-  mutate(heritability = format_numbers(x = heritability)) %>%
-  rename_all(str_to_title) %>%
-  spread(Trait, Heritability) %>%
-  arrange(Environment)
+# Table S4: Holdout environment/location accuracy --------------------------
 
 
-write_csv(x = env_herit_table_plot, path = file.path(fig_dir, "table_s4_env_trait_herit.csv"), na = "")
+# External environment predictions
+env_external_pred_accuracy <- predictive_ability %>%
+  filter(type == "env_external", (is.na(time_frame_selection) | time_frame_selection == "bestOverall"),
+         str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
+  distinct(trait, site, selection, model, pop, ability, bias, rmse) %>% 
+  left_join(., env_trait_herit, by = c("trait", "site" = "environment")) %>%
+  mutate(accuracy = ability / sqrt(heritability))
+
+as.data.frame(env_external_pred_accuracy)
+
+(env_external_pred_accuracy_summary <- env_external_pred_accuracy %>%
+    group_by(trait, pop, selection, model) %>%
+    summarize_at(vars(ability, accuracy, bias, rmse), mean) %>%
+    ungroup() %>%
+    arrange(model, pop, trait) %>%
+    as.data.frame())
+
+(env_external_pred_accuracy1 <- env_external_pred_accuracy %>%
+    group_by(trait, pop, selection, model, site) %>%
+    summarize_at(vars(ability, accuracy, bias, rmse), mean) %>%
+    ungroup() %>%
+    arrange(model, pop, trait, site) %>%
+    as.data.frame())
+
+
+
+# Create a table to save
+table_towrite <- env_external_pred_accuracy1 %>%
+  select(trait, selection, model, site, accuracy, rmse) %>%
+  # Add summary
+  bind_rows(., select(mutate(env_external_pred_accuracy_summary, site = "Mean"), trait, selection, model, site, accuracy, rmse)) %>%
+  mutate(selection = f_ec_selection_replace(selection, parse = FALSE) %>% fct_inorder(),
+         model = f_model_replace(model)) %>%
+  mutate_at(vars(accuracy, rmse), ~format_numbers(.) %>% str_remove(., "\\.$")) %>%
+  mutate(annotation = paste0(accuracy, " (", rmse, ")")) %>%
+  select(-accuracy, -rmse) %>%
+  # Rename traits
+  mutate(trait = str_add_space(trait)) %>%
+  spread(trait, annotation) %>%
+  # mutate(scenario = "Holdout environments") %>%
+  select(model, covariate_set = selection, names(.)) %>%
+  arrange(model, covariate_set) %>%
+  group_by(model, covariate_set) %>%
+  # This code keeps only the first element in a group
+  do({
+    df <- .
+    df1 <- mutate(df, model = "", covariate_set = "")
+    df1$model[1] <- as.character(unique(df$model))
+    df1$covariate_set[1] <- as.character(unique(df$covariate_set))
+    df1
+  }) %>%
+  # rename(prediction_scenario = scenario, EC_set = covariate_set) %>%
+  rename_all(~str_replace_all(., "_", " ")) %>%
+  rename_at(vars(-matches(paste0(str_add_space(traits), collapse = "|"))), str_to_sentence)
+
+ft1 <- flextable(data = table_towrite) %>% 
+  autofit() %>%
+  bold(i = which(table_towrite$Site == "Mean"), j = seq_len(ncol(table_towrite)), bold = TRUE) %>%
+  border(i = which(table_towrite$Site == "Mean"), j = seq_len(ncol(table_towrite)),
+         border.bottom = fp_border())
+
+
+# Same thing for locations
+# External location predictions
+loc_external_pred_accuracy <- predictive_ability %>%
+  filter(type == "loc_external", (is.na(time_frame_selection) | time_frame_selection == "bestOverall"),
+         str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
+  distinct(trait, site, selection, model, pop, ability, bias, rmse)
+
+as.data.frame(loc_external_pred_accuracy)
+
+(loc_external_pred_accuracy_summary <- loc_external_pred_accuracy %>%
+    group_by(trait, pop, selection, model) %>%
+    summarize_at(vars(ability, ability, bias, rmse), mean) %>%
+    ungroup() %>%
+    arrange(model, pop, trait) %>%
+    as.data.frame())
+
+(loc_external_pred_accuracy1 <- loc_external_pred_accuracy %>%
+    group_by(trait, pop, selection, model, site) %>%
+    summarize_at(vars(ability, ability, bias, rmse), mean) %>%
+    ungroup() %>%
+    arrange(model, pop, trait, site) %>%
+    as.data.frame())
+
+# Create a table to save
+table_towrite2 <- loc_external_pred_accuracy1 %>%
+  select(trait, selection, model, site, ability, rmse) %>%
+  # Rename sites
+  left_join(., distinct(mutate(trial_info, location_code = str_sub(environment, 1, 3)), site = location, location_code)) %>%
+  mutate(site = location_code) %>% select(-location_code) %>%
+  # Add summary
+  bind_rows(., select(mutate(loc_external_pred_accuracy_summary, site = "Mean"), trait, selection, model, site, ability, rmse)) %>%
+  mutate(selection = f_ec_selection_replace(selection, parse = FALSE) %>% fct_inorder(),
+         model = f_model_replace(model)) %>%
+  mutate_at(vars(ability, rmse), ~format_numbers(.) %>% str_remove(., "\\.$")) %>%
+  mutate(annotation = paste0(ability, " (", rmse, ")")) %>%
+  select(-ability, -rmse) %>%
+  # Rename traits
+  mutate(trait = str_add_space(trait)) %>%
+  # Edit model
+  mutate(model = str_replace_all(model, "e", "l")) %>%
+  spread(trait, annotation) %>%
+  select(model, covariate_set = selection, names(.)) %>%
+  arrange(model, covariate_set) %>%
+  group_by(model, covariate_set) %>%
+  # This code keeps only the first element in a group
+  do({
+    df <- .
+    df1 <- mutate(df, model = "", covariate_set = "")
+    df1$model[1] <- as.character(unique(df$model))
+    df1$covariate_set[1] <- as.character(unique(df$covariate_set))
+    df1
+  }) %>%
+  # rename(prediction_scenario = scenario, EC_set = covariate_set) %>%
+  rename_all(~str_replace_all(., "_", " ")) %>%
+  rename_at(vars(-matches(paste0(str_add_space(traits), collapse = "|"))), str_to_sentence)
+
+
+ft2 <- flextable(data = table_towrite2) %>% 
+  autofit() %>%
+  bold(i = which(table_towrite2$Site == "Mean"), j = seq_len(ncol(table_towrite2)), bold = TRUE) %>%
+  border(i = which(table_towrite2$Site == "Mean"), j = seq_len(ncol(table_towrite2)),
+         border.bottom = fp_border())
+
+# Render the tables
+save_as_docx("Table S4" = ft1, "Table S5" = ft2, path = file.path(fig_dir, "supplemental_tables_s4_s5.docx"))
+
+# Table S5: Holdout environment/location accuracy --------------------------
+
+
+## Compare average accuracy in the LOLO or LEOE set versus the holdout environments/locations
+loeo_prediction_accuracy_summary <- predictive_ability %>%
+  filter(type == "loeo", (is.na(time_frame_selection) | time_frame_selection == "bestOverall"),
+         str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
+  distinct(trait, site, selection, model, pop, ability, bias, rmse) %>% 
+  left_join(., env_trait_herit, by = c("trait", "site" = "environment")) %>%
+  mutate(accuracy = ability / sqrt(heritability)) %>%
+  group_by(trait, pop, selection, model) %>%
+  summarize_at(vars(ability, accuracy, bias, rmse), mean) %>%
+  ungroup() %>%
+  arrange(model, pop, trait) %>%
+  as.data.frame()
+
+loeo_envExternal_accuracy_summary <- full_join(loeo_prediction_accuracy_summary, env_external_pred_accuracy_summary,
+                                               by = c("trait", "pop", "selection", "model")) %>%
+  filter(pop == "vp") %>%
+  mutate(ability_cv_ts_diff = ability.x - ability.y, ability_cv_ts_diff_per = ability_cv_ts_diff / ability.x,
+         accuracy_cv_ts_diff = accuracy.x - accuracy.y, accuracy_cv_ts_diff_per = accuracy_cv_ts_diff / accuracy.x,
+         rmse_cv_ts_diff = rmse.x - rmse.y, rmse_cv_ts_diff_per = rmse_cv_ts_diff / rmse.x) %>%
+  # Summarize by trait
+  group_by(trait) %>%
+  summarize_at(vars(contains("cv_ts_diff")), list(mean = mean, min = min, max = max)) %>%
+  as.data.frame()
+
+loeo_envExternal_accuracy_summary
+
+
+lolo_prediction_accuracy_summary <- predictive_ability %>%
+  filter(type == "lolo", (is.na(time_frame_selection) | time_frame_selection == "bestOverall"),
+         str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
+  distinct(trait, site, selection, model, pop, ability, bias, rmse) %>% 
+  left_join(., env_trait_herit, by = c("trait", "site" = "environment")) %>%
+  mutate(accuracy = ability / sqrt(heritability)) %>%
+  group_by(trait, pop, selection, model) %>%
+  summarize_at(vars(ability, accuracy, bias, rmse), mean) %>%
+  ungroup() %>%
+  arrange(model, pop, trait) %>%
+  as.data.frame()
+
+lolo_envExternal_accuracy_summary <- full_join(lolo_prediction_accuracy_summary, loc_external_pred_accuracy_summary,
+                                               by = c("trait", "pop", "selection", "model")) %>%
+  filter(pop == "vp") %>%
+  mutate(ability_cv_ts_diff = ability.x - ability.y, ability_cv_ts_diff_per = ability_cv_ts_diff / ability.x,
+         # accuracy_cv_ts_diff = accuracy.x - accuracy.y, accuracy_cv_ts_diff_per = accuracy_cv_ts_diff / accuracy.x,
+         rmse_cv_ts_diff = rmse.x - rmse.y, rmse_cv_ts_diff_per = rmse_cv_ts_diff / rmse.x) %>%
+  # Summarize by trait
+  group_by(trait) %>%
+  summarize_at(vars(contains("cv_ts_diff")), list(mean = mean, min = min, max = max)) %>%
+  as.data.frame()
 
 
 
@@ -3079,8 +3124,16 @@ predictions_df %>%
   ggplot(aes(x = pred_complete, y = value, color = site))+
   geom_point()
 
+left_join(outlier_env_yield, within_environment_prediction_accuracy) %>%
+  as.data.frame()
 
 
-
-
-
+env_means %>%
+  filter(str_detect(environment, "WLI")) %>%
+  mutate(mean = mu + effect)
+  
+ec_tomodel_centered$daymet %>% 
+  filter(str_detect(environment, "WLI")) %>% 
+  gather(covariate, value, -source, -environment) %>%
+  spread(environment, value) %>%
+  as.data.frame()
