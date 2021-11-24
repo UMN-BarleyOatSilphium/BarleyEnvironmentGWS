@@ -176,27 +176,37 @@ K_pco_df <- K_mds$points %>%
   left_join(., select(entry_list, line_name = Line, class = Class, program = Program, parent = `Parent?`)) %>%
   arrange(desc(class), program, line_name) %>%
   mutate(class = ifelse(class == "S2TP", "tp", "vp"), program = fct_inorder(program),
-         parent = case_when(parent == "TRUE" ~ "parent", parent == "FALSE" ~ "nonparent", TRUE ~ "offspring"))
+         parent = case_when(parent == "TRUE" ~ "parent", parent == "FALSE" ~ "nonparent", TRUE ~ "offspring"),
+         parent = fct_relevel(parent, "parent"))
 
 # Color scheme for populations
 pop_colors <- setNames(object = c(neyhart_palette("umn1", n = 4), neyhart_palette("umn2")[c(5, 8)]), nm = levels(K_pco_df$program))
 
+# Function to rename the "parent" column
+f_parent_rename <- function(x) c("parent" = "FP (parent)", "nonparent" = "FP", "offspring" = "OP")[x]
+
 # Create the visualization
 g_popstr <- K_pco_df %>% 
-  ggplot(aes(x = PCo1, y = PCo2, fill = program, color = program)) + 
-  # Plot non-parents and offspring
-  geom_point(data = filter(K_pco_df, parent != "parent"), 
-             shape = ifelse(subset(K_pco_df, parent != "parent")$parent == "nonparent", 16, 17), size = 0.7) +
-  # Plot parents
-  geom_point(data = filter(K_pco_df, parent == "parent"), shape = 21, color = "black", size = 0.7) +
-  # scale_x_continuous(name = K_pco_varprop[1], breaks = pretty, limits = c(min(K_pco_df$PCo1)*1.65, max(K_pco_df$PCo1))) +
+  ggplot(aes(x = PCo1, y = PCo2)) + 
+  # Parents
+  geom_point(data = subset(K_pco_df, parent == "parent"), aes(fill = program, shape = parent), size = 1) +
+  # Non-parents and offspring
+  geom_point(data = subset(K_pco_df, parent != "parent"), aes(color = program, shape = parent), size = 1) +
   scale_x_continuous(name = K_pco_varprop[1], breaks = pretty) +
   scale_y_continuous(name = K_pco_varprop[2], breaks = pretty, position = "right") +
-  scale_color_manual(name = NULL, values = pop_colors, drop = FALSE) +
-  scale_fill_manual(guide = FALSE, values = pop_colors, drop = FALSE) +
+  scale_color_manual(values = pop_colors, drop = FALSE, guide = FALSE) +
+  scale_fill_manual(values = pop_colors, drop = FALSE, guide = FALSE) +
+  scale_shape_manual(name = NULL, values = c(parent = 21, nonparent = 16, offspring = 17), 
+                     labels = f_parent_rename, drop = FALSE) +
   theme_genetics(base_size = base_font_size) +
-  theme(legend.position = "none", plot.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)),
+  # theme(legend.position = "none", plot.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)),
+  #       panel.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)))
+  theme(legend.key.height = unit(0.5, "line"), legend.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)),
+        # legend.position = c(1,1), legend.direction = "vertical", legend.justification = c(1,1),
+        legend.position = "top", legend.direction = "vertical", legend.justification = "right",
+        plot.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)),
         panel.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)))
+        
 
 # Save this
 ggsave(filename = "figure1_partB_population_structure.jpg", plot = g_popstr, path = fig_dir,
@@ -227,7 +237,7 @@ g_map_v2 <- ggplot(data = north_america, aes(x = long, y = lat, group = group)) 
                   size = base_geom_text_size, hjust = 0.5, nudge_x = ifelse(use_loc_info_toplot1$location == "Buffalo County", -3, 0), 
                   segment.size = 0.2) +
   geom_text(data = use_loc_info_toplot1, aes(x = longitude, y = latitude, group = location, label = nExperiments), 
-            size = base_geom_text_size, color = ifelse(use_loc_info_toplot1$location == "Arlington", "black", "white")) +
+            size = floor(base_geom_text_size), color = ifelse(use_loc_info_toplot1$location == "Arlington", "black", "white")) +
   coord_map(projection = "bonne", lat0 = 50, xlim = long_limit, ylim = lat_limit) +
   scale_shape_manual(name = NULL, values = c(16, 15), guide = guide_legend(label.position = "left", override.aes = list(size = 2))) +
   scale_x_continuous(breaks = NULL, name = NULL, labels = NULL) + 
@@ -242,7 +252,7 @@ g_map_v2 <- ggplot(data = north_america, aes(x = long, y = lat, group = group)) 
 ## Combine plots
 layout <- c(
   area(t = 1, l = 1, b = 10, r = 8),
-  area(t = 3, l = 7, b = 10, r = 9)
+  area(t = 2.5, l = 7, b = 10, r = 10)
 )
 
 g_pop_map <- plot_grid(g_map_v2, labels = subfigure_labels[1], label_size = subfigure_label_size) + 
@@ -251,7 +261,7 @@ g_pop_map <- plot_grid(g_map_v2, labels = subfigure_labels[1], label_size = subf
 
 # Save this
 ggsave(filename = "figure1_map_and_popstr.jpg", plot = g_pop_map, path = fig_dir,
-       height = 2.5, width = 5.5, dpi = dpi_use)
+       height = 3, width = 6, dpi = dpi_use)
 
 
 
