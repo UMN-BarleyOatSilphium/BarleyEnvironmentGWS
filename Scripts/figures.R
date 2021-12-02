@@ -264,6 +264,10 @@ ggsave(filename = "figure1_map_and_popstr.jpg", plot = g_pop_map, path = fig_dir
        height = 3, width = 6, dpi = dpi_use)
 
 
+# Save this
+ggsave(filename = "figure1_map_and_popstr.svg", plot = g_pop_map, path = fig_dir,
+       height = 3, width = 6, dpi = dpi_use)
+
 
 
 
@@ -570,6 +574,9 @@ g_weather_stages <- plot_grid(
 ggsave(filename = "figure2_gcm_to_ecs.jpg", plot = g_weather_stages, path = fig_dir, 
        width = figwidth_onecol, height = 5, dpi = dpi_use)
 
+# Save
+ggsave(filename = "figure2_gcm_to_ecs.svg", plot = g_weather_stages, path = fig_dir, 
+       width = figwidth_onecol, height = 5, dpi = dpi_use)
 
 
 
@@ -646,6 +653,9 @@ g_accuracy_within_env <- accuracy_bias_within_env_toplot %>%
 
 ## Save
 ggsave(filename = "figure3_loeo_accuracy_within_environments.jpg", plot = g_accuracy_within_env, 
+       path = fig_dir, width = figwidth_onecol, height = 5, dpi = dpi_use)
+
+ggsave(filename = "figure3_loeo_accuracy_within_environments.svg", plot = g_accuracy_within_env, 
        path = fig_dir, width = figwidth_onecol, height = 5, dpi = dpi_use)
 
 
@@ -740,6 +750,10 @@ g_loo_pred_obs <- g_loo_pred_obs_list %>%
 ggsave(filename = "figure4_loeo_predictions_across_environment.jpg", plot = g_loo_pred_obs, path = fig_dir,
        width = figwidth_twocol, height = 3, dpi = dpi_use)
 
+## Save
+ggsave(filename = "figure4_loeo_predictions_across_environment.svg", plot = g_loo_pred_obs, path = fig_dir,
+       width = figwidth_twocol, height = 3, dpi = dpi_use)
+
 
 
 # Figure 5. LOLO accuracy within locations ---------------------------------------
@@ -800,6 +814,10 @@ g_accuracy_within_loc <- accuracy_within_loc_toplot %>%
 
 ## Save
 ggsave(filename = "figure5_lolo_accuracy_within_locations.jpg", plot = g_accuracy_within_loc, 
+       path = fig_dir, width = figwidth_onecol, height = 5, dpi = dpi_use)
+
+## Save
+ggsave(filename = "figure5_lolo_accuracy_within_locations.svg", plot = g_accuracy_within_loc, 
        path = fig_dir, width = figwidth_onecol, height = 5, dpi = dpi_use)
 
 
@@ -891,6 +909,10 @@ g_loo_pred_obs <- g_loo_pred_obs_list %>%
 ggsave(filename = "figure6_lolo_predictions_across_locations.jpg", plot = g_loo_pred_obs, path = fig_dir,
        width = figwidth_twocol, height = 3, dpi = dpi_use)
 
+## Save
+ggsave(filename = "figure6_lolo_predictions_across_locations.svg", plot = g_loo_pred_obs, path = fig_dir,
+       width = figwidth_twocol, height = 3, dpi = dpi_use)
+
 
 
 
@@ -944,6 +966,9 @@ g_combined <- plot_grid(g_cultivar_growth_modelA, g_cultivar_growth_modelB, nrow
 ggsave(filename = "figure_s1_growth_model_cultivar_comparison.jpg", plot = g_combined, path = fig_dir,
        width = 8, height = 4, dpi = 1000)
 
+# Save
+ggsave(filename = "figure_s1_growth_model_cultivar_comparison.svg", plot = g_combined, path = fig_dir,
+       width = 8, height = 4, dpi = 1000)
 
 
 
@@ -1156,7 +1181,9 @@ merged_plot <- plot_grid(g_concurrent_features_count2, right_plot, nrow = 1, ali
 # Save
 ggsave(filename = "figure_S2_concurrent_features_comparison_merged_daymet.jpg", plot = merged_plot,
        path = fig_dir, height = 8, width = 6, dpi = dpi_use)
-
+# Save
+ggsave(filename = "figure_S2_concurrent_features_comparison_merged_daymet.svg", plot = merged_plot,
+       path = fig_dir, height = 8, width = 6, dpi = dpi_use)
 
 
 
@@ -1346,6 +1373,10 @@ merged_plot <- plot_grid(g_historical_features_count1, right_plot, nrow = 1, ali
 ggsave(filename = "figure_S3_historical_features_comparison_merged_daymet.jpg", plot = merged_plot,
        path = fig_dir, height = 8, width = 6, dpi = dpi_use)
 
+# Save
+ggsave(filename = "figure_S3_historical_features_comparison_merged_daymet.svg", plot = merged_plot,
+       path = fig_dir, height = 8, width = 6, dpi = dpi_use)
+
 
 
 
@@ -1415,6 +1446,9 @@ g_loeo_all <- plot_grid(plotlist = g_loeo_all_list, ncol = 1, align = "v", axis 
 # Save
 ggsave(filename = "figure_S4_loeo_across_site_prediction_accuracy.jpg", plot = g_loeo_all, path = fig_dir,
        height = 20, width = 22, units = "cm", dpi = 1000)
+# Save
+ggsave(filename = "figure_S4_loeo_across_site_prediction_accuracy.svg", plot = g_loeo_all, path = fig_dir,
+       height = 20, width = 22, units = "cm", dpi = 1000)
 
 
 
@@ -1472,6 +1506,10 @@ g_rmsep_within_env <- accuracy_bias_within_env_toplot %>%
 
 ## Save
 ggsave(filename = "figure_S5_loeo_bias_within_environments.jpg", plot = g_rmsep_within_env, 
+       path = fig_dir, width = figwidth_onecol + 1, height = 5, dpi = dpi_use)
+
+## Save
+ggsave(filename = "figure_S5_loeo_bias_within_environments.svg", plot = g_rmsep_within_env, 
        path = fig_dir, width = figwidth_onecol + 1, height = 5, dpi = dpi_use)
 
 
@@ -1589,6 +1627,9 @@ g_timeframe_window <- plot_grid(g_timeframe_analysis, g_window_analysis, nrow = 
 ggsave(filename = "figure_S6_timeframe_window_analysis.jpg", plot = g_timeframe_window, path = fig_dir,
        width = 5, height = 2,  dpi = 1000)
 
+# Save
+ggsave(filename = "figure_S6_timeframe_window_analysis.svg", plot = g_timeframe_window, path = fig_dir,
+       width = 5, height = 2,  dpi = 1000)
 
 
 
@@ -1650,6 +1691,10 @@ g_lolo_all <- plot_grid(plotlist = g_lolo_all_list, ncol = 1, align = "v", axis 
 
 # Save
 ggsave(filename = "figure_S7_lolo_across_site_prediction_accuracy.jpg", plot = g_lolo_all, path = fig_dir,
+       height = 20, width = 22, units = "cm", dpi = 1000)
+
+# Save
+ggsave(filename = "figure_S7_lolo_across_site_prediction_accuracy.svg", plot = g_lolo_all, path = fig_dir,
        height = 20, width = 22, units = "cm", dpi = 1000)
 
 
@@ -1797,6 +1842,11 @@ g_rmsep_within_loc <- accuracy_within_loc_toplot %>%
 ggsave(filename = "figure_S8_lolo_bias_within_locations.jpg", plot = g_rmsep_within_loc, 
        path = fig_dir, width = figwidth_onecol + 1, height = 5, dpi = dpi_use)
 
+## Save
+ggsave(filename = "figure_S8_lolo_bias_within_locations.svg", plot = g_rmsep_within_loc, 
+       path = fig_dir, width = figwidth_onecol + 1, height = 5, dpi = dpi_use)
+
+
 
 # Figure S9 - external predictive ability across environments ----------
 
@@ -1855,6 +1905,10 @@ g_ext_env_all <- plot_grid(plotlist = g_ext_env_all_list, ncol = 1, align = "v",
 # Save
 ggsave(filename = "figure_S9_external_environment_across_site_prediction_accuracy.jpg", plot = g_ext_env_all, path = fig_dir,
        height = 16, width = 22, units = "cm", dpi = 1000)
+# Save
+ggsave(filename = "figure_S9_external_environment_across_site_prediction_accuracy.svg", plot = g_ext_env_all, path = fig_dir,
+       height = 16, width = 22, units = "cm", dpi = 1000)
+
 
 
 
@@ -1903,6 +1957,9 @@ g_ext_loc_all <- plot_grid(plotlist = g_ext_loc_all_list, ncol = 1, align = "v",
 # Save
 ggsave(filename = "figure_S10_external_location_across_site_prediction_accuracy.jpg", plot = g_ext_loc_all, path = fig_dir,
        height = 16, width = 22, units = "cm", dpi = 1000)
+# Save
+ggsave(filename = "figure_S10_external_location_across_site_prediction_accuracy.svg", plot = g_ext_loc_all, path = fig_dir,
+       height = 16, width = 22, units = "cm", dpi = 1000)
 
 
 
@@ -1950,6 +2007,9 @@ g_loc_longterm_all <- plot_grid(plotlist = g_loc_longterm_list, ncol = 1, align 
 ggsave(filename = "figure_S11_location_longterm_ec_predictions.jpg", plot = g_loc_longterm_all, path = fig_dir,
        height = 18, width = 18, units = "cm", dpi = 1000)
 
+# Save
+ggsave(filename = "figure_S11_location_longterm_ec_predictions.svg", plot = g_loc_longterm_all, path = fig_dir,
+       height = 18, width = 18, units = "cm", dpi = 1000)
 
 
 
@@ -2285,6 +2345,9 @@ g_heatmap_combined <- plot_grid(plotlist = subset(phenoCor_ec_heatmaps, feat_sel
 ggsave(filename = "figure_s12_environmental_covariate_heatmap.jpg", plot = g_heatmap_combined,
        path = fig_dir, width = 12, height = 12, dpi = 1000)
 
+# Save
+ggsave(filename = "figure_s12_environmental_covariate_heatmap.svg", plot = g_heatmap_combined,
+       path = fig_dir, width = 12, height = 12, dpi = 1000)
 
 
 
@@ -2613,6 +2676,9 @@ g_heatmap_combined <- plot_grid(plotlist = subset(loc_phenoCor_ec_heatmaps, feat
 
 # Save
 ggsave(filename = "figure_s13_location_covariate_heatmap.jpg", plot = g_heatmap_combined,
+       path = fig_dir, width = 12, height = 12, dpi = 1000)
+# Save
+ggsave(filename = "figure_s13_location_covariate_heatmap.svg", plot = g_heatmap_combined,
        path = fig_dir, width = 12, height = 12, dpi = 1000)
 
 
