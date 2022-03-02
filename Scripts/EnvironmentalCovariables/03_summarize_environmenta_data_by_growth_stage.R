@@ -75,12 +75,13 @@ concurrent_trial_growth_stages <- concurrent_growth_staging_daymet %>%
 ## Add daily weather observations during for each day during a growth stage
 concurrent_growth_stage_weather <- concurrent_trial_growth_stages %>%
   unnest(growth_stages) %>%
-  left_join(., unnest(concurrent_trial_growth_stages, data)) %>%
+  left_join(., unnest(concurrent_trial_growth_stages, data, names_repair = tidyr_legacy)) %>%
   # Add GDD info
-  left_join(., unnest(concurrent_trial_growth_stages, apsim_out) %>% select(source, trial, date = Date, tt = TT)) %>%
+  left_join(., unnest(concurrent_trial_growth_stages, apsim_out, names_repair = tidyr_legacy) %>% select(source, trial, date = Date, tt = TT)) %>%
   ## Calculate water stress as the difference between pet and rain
   mutate(water_balance = rain - pet) %>%
-  rename(gdd = tt)
+  rename(gdd = tt) %>%
+  select(-data, -apsim_out, -growth_stages)
 
 
 ## Summarize covariates in each growth stage
@@ -89,14 +90,48 @@ concurrent_growth_stage_covariates <- concurrent_growth_stage_weather %>%
   # Calculate diurnal range and mean
   mutate(tmean = (maxt + mint) / 2,
          trange = maxt - mint) %>%
-  select(source, trial, stage, mean_vars, sum_vars) %>%
+  select(source, trial, stage, all_of(c(mean_vars, sum_vars))) %>%
   group_by(source, trial, stage) %>%
   ## Summarize mean covariates
   { full_join(
-    x = summarize_at(., vars(mean_vars), list(mean = ~mean(.)), na.rm = TRUE),
-    y = summarize_at(., vars(sum_vars), list(sum = ~sum(.)), na.rm = TRUE)
+    x = summarize_at(., vars(all_of(mean_vars)), list(mean = ~mean(.)), na.rm = TRUE),
+    y = summarize_at(., vars(all_of(sum_vars)), list(sum = ~sum(.)), na.rm = TRUE)
   ) } %>%
   ungroup()
+
+#  what is the average length of all growth stages?
+median_growth_stage_length <- median(xtabs(~ stage + trial, concurrent_growth_stage_weather))
+
+
+# Summarize covariates according to n-day intervals, where n is the median length of all
+# growth stages
+summary_interval_length <- 20
+
+concurrent_interval_covariates <- concurrent_growth_stage_weather %>%
+  # Calculate diurnal range and mean
+  mutate(tmean = (maxt + mint) / 2,
+         trange = maxt - mint) %>%
+  select(source, trial, dap, mean_vars, sum_vars) %>%
+  gather(variable, value, c(mean_vars, sum_vars)) %>%
+  # Arrange
+  arrange(source, trial, variable, dap) %>%
+  split(list(.$source, .$trial, .$variable)) %>%
+  map_df(~{
+    df <- .x
+    # Function for summary
+    summ <- if (unique(df$variable) %in% sum_vars) sum else mean
+    df %>%
+      mutate(value_summarized = slider::slide_dbl(value, summ, .before = 0, .after = summary_interval_length,
+                                                  .step = summary_interval_length)) %>%
+      filter(!is.na(value_summarized)) %>%
+      mutate(stage = paste0("interval_", str_pad(dap, 3, "left", "0"), "_", 
+                            str_pad(dap + summary_interval_length - 1, 3, "left", "0")),
+             variable = ifelse(variable %in% sum_vars, paste0(variable, "_sum"), paste0(variable, "_mean")))
+    
+  }) %>%
+  select(source, trial, stage, variable, value_summarized) %>% 
+  spread(variable, value_summarized)
+  
 
 
 
@@ -138,13 +173,14 @@ historical_location_predicted_growth_stages <- location_historical_growth_stagin
 
 ## Add daily weather observations during for each day during a growth stage
 historical_location_growth_stage_weather <- historical_location_predicted_growth_stages %>%
-  unnest(growth_stages) %>%
-  left_join(., unnest(historical_location_predicted_growth_stages, daily_data)) %>%
+  unnest(growth_stages, names_repair = tidyr_legacy) %>%
+  left_join(., unnest(historical_location_predicted_growth_stages, daily_data, names_repair = tidyr_legacy)) %>%
   # Add GDD info
-  left_join(., unnest(historical_location_predicted_growth_stages, growth_model) %>% select(source, trial, date = Date, tt = TT, pet = eo)) %>%
+  left_join(., unnest(historical_location_predicted_growth_stages, growth_model, names_repair = tidyr_legacy) %>% select(source, trial, date = Date, tt = TT, pet = eo)) %>%
   ## Calculate water stress as the difference between pet and rain
   mutate(water_balance = rain - pet) %>%
-  rename(gdd = tt)
+  rename(gdd = tt) %>%
+  select(-daily_data, -growth_model, -growth_stages)
 
 
 ## Summarize covariates in each growth stage
@@ -161,6 +197,32 @@ historical_location_growth_stage_covariates <- historical_location_growth_stage_
     y = summarize_at(., vars(sum_vars), list(sum = ~sum(.)), na.rm = TRUE)
   ) } %>%
   ungroup()
+
+
+historical_location_interval_covariates <- historical_location_growth_stage_weather %>%
+  # Calculate diurnal range and mean
+  mutate(tmean = (maxt + mint) / 2,
+         trange = maxt - mint) %>%
+  select(source, trial, dap, mean_vars, sum_vars) %>%
+  gather(variable, value, c(mean_vars, sum_vars)) %>%
+  # Arrange
+  arrange(source, trial, variable, dap) %>%
+  split(list(.$source, .$trial, .$variable)) %>%
+  map_df(~{
+    df <- .x
+    # Function for summary
+    summ <- if (unique(df$variable) %in% sum_vars) sum else mean
+    df %>%
+      mutate(value_summarized = slider::slide_dbl(value, summ, .before = 0, .after = summary_interval_length,
+                                                  .step = summary_interval_length)) %>%
+      filter(!is.na(value_summarized)) %>%
+      mutate(stage = paste0("interval_", str_pad(dap, 3, "left", "0"), "_", 
+                            str_pad(dap + summary_interval_length - 1, 3, "left", "0")),
+             variable = ifelse(variable %in% sum_vars, paste0(variable, "_sum"), paste0(variable, "_mean")))
+    
+  }) %>%
+  select(source, trial, stage, variable, value_summarized) %>% 
+  spread(variable, value_summarized)
 
 
 
@@ -188,6 +250,6 @@ soil_covariates <- soil_data %>%
 ## Save
 save("concurrent_growth_stage_covariates", "concurrent_growth_stage_weather", 
      "historical_location_growth_stage_covariates", "historical_location_growth_stage_weather",
-     "soil_covariates",
+     "soil_covariates", "historical_location_interval_covariates", "concurrent_interval_covariates",
      file = file.path(result_dir, "environmental_covariates.RData"))
 
