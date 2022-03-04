@@ -137,8 +137,8 @@ covariates_tomodel <- feature_selection_df %>%
 
 # Generate skeleton train/test sets for LOEO
 loeo_train_test <- data_to_model %>%
-  group_by(trait) %>%
   mutate(site = env) %>%
+  group_by(trait) %>%
   do({crossv_loo_grouped(data = droplevels(group_by(., site)))}) %>%
   ungroup() %>%
   mutate(train = map(train, ~filter(as.data.frame(.), line_name %in% tp_geno) %>% 
@@ -283,6 +283,8 @@ loeo_predictions_out <- data_train_test1 %>%
 
 toc <- Sys.time()
 
+model_time <- toc - tic
+
 
 
 # External environment validation -----------------------------------------------
@@ -301,8 +303,8 @@ data_to_model <- S2_MET_BLUEs %>%
 
 # Generate skeleton train/test sets for validation
 env_external_train_val <- data_to_model %>%
-  group_by(trait) %>%
   mutate(site = env) %>%
+  group_by(trait) %>%
   do({ tibble(train = list(resample(data = droplevels(.), idx = which(.$site %in% train_test_env))),
               test = list(resample(data = droplevels(.), idx = which(.$site %in% validation_env)))) }) %>%
   ungroup() %>%
@@ -425,7 +427,7 @@ env_external_predictions_out <- env_external_train_val1 %>%
 
 
 ## Save the results
-save("loeo_predictions_out", "env_external_predictions_out", 
+save("loeo_predictions_out", "env_external_predictions_out", "model_time",
      file = file.path(result_dir, "loeo_predictions_fact_reg.RData"))
 
 
