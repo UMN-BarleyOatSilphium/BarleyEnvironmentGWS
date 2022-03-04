@@ -15,7 +15,7 @@
 
 # Run on SCINet
 repo_dir <- "/project/gifvl_vaccinium/barley_work/BarleyEnvironmentGWS"
-source(file.path(repo_dir, "source_MSI.R"))
+source(file.path(repo_dir, "source_SCINet.R"))
 
 
 # Other packages

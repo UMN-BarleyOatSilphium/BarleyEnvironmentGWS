@@ -17,9 +17,9 @@
 #SBATCH --mail-type=FAIL
 
 # Change the working directory
-cd /project/gifvl_vaccinium/barley_work/BarleyEnvironmentGWS
+cd /project/gifvl_vaccinium/barley_work/BarleyEnvironmentGWS/
 
 module load r-intel/3.6.1
 
 # Leave-one-environment-out
-Rscript environment_loeo_predictions2_intervalCovariates.R
+Rscript Scripts/Predictions/environment_loeo_predictions2_intervalCovariates.R
