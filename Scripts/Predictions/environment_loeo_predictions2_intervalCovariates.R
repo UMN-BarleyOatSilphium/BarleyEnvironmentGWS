@@ -8,14 +8,14 @@
 ## 
 
 
-# Run on a local machine
-repo_dir <- getwd()
-source(file.path(repo_dir, "source.R"))
+# # Run on a local machine
+# repo_dir <- getwd()
+# source(file.path(repo_dir, "source.R"))
 
 
-# # Run the source script
-# repo_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/S2MET_Predictions_Models/"
-# source(file.path(repo_dir, "source_MSI.R"))
+# Run on SCINet
+repo_dir <- "/project/gifvl_vaccinium/barley_work/BarleyEnvironmentGWS"
+source(file.path(repo_dir, "source_MSI.R"))
 
 
 # Other packages
@@ -26,7 +26,7 @@ library(parallel)
 
 ## Number of cores
 # n_core <- detectCores()
-n_core <- 1
+n_core <- 8
 
 # Source of covariates
 source_use <- "daymet"
