@@ -8,14 +8,14 @@
 ## 
 
 
-# # Run on a local machine
-# repo_dir <- getwd()
-# source(file.path(repo_dir, "source.R"))
+# Run on a local machine
+repo_dir <- getwd()
+source(file.path(repo_dir, "source.R"))
 
 
-# Run the source script
-repo_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/S2MET_Predictions_Models/"
-source(file.path(repo_dir, "source_MSI.R"))
+# # Run the source script
+# repo_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Genomic_Selection/S2MET_Predictions_Models/"
+# source(file.path(repo_dir, "source_MSI.R"))
 
 
 # Other packages

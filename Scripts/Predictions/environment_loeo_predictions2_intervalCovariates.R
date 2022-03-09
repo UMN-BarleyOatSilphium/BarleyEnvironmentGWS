@@ -8,14 +8,14 @@
 ## 
 
 
-# # Run on a local machine
-# repo_dir <- getwd()
-# source(file.path(repo_dir, "source.R"))
+# Run on a local machine
+repo_dir <- getwd()
+source(file.path(repo_dir, "source.R"))
 
 
-# Run on SCINet
-repo_dir <- "/project/gifvl_vaccinium/barley_work/BarleyEnvironmentGWS"
-source(file.path(repo_dir, "source_SCINet.R"))
+# # Run on SCINet
+# repo_dir <- "/project/gifvl_vaccinium/barley_work/BarleyEnvironmentGWS"
+# source(file.path(repo_dir, "source_SCINet.R"))
 
 
 # Other packages
@@ -133,6 +133,123 @@ covariates_tomodel <- feature_selection_df %>%
   group_by(trait) %>% 
   nest(.key = "model_covariates") %>%
   ungroup()
+
+## Estimate variance components
+loeo_trait_varcomp <- data_to_model %>%
+  mutate(site = env) %>%
+  filter(line_name %in% tp_geno) %>%
+  group_by(trait) %>%
+  nest(train = -trait) %>%
+  ungroup() %>%
+  mutate(train = map(train, droplevels) %>% map(~mutate(.x, site = fct_contr_sum(site)))) %>%
+  # Combine with the different covariate sets
+  left_join(., covariates_tomodel) %>%
+  mutate(varcomp = list(NULL))
+
+# Iterate over rows
+for (i in seq_len(nrow(loeo_trait_varcomp))) {
+  
+  row <- loeo_trait_varcomp[i,]
+  data <- row$train[[1]] %>%
+    # Modify the weights
+    mutate(weights = std_error^2, site1 = site) %>%
+    as.data.frame()
+    
+  # Get covariates
+  covariates_row <- row$model_covariates[[1]]
+  
+  # Record the number of environment and observations used for training
+  train_n <- summarize(data, nSite = n_distinct(environment), nObs = n())
+  
+  ##############
+  ##############
+  
+  # Create a df of model and covariate combinations
+  models_df <- tibble(source = "daymet", feature_selection = "none", model = paste0("model", 1:3),
+                      covariates = list(tibble(covariate = character(), importance = numeric()))) %>%
+    bind_rows(., covariates_row) %>%
+    mutate(submodel = ifelse(feature_selection == "none", paste0(model, "_id"), paste0(model, "_cov")),
+           submodel = ifelse(submodel == "model1_id", "model1", submodel),
+           varcomp = list(NULL))
+  
+  # Iterate over rows
+  for (r in seq_len(nrow(models_df))) {
+    
+    # Get the submodel, declare relationship matrices
+    submodel <- models_df$submodel[[r]]
+    
+    if (submodel == "model1" | endsWith(submodel, "id")) {
+      Emain <- Eint <- diag(nlevels(data$site))
+      dimnames(Emain) <- replicate(2, levels(data$site), simplify = FALSE)
+      dimnames(Eint) <- dimnames(Emain)
+      # Designate matrices
+      I <- Emain
+      GI <- kronecker(K, Eint, make.dimnames = TRUE)
+      
+    } else {
+      # Covariate data source
+      src <- models_df$source[r]
+      
+      # If this is model 3, grab the covariates for model 2 as well
+      if (grepl(pattern = "model3", x = submodel)) {
+        covariate_list <- subset(models_df, source == src & feature_selection == feature_selection[r], covariates, drop = TRUE) %>%
+          `names<-`(., c("main", "interaction"))
+        
+      } else {
+        covariate_list <- list(main = models_df$covariates[[r]])
+        
+      }
+      
+      # Create main matrix of scaled and centered covariate values
+      covariate_mat <- ec_tomodel_interval_scaled[[src]] %>%
+        select(-source) %>%
+        filter(environment %in% levels(data$site1)) %>%
+        as.data.frame() %>%
+        column_to_rownames("environment") %>%
+        as.matrix()
+      
+      ## Environmental relationship matrices
+      Emain <- Env_mat(x = covariate_mat, terms = covariate_list$main$covariate,
+                       weights = covariate_list$main$importance, method = "weightedJarq")
+      if (is.null(covariate_list$interaction)) {
+        Eint <- diag(ncol(Emain)); dimnames(Eint) <- dimnames(Emain)
+      } else {
+        Eint <- Env_mat(x = covariate_mat, terms = covariate_list$interaction$covariate,
+                        weights = covariate_list$interaction$importance, method = "weightedJarq")
+      }
+      # Designate matrices
+      E <- Emain
+      GE <- kronecker(K, Eint, make.dimnames = TRUE)
+      
+    }
+    
+    # Fixed and random formula
+    model_run <- map(model.list, submodel)
+    fixed <- model_run$fixed
+    random <- model_run$random
+    
+    # Fit the model
+    fit <- mmer(fixed = fixed, random = random, rcov = ~ units, data = data, weights = weights, verbose = FALSE,
+                date.warning = FALSE)
+    
+    # Get the variance components; save
+    models_df$varcomp[[r]] <- fit$sigma_scaled
+    
+  }
+  
+  
+  # Add the DF to the larger DF above
+  loeo_trait_varcomp$varcomp[[i]] <- models_df
+  
+} # Close the loop
+    
+
+save("loeo_trait_varcomp", file = file.path(result_dir, "loeo_trait_varcomp.RData"))
+
+
+
+
+
 
 
 # Generate skeleton train/test sets for LOEO
