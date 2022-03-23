@@ -937,12 +937,13 @@ fit_lmm <- function(fixed, random_cov, r_cov = NULL, data, weights, verbose = FA
   if (missing(weights)) {
     # Model expressions
     mmer_exp <- expression(
-      fit <- mmer(fixed = fixed, random = random, rcov = rcov, data = data, iters = iters, verbose = verbose)
+      fit <- mmer(fixed = fixed, random = random, rcov = rcov, data = data, iters = iters, verbose = verbose,
+                  date.warning = FALSE)
     )
     
   } else {
     text <- paste0("fit <- mmer(fixed = fixed, random = random, rcov = rcov, data = data, iters = iters, weights = ",
-                   weights, ", verbose = verbose)") 
+                   weights, ", verbose = verbose, date.warning = FALSE)") 
     mmer_exp <- parse(text = text)
     
   }

@@ -154,12 +154,16 @@ loeo_train_test <- data_to_model %>%
 
 loeo_predictions_out <- vector("list", length = nrow(loeo_train_test))
 
-# Set progress bar
-pb <- progress::progress_bar$new(total = length(loeo_predictions_out))
+# Nulls
+nulls <- which(sapply(loeo_predictions_out, is.null))
 
-first_null <- min(which(sapply(loeo_predictions_out, is.null)))
+# Set progress bar
+pb <- progress::progress_bar$new(total = length(nulls))
+
+first_null <- min(nulls)
+
 # Iterate over the train/test sets
-for (i in seq(first_null, length(loeo_predictions_out))) {
+for (i in nulls) {
   
   row <- loeo_train_test[i,]
   data <- row$train[[1]] %>%
@@ -207,9 +211,6 @@ for (i in seq(first_null, length(loeo_predictions_out))) {
       Emain <- Eint <- diag(nlevels(data$site))
       dimnames(Emain) <- replicate(2, levels(data$site), simplify = FALSE)
       dimnames(Eint) <- dimnames(Emain)
-      # Designate matrices
-      I <- Emain
-      GI <- kronecker(K, Eint, make.dimnames = TRUE)
       
     } else {
       # Covariate data source
@@ -241,10 +242,11 @@ for (i in seq(first_null, length(loeo_predictions_out))) {
       } else {
         Eint <- Env_mat(x = covariate_mat, terms = covariate_list$interaction$covariate, method = "Jarq")
       }
-      # Designate matrices
-      GE <- kronecker(K, Eint, make.dimnames = TRUE)
       
     }
+    
+    # GxE matrix
+    GE <- kronecker(K, Eint, make.dimnames = TRUE)
     
     # Add genetic covariance matrix for line_names
     random <- varcomp_r %>%
