@@ -22,4 +22,4 @@ cd /project/gifvl_vaccinium/barley_work/BarleyEnvironmentGWS/
 module load r-intel/3.6.1
 
 # Leave-one-environment-out
-Rscript Scripts/Predictions/environment_loeo_predictions2_intervalCovariates.R
+Rscript Scripts/Predictions/01_all_predictions_varcomp_SCINet.R
