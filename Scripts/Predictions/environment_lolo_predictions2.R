@@ -92,7 +92,8 @@ S2_MET_loc_BLUEs <- S2_MET_BLUEs %>%
   ungroup()
 
 ## Pull out location covariates to use
-loc_ec_tomodel_scaled <- bind_rows(historical_ec_tomodel_timeframe_scaled, historical_ec_tomodel_window_scaled) %>%
+loc_ec_tomodel_scaled <- bind_rows(bind_rows(historical_ec_tomodel_timeframe_scaled), 
+                                   bind_rows(historical_ec_tomodel_window_scaled)) %>%
   filter(source == source_use, time_frame %in% unique(time_frame_use_df$time_frame))
 
 

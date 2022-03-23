@@ -842,6 +842,189 @@ make_dist_mat <- function(x) {
 }
 
 
+# A function to fit mixed models with multiple covariance structures
+# 
+# fixed: formula that includes the response and fixed effects
+# random_cov: a named list of lists. Each element of the list is a single
+# random effect, with names corresponding to variables in the data; 
+# the lists for each random effect include the covariance matrix (if any),
+# and the variance components (if any)
+# r_cov: same as random_cov, but for the residual covariance
+# data: the data.frame to use
+# weights: column name (not quoted) containing the weights
+# 
+# 
+# 
+# 
+fit_lmm <- function(fixed, random_cov, r_cov = NULL, data, weights, verbose = FALSE) {
+  
+  # Error setting
+  stopifnot(inherits(fixed, "formula"))
+  stopifnot(is.list(random_cov))
+  stopifnot(is.list(r_cov) | is.null(r_cov))
+  stopifnot(length(r_cov) <= 1)
+  stopifnot(is.data.frame(data))
+  stopifnot(is.character("weights"))
+  
+  # Number of traits to model
+  n_traits <- 1
+  
+  # Check for random effects, error if absent
+  if (length(random_cov) == 0) {
+    stop("You must specify at least 1 random effect in random_cov.")
+    
+    # Otherwise, unpack and verify the list
+  } else {
+    # Check for names
+    if (any(names(random_cov) == "")) stop("All elements of random_cov must be named.")
+    
+    # Empty list to store random effect formulas
+    rand_form_list <- vector("character", length(random_cov))
+    
+    # Iterate over list elements
+    for (i in seq_along(random_cov)) {
+      # Name of the random effect
+      rand_name_i <- names(random_cov)[i]
+      
+      # If variance components are included, create a matrix to specify that
+      if (is.null(random_cov[[i]]$varcomp)) {
+        mm <- matrix(2, n_traits, n_traits)
+        diag(mm) <- 1
+      } else {
+        mm <- matrix(3, n_traits, n_traits)
+      }
+      random_cov[[i]]$mm <- mm
+      
+      # Put together the formulate components
+      rand_form_list[i] <- paste0("vs(", rand_name_i,  ", Gu = random_cov[['", rand_name_i, 
+                            "']]$K, Gti = random_cov[['", rand_name_i,  "']]$varcomp, Gtc = random_cov[['", rand_name_i, 
+                            "']]$mm)")
+      
+    }
+  }
+  
+  # Reformulate the random effects
+  random <- reformulate(rand_form_list)
+  
+  # Do the same thing for the residual covariance
+  if (is.null(r_cov)) {
+    rcov <- ~ units
+    
+  } else {
+    # Correct name
+    if (names(r_cov) != "units") stop("The names of the r_cov list should be 'units'.")
+    
+    # If variance components are included, create a matrix to specify that
+    if (is.null(r_cov$units$varcomp)) {
+      mm <- matrix(2, n_traits, n_traits)
+      diag(mm) <- 1
+    } else {
+      mm <- matrix(3, n_traits, n_traits)
+    }
+    r_cov$units$mm <- mm
+    
+    rcov <- as.formula("~ vs(units, Gti = r_cov$units$varcomp, Gtc = r_cov$units$mm)")
+    
+  }
+  
+  # Are all of the variance components fixed? If so, set iterations to 1
+  if (any(sapply(X = random_cov, FUN = function(x) any(x$mm != 3)), any(r_cov$units$mm != 3))) {
+    iters <- 25
+  } else {
+    iters <- 1
+  }
+  
+  if (missing(weights)) {
+    # Model expressions
+    mmer_exp <- expression(
+      fit <- mmer(fixed = fixed, random = random, rcov = rcov, data = data, iters = iters, verbose = verbose)
+    )
+    
+  } else {
+    text <- paste0("fit <- mmer(fixed = fixed, random = random, rcov = rcov, data = data, iters = iters, weights = ",
+                   weights, ", verbose = verbose)") 
+    mmer_exp <- parse(text = text)
+    
+  }
+  
+  eval(mmer_exp)
+  
+  # Return the model fit
+  return(fit)
+  
+}
+
+# Generate predictions from a model
+predict_lmm <- function(object, terms) {
+  
+  # Error checking
+  stopifnot(inherits(object, "mmer"))
+  stopifnot(is.character(terms))
+  
+  # Verify terms
+  if (!all(terms %in% unlist(object$terms$random))) stop("The elements in 'terms' do not match terms in the model.")
+  
+  # # Rerun the model by return parameters
+  # model_param <- mmer(fixed = object$call$fixed, random = object$call$random, rcov = object$call$rcov, 
+  #                     na.method.X = object$call$na.method.X, na.method.Y = object$call$na.method.Y, 
+  #                     return.param = TRUE, verbose = FALSE, date.warning = FALSE, data = object$data)
+  # 
+  # # Get model matrices
+  # Zlist <- model_param$Z
+  # X <- model_param$X[[1]]
+  
+  # Extract random effects
+  rand_eff <- map(randef(object), 1)
+  names(rand_eff) <- gsub(pattern = "u:", replacement = "", x = names(rand_eff))
+    
+  # Combine with PEVs
+  # PEV
+  pev <- map(object$PevU, "value") %>% map(diag)
+  # combine
+  rand_eff <- map2(rand_eff, pev, ~cbind(u = .x, pev = .y))
+  
+  # Get the fixed effects
+  fixed_eff <- coef(object)
+  
+  # Sum the variance components for calculating reliability
+  varcomp_sum <- sum(unlist(object$sigma[paste0("u:", names(rand_eff))]))
+  
+
+  
+  # # Get the C matrices
+  # C22_list <- map(object$PevU, 1)
+  # C11 <- crossprod(X, object$Vi) %*% X
+  # C12 <- 
+  
+  contains_colon <- grepl(pattern = ":", x = terms)
+  separation_col_names <- if (any(contains_colon)) strsplit(terms[contains_colon], ":")[[1]] else character()
+  
+  ## Convert to a complete data.frame
+  rand_eff_df <- rand_eff %>% 
+    map(~rownames_to_column(as.data.frame(.), "term")) %>%
+    map(~rename(., pred = u)) %>%
+    imap(~`names<-`(.x, c(str_remove_all(.y, "u:"), paste0("pred", .y), paste0("pev", .y)))) %>% 
+    modify_if(~grepl(pattern = ":", x = names(.x)[1]), 
+              ~separate(.x, col = 1, into = separation_col_names, sep = ":")) %>% 
+    .[order(map_dbl(., ncol), decreasing = T)] %>% 
+    # map(~merge(x = test_merge, y = .x)) %>%
+    reduce(merge) %>% 
+    mutate(pred = rowSums(select(., contains("pred"))), pev = rowSums(select(., contains("pev")))) %>% 
+    select(-contains(":"))
+  
+  # Add fixed effects
+  rand_eff_df1 <- rand_eff_df %>%
+    mutate(predicted_value = pred + fixed_eff[,"Estimate"],
+           reliability = 1 - (pev / varcomp_sum)) %>%
+    select(all_of(terms[!grepl(pattern = ":", x = terms)]), pred, pev, reliability, predicted_value)
+  
+  # Return
+  return(rand_eff_df1)
+  
+  
+}
+
+
 
 ## Different version of prediction function
 genomewide_prediction2 <- function(x, model.list, K, E, KE) {

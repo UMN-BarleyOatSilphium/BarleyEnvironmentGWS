@@ -22,7 +22,6 @@ library(paletteer)
 
 
 ## Load the validation results
-# file_list <- list.files(result_dir, pattern = "predictions.RData$", full.names = TRUE)
 file_list <- list.files(result_dir, pattern = "fact_reg.RData$", full.names = TRUE)
 object_list <- unlist(lapply(file_list, load, envir = .GlobalEnv))
 
@@ -35,17 +34,53 @@ load(file.path(result_dir, "feature_selection_results.RData"))
 alpha <- 0.05
 
 
+# 
+# Modify prediction objects
+# 
+
+loeo_predictions_out <- bind_rows(loeo_predictions_out) %>%
+  select(trait, site, .id, out) %>%
+  unnest(out, names_repair = tidyr_legacy) %>%
+  select(trait, model, feature_selection, prediction) %>%
+  unnest(prediction)
+
+lolo_predictions_out <- bind_rows(lolo_predictions_out) %>%
+  select(trait, site, .id, out) %>%
+  unnest(out, names_repair = tidyr_legacy) %>%
+  select(trait, model, time_frame, feature_selection, prediction) %>%
+  unnest(prediction)
+
+env_external_predictions_out <- env_external_predictions_out %>%
+  select(trait, out) %>%
+  unnest(out, names_repair = tidyr_legacy) %>%
+  select(trait, model, feature_selection, prediction) %>%
+  unnest(prediction)
+
+loc_external_predictions_out <- loc_external_predictions_out %>%
+  select(trait, out) %>%
+  unnest(out, names_repair = tidyr_legacy) %>%
+  select(trait, model, time_frame, feature_selection, prediction) %>%
+  unnest(prediction)
+
+loeo_interval_predictions <- loeo_interval_predictions %>%
+  unnest(predictions) %>%
+  unnest(predictions, names_repair = tidyr_legacy) %>%
+  rename(pred_complete = predicted_value, pred_incomplete = pred, pred_complete_pev = pev) %>%
+  select(-site1, -trait1, -.id, -id)
+
+env_external_interval_predictions <- env_external_interval_predictions %>%
+  unnest(predictions) %>%
+  unnest(predictions, names_repair = tidyr_legacy) %>%
+  rename(pred_complete = predicted_value, pred_incomplete = pred, pred_complete_pev = pev, site = site1) %>%
+  select(-trait1, -id)
+
 
 
 ## Grab the prediction outputs and combine
 prediction_list <- object_list %>%
   set_names(., .) %>%
   map(get) %>%
-  # Bind rows if necessary
-  modify_if(is.list, bind_rows) %>%
-  subset(., map_lgl(., ~nrow(.) > 1)) %>%
-  map(~unnest(., out, names_repair = tidyr_legacy)) %>%
-  set_names(x = ., nm = str_remove(names(.), "_predictions_out"))
+  subset(., map_lgl(., ~nrow(.) > 1))
 
 
 
@@ -54,8 +89,9 @@ prediction_list <- object_list %>%
 
 
 ## Combine data.frames and mutate columns
-predictions_df <- prediction_list %>%
-  imap(~unnest(.x, prediction, names_repair = tidyr_legacy) %>% mutate(type = .y) ) %>%
+predictions_df_temp <- prediction_list %>%
+  setNames(., gsub(pattern = "_predictions.*", replacement = "", x = names(.))) %>%
+  imap(~mutate(.x, type = .y) ) %>%
   modify_if(., str_detect(names(.), "lo[a-z]o"), ~mutate(.x, .id = as.character("01"))) %>%
   # Combine time_frame and feature selection for LOLO longterm
   map(~rename_at(.x, vars(which(names(.x) %in% c("env", "loc"))),
@@ -67,7 +103,7 @@ predictions_df <- prediction_list %>%
          pop = ifelse(line_name %in% tp, "tp", "vp")) %>%
   select(-which(names(.) %in% c(".id", "core", "trait1"))) %>%
   # Coalesce columns
-  mutate(test_group = site, nGroup = nSite) %>%
+  mutate(test_group = site) %>%
   select(-which(names(.) %in% c("environment", "location", "nLoc", "nEnv", "loc1", "env1", "nSite", "site1", "source"))) %>%
   # Subset trait-site combinations that are relevant
   inner_join(distinct(select(gather(distinct(S2_MET_BLUEs, trait, environment, location), var, site, -trait), -var)), .) %>%
@@ -84,8 +120,8 @@ time_frame_selection_info <- historical_feature_selection %>%
   bind_rows(., distinct_at(historical_feature_importance, vars(trait, time_frame, time_frame_selection = selection, feat_sel_type))) %>%
   rename(selection = feat_sel_type)
 
-predictions_df <- predictions_df %>%
-  full_join(., time_frame_selection_info) %>%
+predictions_df <- predictions_df_temp %>%
+  left_join(., time_frame_selection_info) %>%
   # Remove columns that are lists
   select_if(~!is.list(.))
 
@@ -114,10 +150,40 @@ predictive_ability <- predictions_df %>%
 
 ## Adjust ability using heritability
 within_environment_prediction_accuracy <- predictive_ability %>%
-  filter(type %in% c("loeo", "env_external", "cv_env")) %>%
+  filter(str_detect(type, "loeo|env_external")) %>%
   select(-contains("_all")) %>%
   left_join(., env_trait_herit, by = c("trait", "test_group" = "environment")) %>%
   mutate(accuracy = ability / sqrt(heritability))
+
+
+
+
+
+# Calculate predictive ability over all observations; also calculate RMSE
+accuracy_bias_all <- predictive_ability %>% 
+  distinct(trait, cv_rep, model, pop, type, selection, time_frame, time_frame_selection, ability_all, bias_all)
+
+# First create annotation df
+across_site_prediction_accuracy_annotation <- accuracy_bias_all %>%
+  mutate(bias_all = bias_all * 100) %>%
+  mutate_at(vars(ability_all, bias_all), ~formatC(., width = 3, digits = 2, format = "f")) %>%
+  mutate(ability_ann = paste0("r[MP]==", ability_all),
+         bias_ann = paste0("Bias==", bias_all, "*'%'"),
+         annotation = paste0(ability_ann, "*','~", bias_ann))
+
+
+
+
+## Save everything
+save("predictions_df", "predictive_ability", "across_site_prediction_accuracy_annotation",
+     "within_environment_prediction_accuracy", 
+     file = file.path(result_dir, "prediction_accuracy_compiled.RData"))
+
+
+
+
+
+
 
 
 
@@ -136,20 +202,60 @@ within_environment_prediction_accuracy <- predictive_ability %>%
 #   facet_grid(pop + type ~ trait, labeller = labeller(.multi_line = FALSE)) +
 #   theme(legend.position = "bottom")
 
-
-# # Plot these predicted/observed values
-# predictions_df %>%
-#   filter(type == "lolo", model == "model3_cov", str_detect(selection, "lasso|stepwise"), pop == "tp") %>%
-#   unite(selection1, selection, time_frame, sep = ":", remove = FALSE) %>%
-#   ggplot(aes(x = pred_complete, y = value, color = test_group)) +
-#   geom_abline(slope = 1, intercept = 0) +
-#   geom_point(size = 0.5) +
-#   scale_color_discrete(guide = FALSE) +
-#   facet_wrap(~ type + pop + trait + selection1 + time_frame_selection, scales = "free", ncol = 4, labeller = labeller(.multi_line = FALSE)) +
-#   theme_presentation2(10)
+# Distinct predictive abilities per trait, pop, selection, type, model
+predictive_ability_distinct <- predictive_ability %>%
+  distinct(trait, model, selection, type, pop, ability_all, rmse_all) %>%
+  filter(selection != "none", str_detect(selection, "nosoil|lasso|apriori", negate = TRUE))
 
 
+predictive_ability_distinct_loeo <- predictive_ability_distinct %>%
+  filter(str_detect(type, "loeo")) %>%
+  mutate(annotation = paste0("rMP=", format_numbers(ability_all)))
 
+# Create a big plot of predicted vs observed values
+g_big_predictions <- predictions_df %>%
+  inner_join(., predictive_ability_distinct_loeo) %>%
+  ggplot(aes(x = pred_complete, y = value, color = test_group)) +
+  geom_abline(slope = 1, intercept = 0) +
+  geom_point(size = 0.5) +
+  geom_text(data = predictive_ability_distinct_loeo, aes(x = Inf, y = -Inf, label = annotation), 
+            vjust = -1, hjust = 1, size = 2, inherit.aes = FALSE) +
+  scale_color_discrete(guide = FALSE) +
+  facet_wrap(~ trait + pop + type + selection + model, scales = "free", nrow = 10, labeller = labeller(.multi_line = FALSE)) +
+  theme_presentation2(6)
+
+# Save
+ggsave(filename = "loeo_compare_covariate_predictions.png", plot = g_big_predictions, path = fig_dir,
+       height = 20, width = 20)
+
+
+
+predictive_ability_distinct_env_external <- predictive_ability_distinct %>%
+  filter(str_detect(type, "env_external")) %>%
+  mutate(annotation = paste0("rMP=", format_numbers(ability_all)))
+
+# Create a big plot of predicted vs observed values
+g_big_predictions <- predictions_df %>%
+  inner_join(., predictive_ability_distinct_env_external) %>%
+  ggplot(aes(x = pred_complete, y = value, color = test_group)) +
+  geom_abline(slope = 1, intercept = 0) +
+  geom_point(size = 0.5) +
+  geom_text(data = predictive_ability_distinct_env_external, aes(x = Inf, y = -Inf, label = annotation), 
+            vjust = -1, hjust = 1, size = 2, inherit.aes = FALSE) +
+  scale_color_discrete(guide = FALSE) +
+  facet_wrap(~ trait + pop + type + selection + model, scales = "free", nrow = 10, labeller = labeller(.multi_line = FALSE)) +
+  theme_presentation2(6)
+
+# Save
+ggsave(filename = "env_external_compare_covariate_predictions.png", plot = g_big_predictions, path = fig_dir,
+       height = 20, width = 8)
+
+
+
+
+
+
+# Compare prediction accuracies within environments
 
 
 # # Plot predicted versus observed values for a subset
@@ -167,20 +273,6 @@ within_environment_prediction_accuracy <- predictive_ability %>%
 #   filter(model == "model3_cov", pop == "tp", selection == "rfa_cv_adhoc") %>%
 #   distinct(trait, model, type, selection, ability_all)
 
-
-
-
-# Calculate predictive ability over all observations; also calculate RMSE
-accuracy_bias_all <- predictive_ability %>% 
-  distinct(trait, cv_rep, model, pop, type, selection, time_frame, time_frame_selection, ability_all, bias_all)
-
-# First create annotation df
-across_site_prediction_accuracy_annotation <- accuracy_bias_all %>%
-  mutate(bias_all = bias_all * 100) %>%
-  mutate_at(vars(ability_all, bias_all), ~formatC(., width = 3, digits = 2, format = "f")) %>%
-  mutate(ability_ann = paste0("r[MP]==", ability_all),
-         bias_ann = paste0("Bias==", bias_all, "*'%'"),
-         annotation = paste0(ability_ann, "*','~", bias_ann))
 
 
 
@@ -209,8 +301,10 @@ across_site_prediction_accuracy_annotation <- accuracy_bias_all %>%
 
 
 
-## Save everything
-save("predictions_df", "predictive_ability", "across_site_prediction_accuracy_annotation",
-     "within_environment_prediction_accuracy", 
-     file = file.path(result_dir, "prediction_accuracy_compiled.RData"))
+
+
+
+
+
+
 

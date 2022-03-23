@@ -14,7 +14,7 @@ Below is a description of scripts used in this analysis. Scripts are listed in o
 
 ## PhenotypicAnalysis
 
-1. `phenotypic_data_summary.R` - 
+1. `01_phenotypic_data_summary.R` - Summarizes phenotypic data and estimates variance components under different models.
 
 ## EnvironmentalCovariables
 

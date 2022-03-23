@@ -89,14 +89,14 @@ concurrent_all_features <- concurrent_interval_all_features %>%
   mutate(covariates = map(covariates, ~setNames(.x, "optVariables")))
 
 # Remove soil variable from all variables
-concurrent_all_features <- concurrent_all_features %>%
+concurrent_all_features <- concurrent_interval_all_features %>%
   mutate(covariates = map(covariates, ~modify_at(.x, "optVariables", ~str_subset(.x, "soil", negate = TRUE))), 
          feat_sel_type = "all_nosoil") %>%
-  bind_rows(concurrent_all_features, .)
+  bind_rows(concurrent_interval_all_features, .)
 
 # Combine feature selection df
 feature_selection_df <- bind_rows(
-  concurrent_all_features,
+  concurrent_interval_all_features,
   mutate(concurrent_stepwise_interval_feature_selection, feat_sel_type = str_replace(feat_sel_type, "rfa", "stepwise")),
 )
 
@@ -231,6 +231,7 @@ for (i in seq_len(nrow(loeo_trait_varcomp))) {
     # Fit the model
     fit <- mmer(fixed = fixed, random = random, rcov = ~ units, data = data, weights = weights, verbose = FALSE,
                 date.warning = FALSE)
+
     
     # Get the variance components; save
     models_df$varcomp[[r]] <- fit$sigma_scaled
@@ -243,9 +244,6 @@ for (i in seq_len(nrow(loeo_trait_varcomp))) {
   
 } # Close the loop
     
-
-save("loeo_trait_varcomp", file = file.path(result_dir, "loeo_trait_varcomp.RData"))
-
 
 
 
