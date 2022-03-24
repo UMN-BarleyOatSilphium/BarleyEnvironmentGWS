@@ -347,8 +347,8 @@ data_to_model <- S2_MET_BLUEs %>%
 
 # Generate skeleton train/test sets for validation
 env_external_train_val <- data_to_model %>%
-  group_by(trait) %>%
   mutate(site = env) %>%
+  group_by(trait) %>%
   do({ tibble(train = list(resample(data = droplevels(.), idx = which(.$site %in% train_test_env))),
               test = list(resample(data = droplevels(.), idx = which(.$site %in% validation_env)))) }) %>%
   ungroup() %>%
@@ -534,16 +534,6 @@ data_to_model <- S2_MET_BLUEs %>%
   mutate(line_name = factor(line_name, levels = c(tp_geno, vp_geno))) %>%
   mutate_at(vars(environment, location, year), as.factor) %>%
   mutate(env = environment, loc = location)
-
-# Subset stage-two variance components
-env_varcomp_df <- stage_two_varcomp_env %>%
-  unnest(var_comp) %>%
-  filter(population == "tp", scaled == "scaled") %>%
-  unnest(varcomp) %>%
-  select(trait, model, term = grp, variance = vcov) %>%
-  mutate(term = str_replace_all(term, "environment", "site1"), 
-         term = ifelse(term == "Residual", "units", term))
-
 
 
 # Rename the covariate list
@@ -778,8 +768,8 @@ data_to_model <- S2_MET_BLUEs %>%
 
 # Generate skeleton train/test sets for validation
 env_external_train_val <- data_to_model %>%
-  group_by(trait) %>%
   mutate(site = env) %>%
+  group_by(trait) %>%
   do({ tibble(train = list(resample(data = droplevels(.), idx = which(.$site %in% train_test_env))),
               test = list(resample(data = droplevels(.), idx = which(.$site %in% validation_env)))) }) %>%
   ungroup() %>%
