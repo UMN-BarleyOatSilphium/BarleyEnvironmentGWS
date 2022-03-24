@@ -55,6 +55,9 @@ load(file.path(result_dir, "concurrent_intervalCovariates_feature_selection_resu
 load(file.path(result_dir, "stage_two_phenotypic_analysis.RData"))
 
 
+# REmove the marker matrix
+rm(s2_imputed_mat_use)
+
 
 
 # Environment predictions -------------------------------------------------
@@ -147,6 +150,10 @@ covariates_tomodel <- feature_selection_df %>%
   group_by(trait) %>% 
   nest(.key = "model_covariates") %>%
   ungroup()
+
+# Assign the list of matrices of environmental covariates
+ec_mat_tomodel <- ec_tomodel_scaled
+
 
 
 #####
@@ -245,7 +252,7 @@ loeo_predictions_out <- loeo_train_test %>%
           }
           
           # Create main matrix of scaled and centered covariate values
-          covariate_mat <- ec_tomodel_scaled[[src]] %>%
+          covariate_mat <- ec_mat_tomodel[[src]] %>%
             select(-source) %>%
             filter(environment %in% levels(data$site1)) %>%
             as.data.frame() %>%
@@ -315,7 +322,7 @@ loeo_predictions_out <- loeo_train_test %>%
     # Add the predictions out list to the core_df data.frame
     core_df %>%
       mutate(predictions = predictions_out) %>%
-      select(-train, -test, -.id, -model_covariates, -core)
+      select(-train, -test, -model_covariates, -core)
     
   }) %>% bind_rows() # End of parallelization
 
@@ -436,7 +443,7 @@ env_external_predictions_out <- env_external_train_val %>%
           }
           
           # Create main matrix of scaled and centered covariate values
-          covariate_mat <- ec_tomodel_scaled[[src]] %>%
+          covariate_mat <- ec_mat_tomodel[[src]] %>%
             select(-source) %>%
             filter(environment %in% levels(data$site1)) %>%
             as.data.frame() %>%
@@ -506,7 +513,7 @@ env_external_predictions_out <- env_external_train_val %>%
     # Add the predictions out list to the core_df data.frame
     core_df %>%
       mutate(predictions = predictions_out) %>%
-      select(-train, -test, -.id, -model_covariates, -core)
+      select(-train, -test, -model_covariates, -core)
     
   }) %>% bind_rows() # End of parallelization
 
@@ -568,6 +575,11 @@ covariates_tomodel <- feature_selection_df %>%
   group_by(trait) %>% 
   nest(.key = "model_covariates") %>%
   ungroup()
+
+
+# Assign the list of matrices of environmental covariates
+ec_mat_tomodel <- ec_tomodel_interval_scaled
+
 
 
 #####
@@ -666,7 +678,7 @@ loeo_predictions_out <- loeo_train_test %>%
           }
           
           # Create main matrix of scaled and centered covariate values
-          covariate_mat <- ec_tomodel_scaled[[src]] %>%
+          covariate_mat <- ec_mat_tomodel[[src]] %>%
             select(-source) %>%
             filter(environment %in% levels(data$site1)) %>%
             as.data.frame() %>%
@@ -857,7 +869,7 @@ env_external_predictions_out <- env_external_train_val %>%
           }
           
           # Create main matrix of scaled and centered covariate values
-          covariate_mat <- ec_tomodel_scaled[[src]] %>%
+          covariate_mat <- ec_mat_tomodel[[src]] %>%
             select(-source) %>%
             filter(environment %in% levels(data$site1)) %>%
             as.data.frame() %>%

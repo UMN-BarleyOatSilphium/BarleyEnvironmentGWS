@@ -163,6 +163,48 @@ for (i in seq(first_null, nrow(stage_two_environment))) {
     mutate(mean = effect + fixef(fit3_out_unscaled)[[1]])
   
   
+  # ###
+  # ### Fit using sommer ###
+  # ### 
+  # 
+  # 
+  # ## Construct covariance matrices
+  # K1 <- K[levels(df1$line_name), levels(df1$line_name)]
+  # ZE1 <- model.matrix(~ -1 + environment, df1)
+  # ZG1 <- model.matrix(~ -1 + line_name, df1)
+  # 
+  # 
+  # KE1 <- tcrossprod(ZG1 %*% K1, ZG1) * tcrossprod(ZG1)
+  # dimnames(KE1) <- replicate(2, levels(df1$gxe), simplify = FALSE)
+  # 
+  # # Model 1
+  # fit1_mmer <- mmer(fixed = value ~ 1, random = ~ vs(line_name, Gu = K1),
+  #                   data = df1, weights = wts, verbose = TRUE)
+  # 
+  # # Model 2
+  # fit1_mmer <- mmer(fixed = value ~ 1, random = ~ vs(line_name, Gu = K1) + environment,
+  #                   data = df1, weights = wts, verbose = TRUE)
+  # 
+  # # Model 3
+  # 
+  # fit3_mmer <- mmer(fixed = value ~ 1, random = ~ environment + vs(line_name, Gu = K1) + vs(gxe, Gu = KE1),
+  #                   data = df1, weights = wts, verbose = TRUE)
+  # 
+  # ## Get variance components
+  # var_comp <- fit_mmer$sigma %>% 
+  #   map_df(1) %>% 
+  #   gather(term, variance) %>% 
+  #   mutate(term = str_remove(term, "u:"),
+  #          se = sqrt(diag(fit_mmer$sigmaSE)))
+  # 
+  # # Get environmental means
+  # environmental_means <- fit_mmer$U$environment$value %>% 
+  #   tibble(environment = names(.), effect = .) %>%
+  #   mutate(environment = str_remove(environment, "environment"),
+  #          mean = effect + fit_mmer$Beta$Estimate[1])
+  # 
+  # 
+  
   ## Return the model
   stage_two_environment$out[[i]] <- tibble(var_comp = list(model_varcomp_df), env_mean = list(environmental_means))
   
