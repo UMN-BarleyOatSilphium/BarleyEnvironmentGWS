@@ -748,7 +748,7 @@ loeo_predictions_out <- loeo_train_test %>%
     # Add the predictions out list to the core_df data.frame
     core_df %>%
       mutate(predictions = predictions_out) %>%
-      select(-train, -test, -.id, -model_covariates, -core)
+      select(-train, -test, -model_covariates, -core)
     
   }) %>% bind_rows() # End of parallelization
 
@@ -939,7 +939,7 @@ env_external_predictions_out <- env_external_train_val %>%
     # Add the predictions out list to the core_df data.frame
     core_df %>%
       mutate(predictions = predictions_out) %>%
-      select(-train, -test, -.id, -model_covariates, -core)
+      select(-train, -test, -model_covariates, -core)
     
   }) %>% bind_rows() # End of parallelization
 
@@ -951,7 +951,7 @@ env_external_interval_varcomp_predictions_out <- as_tibble(env_external_predicti
 
 save("loeo_varcomp_predictions_out", "env_external_varcomp_predictions_out",
      "loeo_varcomp_interval_predictions_out", "env_external_interval_varcomp_predictions_out",
-     file = file.path(result_dir, "environment_predictions_varcomp.RData"))
+     file = file.path(result_dir, "environment_varcomp_predictions.RData"))
 
 
 

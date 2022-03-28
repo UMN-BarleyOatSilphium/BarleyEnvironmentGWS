@@ -22,7 +22,7 @@ library(paletteer)
 
 
 ## Load the validation results
-file_list <- list.files(result_dir, pattern = "fact_reg.RData$", full.names = TRUE)
+file_list <- list.files(result_dir, pattern = "predictions.RData$", full.names = TRUE)
 object_list <- unlist(lapply(file_list, load, envir = .GlobalEnv))
 
 # Load feature selections
@@ -38,11 +38,27 @@ alpha <- 0.05
 # Modify prediction objects
 # 
 
-loeo_predictions_out <- bind_rows(loeo_predictions_out) %>%
-  select(trait, site, .id, out) %>%
-  unnest(out, names_repair = tidyr_legacy) %>%
-  select(trait, model, feature_selection, prediction) %>%
-  unnest(prediction)
+loeo_varcomp_predictions_out <- loeo_varcomp_predictions_out %>%
+  unnest(predictions, names_repair = tidyr_legacy) %>%
+  select(model, feature_selection, out) %>%
+  unnest(out)
+
+loeo_varcomp_interval_predictions_out <- loeo_varcomp_interval_predictions_out %>%
+  unnest(predictions, names_repair = tidyr_legacy) %>%
+  select(model, feature_selection, out) %>%
+  unnest(out)
+
+env_external_varcomp_predictions_out <- env_external_varcomp_predictions_out %>%
+  unnest(predictions, names_repair = tidyr_legacy) %>%
+  select(model, feature_selection, out) %>%
+  unnest(out)
+
+env_external_interval_varcomp_predictions_out <- env_external_interval_varcomp_predictions_out %>%
+  unnest(predictions, names_repair = tidyr_legacy) %>%
+  select(model, feature_selection, out) %>%
+  unnest(out)
+
+
 
 lolo_predictions_out <- bind_rows(lolo_predictions_out) %>%
   select(trait, site, .id, out) %>%
@@ -50,30 +66,11 @@ lolo_predictions_out <- bind_rows(lolo_predictions_out) %>%
   select(trait, model, time_frame, feature_selection, prediction) %>%
   unnest(prediction)
 
-env_external_predictions_out <- env_external_predictions_out %>%
-  select(trait, out) %>%
-  unnest(out, names_repair = tidyr_legacy) %>%
-  select(trait, model, feature_selection, prediction) %>%
-  unnest(prediction)
-
 loc_external_predictions_out <- loc_external_predictions_out %>%
   select(trait, out) %>%
   unnest(out, names_repair = tidyr_legacy) %>%
   select(trait, model, time_frame, feature_selection, prediction) %>%
   unnest(prediction)
-
-loeo_interval_predictions <- loeo_interval_predictions %>%
-  unnest(predictions) %>%
-  unnest(predictions, names_repair = tidyr_legacy) %>%
-  rename(pred_complete = predicted_value, pred_incomplete = pred, pred_complete_pev = pev) %>%
-  select(-site1, -trait1, -.id, -id)
-
-env_external_interval_predictions <- env_external_interval_predictions %>%
-  unnest(predictions) %>%
-  unnest(predictions, names_repair = tidyr_legacy) %>%
-  rename(pred_complete = predicted_value, pred_incomplete = pred, pred_complete_pev = pev, site = site1) %>%
-  select(-trait1, -id)
-
 
 
 ## Grab the prediction outputs and combine
