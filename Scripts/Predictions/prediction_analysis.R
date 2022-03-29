@@ -59,18 +59,19 @@ env_external_interval_varcomp_predictions_out <- env_external_interval_varcomp_p
   unnest(out)
 
 
-
 lolo_predictions_out <- bind_rows(lolo_predictions_out) %>%
   select(trait, site, .id, out) %>%
   unnest(out, names_repair = tidyr_legacy) %>%
   select(trait, model, time_frame, feature_selection, prediction) %>%
-  unnest(prediction)
+  unnest(prediction) %>%
+  rename(predicted_value = pred_complete)
 
 loc_external_predictions_out <- loc_external_predictions_out %>%
   select(trait, out) %>%
   unnest(out, names_repair = tidyr_legacy) %>%
   select(trait, model, time_frame, feature_selection, prediction) %>%
-  unnest(prediction)
+  unnest(prediction) %>%
+  rename(predicted_value = pred_complete)
 
 
 ## Grab the prediction outputs and combine
@@ -120,7 +121,9 @@ time_frame_selection_info <- historical_feature_selection %>%
 predictions_df <- predictions_df_temp %>%
   left_join(., time_frame_selection_info) %>%
   # Remove columns that are lists
-  select_if(~!is.list(.))
+  select_if(~!is.list(.)) %>%
+  # Remove other prediction columns
+  select(-pred_incomplete, -pred_incomplete_pev, -pred_complete_pev, -pev, -reliability)
 
 
 
@@ -130,14 +133,14 @@ predictions_df <- predictions_df_temp %>%
 predictive_ability <- predictions_df %>%
   group_by(trait, model, pop, type, cv_rep, selection, time_frame, time_frame_selection, test_group) %>%
   # First calculate accuracy per environment within a cv rep
-  mutate(ability = cor(pred_complete, value), 
-         bias = bias(obs = value, pred = pred_complete),
-         rmse = sqrt(mean((value - pred_complete)^2))) %>% # Bias as percent deviation from observed
+  mutate(ability = cor(predicted_value, value), 
+         bias = bias(obs = value, pred = predicted_value),
+         rmse = sqrt(mean((value - predicted_value)^2))) %>% # Bias as percent deviation from observed
   group_by(trait, model, pop, type, cv_rep, selection, time_frame, time_frame_selection) %>%
   # Next calculate accuracy across all environments
-  mutate(ability_all = cor(pred_complete, value), 
-         bias_all = bias(obs = value, pred = pred_complete),
-         rmse_all = sqrt(mean((value - pred_complete)^2))) %>%
+  mutate(ability_all = cor(predicted_value, value), 
+         bias_all = bias(obs = value, pred = predicted_value),
+         rmse_all = sqrt(mean((value - predicted_value)^2))) %>%
   ungroup() %>%
   # Reduce observations
   distinct_at(vars(-line_name, -value, -contains("pred")))
@@ -172,9 +175,12 @@ across_site_prediction_accuracy_annotation <- accuracy_bias_all %>%
 
 
 ## Save everything
+
+output_filename <- paste0("prediction_accuracy_compiled_", format(Sys.Date(), "%Y%m%d"), ".RData")
+
 save("predictions_df", "predictive_ability", "across_site_prediction_accuracy_annotation",
      "within_environment_prediction_accuracy", 
-     file = file.path(result_dir, "prediction_accuracy_compiled.RData"))
+     file = file.path(result_dir, output_filename))
 
 
 
@@ -212,7 +218,7 @@ predictive_ability_distinct_loeo <- predictive_ability_distinct %>%
 # Create a big plot of predicted vs observed values
 g_big_predictions <- predictions_df %>%
   inner_join(., predictive_ability_distinct_loeo) %>%
-  ggplot(aes(x = pred_complete, y = value, color = test_group)) +
+  ggplot(aes(x = predicted_value, y = value, color = test_group)) +
   geom_abline(slope = 1, intercept = 0) +
   geom_point(size = 0.5) +
   geom_text(data = predictive_ability_distinct_loeo, aes(x = Inf, y = -Inf, label = annotation), 

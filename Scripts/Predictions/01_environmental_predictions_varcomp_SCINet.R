@@ -240,16 +240,11 @@ loeo_predictions_out <- loeo_train_test %>%
           # Covariate data source
           src <- models_df$source[r]
           
-          # If this is model 3, grab the covariates for model 2 as well
-          if (grepl(pattern = "model3", x = submodel)) {
-            covariate_list <- subset(models_df, source == src & feature_selection == feature_selection[r], covariates, drop = TRUE) %>%
-              `names<-`(., c("main", "interaction")) %>%
-              modify_at("interaction", ~mutate(.x, covariate = str_remove_all(covariate, "line_name:")) %>% distinct(covariate))
-            
-          } else {
-            covariate_list <- list(main = models_df$covariates[[r]])
-            
-          }
+          # Grab the covariates (main effect and interaction covariates are listed together)
+          covariate_list <- models_df$covariates[[r]] %>%
+            mutate(group = ifelse(str_detect(covariate, ":"), "interaction", "main")) %>%
+            split(.$group) %>%
+            map(~mutate(.x, covariate = str_remove(covariate, "line_name:")))
           
           # Create main matrix of scaled and centered covariate values
           covariate_mat <- ec_mat_tomodel[[src]] %>%
@@ -431,16 +426,11 @@ env_external_predictions_out <- env_external_train_val %>%
           # Covariate data source
           src <- models_df$source[r]
           
-          # If this is model 3, grab the covariates for model 2 as well
-          if (grepl(pattern = "model3", x = submodel)) {
-            covariate_list <- subset(models_df, source == src & feature_selection == feature_selection[r], covariates, drop = TRUE) %>%
-              `names<-`(., c("main", "interaction")) %>%
-              modify_at("interaction", ~mutate(.x, covariate = str_remove_all(covariate, "line_name:")) %>% distinct(covariate))
-            
-          } else {
-            covariate_list <- list(main = models_df$covariates[[r]])
-            
-          }
+          # Grab the covariates (main effect and interaction covariates are listed together)
+          covariate_list <- models_df$covariates[[r]] %>%
+            mutate(group = ifelse(str_detect(covariate, ":"), "interaction", "main")) %>%
+            split(.$group) %>%
+            map(~mutate(.x, covariate = str_remove(covariate, "line_name:")))
           
           # Create main matrix of scaled and centered covariate values
           covariate_mat <- ec_mat_tomodel[[src]] %>%
@@ -666,16 +656,11 @@ loeo_predictions_out <- loeo_train_test %>%
           # Covariate data source
           src <- models_df$source[r]
           
-          # If this is model 3, grab the covariates for model 2 as well
-          if (grepl(pattern = "model3", x = submodel)) {
-            covariate_list <- subset(models_df, source == src & feature_selection == feature_selection[r], covariates, drop = TRUE) %>%
-              `names<-`(., c("main", "interaction")) %>%
-              modify_at("interaction", ~mutate(.x, covariate = str_remove_all(covariate, "line_name:")) %>% distinct(covariate))
-            
-          } else {
-            covariate_list <- list(main = models_df$covariates[[r]])
-            
-          }
+          # Grab the covariates (main effect and interaction covariates are listed together)
+          covariate_list <- models_df$covariates[[r]] %>%
+            mutate(group = ifelse(str_detect(covariate, ":"), "interaction", "main")) %>%
+            split(.$group) %>%
+            map(~mutate(.x, covariate = str_remove(covariate, "line_name:")))
           
           # Create main matrix of scaled and centered covariate values
           covariate_mat <- ec_mat_tomodel[[src]] %>%
@@ -857,16 +842,11 @@ env_external_predictions_out <- env_external_train_val %>%
           # Covariate data source
           src <- models_df$source[r]
           
-          # If this is model 3, grab the covariates for model 2 as well
-          if (grepl(pattern = "model3", x = submodel)) {
-            covariate_list <- subset(models_df, source == src & feature_selection == feature_selection[r], covariates, drop = TRUE) %>%
-              `names<-`(., c("main", "interaction")) %>%
-              modify_at("interaction", ~mutate(.x, covariate = str_remove_all(covariate, "line_name:")) %>% distinct(covariate))
-            
-          } else {
-            covariate_list <- list(main = models_df$covariates[[r]])
-            
-          }
+          # Grab the covariates (main effect and interaction covariates are listed together)
+          covariate_list <- models_df$covariates[[r]] %>%
+            mutate(group = ifelse(str_detect(covariate, ":"), "interaction", "main")) %>%
+            split(.$group) %>%
+            map(~mutate(.x, covariate = str_remove(covariate, "line_name:")))
           
           # Create main matrix of scaled and centered covariate values
           covariate_mat <- ec_mat_tomodel[[src]] %>%
