@@ -22,7 +22,7 @@ library(paletteer)
 
 
 ## Load the validation results
-file_list <- list.files(result_dir, pattern = "predictions.RData$", full.names = TRUE)
+file_list <- list.files(result_dir, pattern = "reml_predictions.RData$", full.names = TRUE)
 object_list <- unlist(lapply(file_list, load, envir = .GlobalEnv))
 
 # Load feature selections
@@ -38,25 +38,19 @@ alpha <- 0.05
 # Modify prediction objects
 # 
 
-loeo_varcomp_predictions_out <- loeo_varcomp_predictions_out %>%
-  unnest(predictions, names_repair = tidyr_legacy) %>%
-  select(model, feature_selection, out) %>%
-  unnest(out)
-
-loeo_varcomp_interval_predictions_out <- loeo_varcomp_interval_predictions_out %>%
-  unnest(predictions, names_repair = tidyr_legacy) %>%
-  select(model, feature_selection, out) %>%
-  unnest(out)
-
-env_external_varcomp_predictions_out <- env_external_varcomp_predictions_out %>%
-  unnest(predictions, names_repair = tidyr_legacy) %>%
-  select(model, feature_selection, out) %>%
-  unnest(out)
-
-env_external_interval_varcomp_predictions_out <- env_external_interval_varcomp_predictions_out %>%
-  unnest(predictions, names_repair = tidyr_legacy) %>%
-  select(model, feature_selection, out) %>%
-  unnest(out)
+loeo_predictions_out <- bind_rows(loeo_predictions_out) %>%
+  select(trait, site, .id, out) %>%
+  unnest(out, names_repair = tidyr_legacy) %>%
+  select(trait, model, feature_selection, prediction) %>%
+  unnest(prediction) %>%
+  rename(predicted_value = pred_complete)
+  
+env_external_predictions_out <- env_external_predictions_out %>%
+  select(trait, out) %>%
+  unnest(out, names_repair = tidyr_legacy) %>%
+  select(trait, model, feature_selection, prediction) %>%
+  unnest(prediction) %>%
+  rename(predicted_value = pred_complete)
 
 
 lolo_predictions_out <- bind_rows(lolo_predictions_out) %>%
@@ -122,9 +116,8 @@ predictions_df <- predictions_df_temp %>%
   left_join(., time_frame_selection_info) %>%
   # Remove columns that are lists
   select_if(~!is.list(.)) %>%
-  # Remove other prediction columns
-  select(-pred_incomplete, -pred_incomplete_pev, -pred_complete_pev, -pev, -reliability)
-
+  select(trait, site, model, type, selection, time_frame, time_frame_selection, test_group, cv_rep,
+         pop, line_name, value, predicted_value)
 
 
 
@@ -176,138 +169,8 @@ across_site_prediction_accuracy_annotation <- accuracy_bias_all %>%
 
 ## Save everything
 
-output_filename <- paste0("prediction_accuracy_compiled_", format(Sys.Date(), "%Y%m%d"), ".RData")
+output_filename <- paste0("prediction_accuracy_compiled_reml_", format(Sys.Date(), "%Y%m%d"), ".RData")
 
 save("predictions_df", "predictive_ability", "across_site_prediction_accuracy_annotation",
      "within_environment_prediction_accuracy", 
      file = file.path(result_dir, output_filename))
-
-
-
-
-
-
-
-
-
-
-
-## Quick plot of accuracy across all environments/locations
-## 
-## The plot below is specifically designed for LOLO
-## 
-# predictive_ability %>%
-#   filter(type == "loc_external", selection != "none", model == "model3_cov") %>%
-#   distinct(trait, model, pop, type, selection, time_frame, time_frame_selection, ability_all, rmse_all) %>%
-#   unite(selection1, selection, time_frame, sep = ":", remove = FALSE) %>%
-#   ggplot(aes(x = time_frame_selection, y = ability_all, fill = selection, group = selection1)) +
-#   geom_col(position = position_dodge(0.9)) +
-#   facet_grid(pop + type ~ trait, labeller = labeller(.multi_line = FALSE)) +
-#   theme(legend.position = "bottom")
-
-# Distinct predictive abilities per trait, pop, selection, type, model
-predictive_ability_distinct <- predictive_ability %>%
-  distinct(trait, model, selection, type, pop, ability_all, rmse_all) %>%
-  filter(selection != "none", str_detect(selection, "nosoil|lasso|apriori", negate = TRUE))
-
-
-predictive_ability_distinct_loeo <- predictive_ability_distinct %>%
-  filter(str_detect(type, "loeo")) %>%
-  mutate(annotation = paste0("rMP=", format_numbers(ability_all)))
-
-# Create a big plot of predicted vs observed values
-g_big_predictions <- predictions_df %>%
-  inner_join(., predictive_ability_distinct_loeo) %>%
-  ggplot(aes(x = predicted_value, y = value, color = test_group)) +
-  geom_abline(slope = 1, intercept = 0) +
-  geom_point(size = 0.5) +
-  geom_text(data = predictive_ability_distinct_loeo, aes(x = Inf, y = -Inf, label = annotation), 
-            vjust = -1, hjust = 1, size = 2, inherit.aes = FALSE) +
-  scale_color_discrete(guide = FALSE) +
-  facet_wrap(~ trait + pop + type + selection + model, scales = "free", nrow = 10, labeller = labeller(.multi_line = FALSE)) +
-  theme_presentation2(6)
-
-# Save
-ggsave(filename = "loeo_compare_covariate_predictions.png", plot = g_big_predictions, path = fig_dir,
-       height = 20, width = 20)
-
-
-
-predictive_ability_distinct_env_external <- predictive_ability_distinct %>%
-  filter(str_detect(type, "env_external")) %>%
-  mutate(annotation = paste0("rMP=", format_numbers(ability_all)))
-
-# Create a big plot of predicted vs observed values
-g_big_predictions <- predictions_df %>%
-  inner_join(., predictive_ability_distinct_env_external) %>%
-  ggplot(aes(x = pred_complete, y = value, color = test_group)) +
-  geom_abline(slope = 1, intercept = 0) +
-  geom_point(size = 0.5) +
-  geom_text(data = predictive_ability_distinct_env_external, aes(x = Inf, y = -Inf, label = annotation), 
-            vjust = -1, hjust = 1, size = 2, inherit.aes = FALSE) +
-  scale_color_discrete(guide = FALSE) +
-  facet_wrap(~ trait + pop + type + selection + model, scales = "free", nrow = 10, labeller = labeller(.multi_line = FALSE)) +
-  theme_presentation2(6)
-
-# Save
-ggsave(filename = "env_external_compare_covariate_predictions.png", plot = g_big_predictions, path = fig_dir,
-       height = 20, width = 8)
-
-
-
-
-
-
-# Compare prediction accuracies within environments
-
-
-# # Plot predicted versus observed values for a subset
-# predictions_df %>%
-#   filter(str_detect(type, "external"), model == "model3_cov", str_detect(selection, "lasso|stepwise")) %>%
-#   ggplot(aes(x = pred_complete, y = value, color = test_group)) +
-#   geom_abline(slope = 1, intercept = 0) +
-#   geom_point(size = 0.5) +
-#   scale_color_discrete(guide = FALSE) +
-#   facet_wrap(~ type + trait + selection + model + pop, scales = "free", ncol = 4, labeller = labeller(.multi_line = FALSE)) +
-#   theme_presentation2(10)
-# 
-# 
-# predictive_ability %>%
-#   filter(model == "model3_cov", pop == "tp", selection == "rfa_cv_adhoc") %>%
-#   distinct(trait, model, type, selection, ability_all)
-
-
-
-
-# ## Quick plot of LOLO long-term covariates
-# 
-# lolo_longterm_plotlist <- predictions_df %>%
-#   filter(type == "lolo_longterm_covariates") %>%
-#   split(.$trait) %>%
-#   map(~{
-#     ann_df <- left_join(.x, across_site_prediction_accuracy_annotation) %>%
-#       distinct(trait, model, selection, pop, ability_ann)
-#     
-#     ggplot(data = .x, aes(x = pred_complete, y = value, color = test_group)) +
-#       geom_abline(slope = 1, intercept = 0) +
-#       geom_point(size = 0.5) +
-#       geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = ability_ann), size = 2, inherit.aes = FALSE, 
-#                 vjust = -1, parse = TRUE, hjust = 1.1) +
-#       scale_color_discrete(guide = FALSE) +
-#       facet_grid(selection ~ model + pop) +
-#       theme_presentation2(10)
-#   })
-
-
-
-
-
-
-
-
-
-
-
-
-
-

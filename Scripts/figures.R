@@ -188,10 +188,10 @@ f_parent_rename <- function(x) c("parent" = "FP (parent)", "nonparent" = "FP", "
 # Create the visualization
 g_popstr <- K_pco_df %>% 
   ggplot(aes(x = PCo1, y = PCo2)) + 
-  # Parents
-  geom_point(data = subset(K_pco_df, parent == "parent"), aes(fill = program, shape = parent), size = 1) +
   # Non-parents and offspring
   geom_point(data = subset(K_pco_df, parent != "parent"), aes(color = program, shape = parent), size = 1) +
+  # Parents
+  geom_point(data = subset(K_pco_df, parent == "parent"), aes(fill = program, shape = parent), size = 1) +
   scale_x_continuous(name = K_pco_varprop[1], breaks = pretty) +
   scale_y_continuous(name = K_pco_varprop[2], breaks = pretty, position = "right") +
   scale_color_manual(values = pop_colors, drop = FALSE, guide = FALSE) +
@@ -201,11 +201,12 @@ g_popstr <- K_pco_df %>%
   theme_genetics(base_size = base_font_size) +
   # theme(legend.position = "none", plot.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)),
   #       panel.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)))
-  theme(legend.key.height = unit(0.5, "line"), legend.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)),
+  theme(legend.key.width = unit(0.5, "line"), legend.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)),
         # legend.position = c(1,1), legend.direction = "vertical", legend.justification = c(1,1),
-        legend.position = "top", legend.direction = "vertical", legend.justification = "right",
+        legend.position = "top", legend.direction = "horizontal", legend.justification = "right",
         plot.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)),
-        panel.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0)))
+        panel.background = element_rect(colour = alpha("white", 0), fill = alpha("white", 0))) +
+  coord_fixed()
         
 
 # Save this
@@ -585,9 +586,16 @@ ggsave(filename = "figure2_gcm_to_ecs.svg", plot = g_weather_stages, path = fig_
 
 # Figure 3. LOEO accuracy within environments ---------------------------------------
 
+# Load the regular prediction results
+file_load <- sort(list.files(path = result_dir, pattern = "prediction_accuracy_compiled_reml", full.names = TRUE), decreasing = TRUE)[1]
+# Load the file and list the contents
+prediction_accuracy_contents <- load(file = file_load)
 
-# Load the compiled prediction results
-load(file.path(result_dir, "prediction_accuracy_compiled.RData"))
+# Calculate the number of environments and locations for loeo and lolo
+loo_environments_locations <- within_environment_prediction_accuracy %>%
+  group_by(trait, model, type, selection, pop) %>%
+  count(name = "nGroup") %>%
+  ungroup()
 
 
 # Color scheme for models
@@ -602,6 +610,7 @@ models_use <- str_subset(string = names(model_colors), pattern = "cov1", negate 
 accuracy_bias_within_env_toplot <- within_environment_prediction_accuracy %>%
   filter(type == "loeo", model %in% models_use, str_detect(selection, "nosoil", negate = TRUE),
          str_detect(selection, "lasso", negate = TRUE)) %>%
+  left_join(., loo_environments_locations) %>%
   # Add individual points
   mutate(selection = fct_inorder(selection),
          # trait1 = paste0(str_add_space(trait), " (n = ", nGroup+1, ")"),
@@ -672,7 +681,7 @@ loo_pred_obs_df <- predictions_df %>%
   # Add annotations
   left_join(., across_site_prediction_accuracy_annotation) %>%
   # convert grain yield to Mg/ha
-  mutate_at(vars(value, pred_complete), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
+  mutate_at(vars(value, predicted_value), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
   # Add trait units
   mutate(trait2 = paste0("atop('", str_add_space(trait), "',(", trait_units1[trait], "))"),
          trait1 = paste0("'", abbreviate(str_add_space(trait), 2), "'~(", trait_units1[trait], ")"))
@@ -687,7 +696,7 @@ loo_pred_obs_df <- predictions_df %>%
 #     ann_df <- distinct(.x, trait, pop, ability_all) %>%
 #       mutate(annotation = paste0("r[MP]==", ability_all))
 #     
-#     ggplot(.x, aes(x = pred_complete, y = value, fill = test_group)) +
+#     ggplot(.x, aes(x = predicted_value, y = value, fill = test_group)) +
 #       geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
 #       geom_point(size = 0.15, shape = 21, color = alpha("white", 0)) +
 #       geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
@@ -720,7 +729,7 @@ g_loo_pred_obs_list <- loo_pred_obs_df %>%
     ann_df <- distinct(.x, trait, pop, ability_all) %>%
       mutate(annotation = paste0("r[MP]==", ability_all))
     
-    ggplot(.x, aes(x = pred_complete, y = value, fill = test_group)) +
+    ggplot(.x, aes(x = predicted_value, y = value, fill = test_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
       geom_point(size = 0.15, shape = 21, color = alpha("white", 0)) +
       geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
@@ -767,6 +776,7 @@ accuracy_within_loc_toplot <- predictive_ability %>%
          str_detect(selection, "nosoil", negate = TRUE),
          str_detect(selection, "lasso", negate = TRUE),
          (is.na(time_frame_selection) | time_frame_selection == "bestOverall")) %>%
+  left_join(., loo_environments_locations) %>%
   # Add individual points
   mutate(selection = fct_inorder(selection),
          # trait1 = paste0(str_add_space(trait), " (n = ", nGroup+1, ")"),
@@ -831,7 +841,7 @@ loo_pred_obs_df <- predictions_df %>%
   # Add annotations
   left_join(., across_site_prediction_accuracy_annotation) %>%
   # convert grain yield to Mg/ha
-  mutate_at(vars(value, pred_complete), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
+  mutate_at(vars(value, predicted_value), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
   # Add trait units
   mutate(trait2 = paste0("atop('", str_add_space(trait), "',(", trait_units1[trait], "))"),
          trait1 = paste0("'", abbreviate(str_add_space(trait), 2), "'~(", trait_units1[trait], ")"))
@@ -846,7 +856,7 @@ loo_pred_obs_df <- predictions_df %>%
 #     ann_df <- distinct(.x, trait, pop, ability_all) %>%
 #       mutate(annotation = paste0("r[MP]==", ability_all))
 #     
-#     ggplot(.x, aes(x = pred_complete, y = value, fill = test_group)) +
+#     ggplot(.x, aes(x = predicted_value, y = value, fill = test_group)) +
 #       geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
 #       geom_point(size = 0.15, shape = 21, color = alpha("white", 0)) +
 #       geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
@@ -879,7 +889,7 @@ g_loo_pred_obs_list <- loo_pred_obs_df %>%
     ann_df <- distinct(.x, trait, pop, ability_all) %>%
       mutate(annotation = paste0("r[MP]==", ability_all))
     
-    ggplot(.x, aes(x = pred_complete, y = value, fill = test_group)) +
+    ggplot(.x, aes(x = predicted_value, y = value, fill = test_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
       geom_point(size = 0.15, shape = 21, color = alpha("white", 0)) +
       geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
@@ -928,7 +938,7 @@ ggsave(filename = "figure6_lolo_predictions_across_locations.svg", plot = g_loo_
 # Supplementary figures ---------------------------------------------------
 
 
-# Figure S1: validation of predicted flowering time from crop model -------
+# Figure S1 - validation of predicted flowering time from crop model -------
 
 # Load the results of the cultivar analysis
 load(file.path(result_dir, "apsim_cultivar_predicted_flowering_results.RData"))
@@ -966,12 +976,6 @@ g_combined <- plot_grid(g_cultivar_growth_modelA, g_cultivar_growth_modelB, nrow
 ggsave(filename = "figure_s1_growth_model_cultivar_comparison.jpg", plot = g_combined, path = fig_dir,
        width = 8, height = 4, dpi = 1000)
 
-# Save
-ggsave(filename = "figure_s1_growth_model_cultivar_comparison.svg", plot = g_combined, path = fig_dir,
-       width = 8, height = 4, dpi = 1000)
-
-
-
 
 
 ## Find the cultivar that results in the most accuracy prediction
@@ -999,7 +1003,7 @@ predicted_heading_date_cultivars <- concurrent_growth_staging_cultivars_daymet %
 
 
 
-# Figure S2: Comparison of environment-specific EC sets -------------------
+# Figure S2 - Comparison of environment-specific EC sets -------------------
 
 ## Number and overlap of covariates in the analyses ##
 
@@ -1181,15 +1185,10 @@ merged_plot <- plot_grid(g_concurrent_features_count2, right_plot, nrow = 1, ali
 # Save
 ggsave(filename = "figure_S2_concurrent_features_comparison_merged_daymet.jpg", plot = merged_plot,
        path = fig_dir, height = 8, width = 6, dpi = dpi_use)
-# Save
-ggsave(filename = "figure_S2_concurrent_features_comparison_merged_daymet.svg", plot = merged_plot,
-       path = fig_dir, height = 8, width = 6, dpi = dpi_use)
 
 
 
-
-
-# Figure S3: Comparison of location-specific EC sets ----------------------
+# Figure S3 - Comparison of location-specific EC sets ----------------------
 
 # Edit historical_feature_selection
 historical_feature_selection1 <- historical_feature_selection %>%
@@ -1373,9 +1372,6 @@ merged_plot <- plot_grid(g_historical_features_count1, right_plot, nrow = 1, ali
 ggsave(filename = "figure_S3_historical_features_comparison_merged_daymet.jpg", plot = merged_plot,
        path = fig_dir, height = 8, width = 6, dpi = dpi_use)
 
-# Save
-ggsave(filename = "figure_S3_historical_features_comparison_merged_daymet.svg", plot = merged_plot,
-       path = fig_dir, height = 8, width = 6, dpi = dpi_use)
 
 
 
@@ -1397,7 +1393,7 @@ loo_pred_obs_df <- predictions_df %>%
   # Add environment/location specific predictive abilities
   # left_join(., select(predictive_ability, trait:ability)) %>%
   # convert grain yield to Mg/ha
-  mutate_at(vars(value, pred_complete), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
+  mutate_at(vars(value, predicted_value), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
   # Add trait units
   mutate(trait1 = paste0("'", str_add_space(trait), "'~(", trait_units1[trait], ")")) %>%
   # Group by trait and add a dummy faceting variable
@@ -1422,7 +1418,7 @@ g_loeo_all_list <- loo_pred_obs_df %>%
     ann_df <- distinct(.x, trait, pop, model, selection, ability_all) %>%
       mutate(annotation = paste0("r[MP]==", ability_all))
     
-    ggplot(data = .x, aes(x = pred_complete, y = value, fill = test_group)) +
+    ggplot(data = .x, aes(x = predicted_value, y = value, fill = test_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.2) +
       geom_point(size = 0.1, shape = 21, color = alpha("white", 0)) +
       geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
@@ -1446,21 +1442,6 @@ g_loeo_all <- plot_grid(plotlist = g_loeo_all_list, ncol = 1, align = "v", axis 
 # Save
 ggsave(filename = "figure_S4_loeo_across_site_prediction_accuracy.jpg", plot = g_loeo_all, path = fig_dir,
        height = 20, width = 22, units = "cm", dpi = 1000)
-# Save
-ggsave(filename = "figure_S4_loeo_across_site_prediction_accuracy.svg", plot = g_loeo_all, path = fig_dir,
-       height = 20, width = 22, units = "cm", dpi = 1000)
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -1507,11 +1488,6 @@ g_rmsep_within_env <- accuracy_bias_within_env_toplot %>%
 ## Save
 ggsave(filename = "figure_S5_loeo_bias_within_environments.jpg", plot = g_rmsep_within_env, 
        path = fig_dir, width = figwidth_onecol + 1, height = 5, dpi = dpi_use)
-
-## Save
-ggsave(filename = "figure_S5_loeo_bias_within_environments.svg", plot = g_rmsep_within_env, 
-       path = fig_dir, width = figwidth_onecol + 1, height = 5, dpi = dpi_use)
-
 
 
 
@@ -1627,9 +1603,6 @@ g_timeframe_window <- plot_grid(g_timeframe_analysis, g_window_analysis, nrow = 
 ggsave(filename = "figure_S6_timeframe_window_analysis.jpg", plot = g_timeframe_window, path = fig_dir,
        width = 5, height = 2,  dpi = 1000)
 
-# Save
-ggsave(filename = "figure_S6_timeframe_window_analysis.svg", plot = g_timeframe_window, path = fig_dir,
-       width = 5, height = 2,  dpi = 1000)
 
 
 
@@ -1669,7 +1642,7 @@ g_lolo_all_list <- loo_pred_obs_df1 %>%
     ann_df <- distinct(.x, trait, pop, model, selection, ability_all) %>%
       mutate(annotation = paste0("r[MP]==", ability_all))
     
-    ggplot(data = .x, aes(x = pred_complete, y = value, fill = test_group)) +
+    ggplot(data = .x, aes(x = predicted_value, y = value, fill = test_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.2) +
       geom_point(size = 0.1, shape = 21, color = alpha("white", 0)) +
       geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
@@ -1693,9 +1666,6 @@ g_lolo_all <- plot_grid(plotlist = g_lolo_all_list, ncol = 1, align = "v", axis 
 ggsave(filename = "figure_S7_lolo_across_site_prediction_accuracy.jpg", plot = g_lolo_all, path = fig_dir,
        height = 20, width = 22, units = "cm", dpi = 1000)
 
-# Save
-ggsave(filename = "figure_S7_lolo_across_site_prediction_accuracy.svg", plot = g_lolo_all, path = fig_dir,
-       height = 20, width = 22, units = "cm", dpi = 1000)
 
 
 
@@ -1711,7 +1681,7 @@ lolo_pred_obs_df1 <- predictions_df %>%
   # Add annotations
   left_join(., across_site_prediction_accuracy_annotation) %>%
   # convert grain yield to Mg/ha
-  mutate_at(vars(value, pred_complete), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
+  mutate_at(vars(value, predicted_value), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
   # Add trait units
   # mutate(trait = paste0("atop('", str_add_space(trait), "',(", trait_units1[trait], "))"))
   mutate(trait1 = paste0("'", abbreviate(str_add_space(trait), 2), "'~(", trait_units1[trait], ")"))
@@ -1725,7 +1695,7 @@ g_lolo_pred_obs_list <- lolo_pred_obs_df1 %>%
     ann_df <- distinct(.x, model, trait, pop, ability_all) %>%
       mutate(annotation = paste0("r[MP]==", ability_all))
     
-    ggplot(.x, aes(x = pred_complete, y = value, fill = test_group)) +
+    ggplot(.x, aes(x = predicted_value, y = value, fill = test_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
       geom_point(size = 0.15, shape = 21, color = alpha("white", 0)) +
       geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
@@ -1793,6 +1763,7 @@ accuracy_within_loc_toplot <- predictive_ability %>%
          str_detect(selection, "nosoil", negate = TRUE),
          str_detect(selection, "lasso", negate = TRUE),
          (is.na(time_frame_selection) | time_frame_selection == "bestOverall")) %>%
+  left_join(., loo_environments_locations) %>%
   # Add individual points
   mutate(selection = fct_inorder(selection),
          # trait1 = paste0(str_add_space(trait), " (n = ", nGroup+1, ")"),
@@ -1842,9 +1813,6 @@ g_rmsep_within_loc <- accuracy_within_loc_toplot %>%
 ggsave(filename = "figure_S8_lolo_bias_within_locations.jpg", plot = g_rmsep_within_loc, 
        path = fig_dir, width = figwidth_onecol + 1, height = 5, dpi = dpi_use)
 
-## Save
-ggsave(filename = "figure_S8_lolo_bias_within_locations.svg", plot = g_rmsep_within_loc, 
-       path = fig_dir, width = figwidth_onecol + 1, height = 5, dpi = dpi_use)
 
 
 
@@ -1880,7 +1848,7 @@ g_ext_env_all_list <- loo_pred_obs_df %>%
       full_join(., within_env_ann) %>%
       bind_rows(., across_env_ann)
 
-    ggplot(.x, aes(x = pred_complete, y = value, fill = test_group)) +
+    ggplot(.x, aes(x = predicted_value, y = value, fill = test_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
       geom_point(size = 0.1, shape = 21, color = alpha("white", 0)) +
       geom_label_repel(data = ann_df, aes(x = x, y = y, label = annotation, color = test_group), inherit.aes = FALSE,
@@ -1905,10 +1873,6 @@ g_ext_env_all <- plot_grid(plotlist = g_ext_env_all_list, ncol = 1, align = "v",
 # Save
 ggsave(filename = "figure_S9_external_environment_across_site_prediction_accuracy.jpg", plot = g_ext_env_all, path = fig_dir,
        height = 16, width = 22, units = "cm", dpi = 1000)
-# Save
-ggsave(filename = "figure_S9_external_environment_across_site_prediction_accuracy.svg", plot = g_ext_env_all, path = fig_dir,
-       height = 16, width = 22, units = "cm", dpi = 1000)
-
 
 
 
@@ -1932,7 +1896,7 @@ g_ext_loc_all_list <- loo_pred_obs_df %>%
              y = case_when(trait == "GrainYield" & selection == "All" ~ Inf,
                            TRUE ~ -Inf))
     
-    ggplot(.x, aes(x = pred_complete, y = value, fill = test_group)) +
+    ggplot(.x, aes(x = predicted_value, y = value, fill = test_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.5) +
       geom_point(size = 0.1, shape = 21, color = alpha("white", 0)) +
       geom_label_repel(data = ann_df, aes(x = x, y = y, label = annotation, color = test_group), inherit.aes = FALSE,
@@ -1956,9 +1920,6 @@ g_ext_loc_all <- plot_grid(plotlist = g_ext_loc_all_list, ncol = 1, align = "v",
 
 # Save
 ggsave(filename = "figure_S10_external_location_across_site_prediction_accuracy.jpg", plot = g_ext_loc_all, path = fig_dir,
-       height = 16, width = 22, units = "cm", dpi = 1000)
-# Save
-ggsave(filename = "figure_S10_external_location_across_site_prediction_accuracy.svg", plot = g_ext_loc_all, path = fig_dir,
        height = 16, width = 22, units = "cm", dpi = 1000)
 
 
@@ -1984,7 +1945,7 @@ g_loc_longterm_list <- loc_longterm_pred_obs_df %>%
       mutate(annotation = paste0("r[MP]==", ability_all))
 
     left_join(complete(distinct(.x, trait1, group, time_frame_facet), trait1, group, time_frame_facet), .x) %>%
-      ggplot(aes(x = pred_complete, y = value, fill = test_group)) +
+      ggplot(aes(x = predicted_value, y = value, fill = test_group)) +
       geom_abline(slope = 1, intercept = 0, lwd = 0.2) +
       geom_point(size = 0.1, shape = 21, color = alpha("white", 0)) +
       geom_text(data = ann_df, aes(x = Inf, y = -Inf, label = annotation), inherit.aes = FALSE,
@@ -2007,9 +1968,6 @@ g_loc_longterm_all <- plot_grid(plotlist = g_loc_longterm_list, ncol = 1, align 
 ggsave(filename = "figure_S11_location_longterm_ec_predictions.jpg", plot = g_loc_longterm_all, path = fig_dir,
        height = 18, width = 18, units = "cm", dpi = 1000)
 
-# Save
-ggsave(filename = "figure_S11_location_longterm_ec_predictions.svg", plot = g_loc_longterm_all, path = fig_dir,
-       height = 18, width = 18, units = "cm", dpi = 1000)
 
 
 
@@ -2345,11 +2303,6 @@ g_heatmap_combined <- plot_grid(plotlist = subset(phenoCor_ec_heatmaps, feat_sel
 ggsave(filename = "figure_s12_environmental_covariate_heatmap.jpg", plot = g_heatmap_combined,
        path = fig_dir, width = 12, height = 12, dpi = 1000)
 
-# Save
-ggsave(filename = "figure_s12_environmental_covariate_heatmap.svg", plot = g_heatmap_combined,
-       path = fig_dir, width = 12, height = 12, dpi = 1000)
-
-
 
 
 
@@ -2677,97 +2630,6 @@ g_heatmap_combined <- plot_grid(plotlist = subset(loc_phenoCor_ec_heatmaps, feat
 # Save
 ggsave(filename = "figure_s13_location_covariate_heatmap.jpg", plot = g_heatmap_combined,
        path = fig_dir, width = 12, height = 12, dpi = 1000)
-# Save
-ggsave(filename = "figure_s13_location_covariate_heatmap.svg", plot = g_heatmap_combined,
-       path = fig_dir, width = 12, height = 12, dpi = 1000)
-
-
-
-
-
-
-# # Figure S14 - 75-25 environment cross-validation ---------------
-# 
-# # Filter across-environment accuracy for LOEO and CV
-# loo_cv_compare <- predictive_ability %>%
-#   filter(type %in% c("cv_env", "cv_loc", "loeo", "lolo"), str_detect(selection, "soil", negate = TRUE)) %>%
-#   distinct_at(vars(trait, type, cv_rep, pop, model, selection, contains("all"))) %>%
-#   # Modify the names
-#   mutate(target = ifelse(type %in% c("loeo", "cv_env"), "Environment", "Location"),
-#          type = ifelse(type %in% c("loeo", "lolo"), "Leave-one-out", "75%-25% train-test"),
-#          selection = ifelse(selection == "rfa_adhoc", "rfa_cv_adhoc", selection)) %>%
-#   # Summarize over reps
-#   group_by(trait, type, target, pop, model, selection) %>%
-#   mutate(n = n()) %>%
-#   summarize_at(vars(ability_all, rmse_all, n), list(~mean, ~sd)) %>%
-#   ungroup() %>%
-#   mutate_at(vars(ends_with("sd")), list(se = ~. / sqrt(n_mean)))
-# #
-# #
-# # ## Compare 75-25 cross-validation results to LOO results
-# # g_cv_loeo_compare_acc_list <- loo_cv_compare %>%
-# #   # Filter for relevant models and variable selections
-# #   filter(selection %in% c("rfa_cv_adhoc", "none"), model %in% c("model1", "model2_cov", "model3_cov")) %>%
-# #   split(.$target) %>%
-# #   map(~{
-# #     ggplot(data = .x, aes(x = pop, y = ability_all_mean, color = type)) +
-# #       geom_point(position = position_dodge(0.9), size = 0.75) +
-# #       geom_errorbar(aes(ymin = ability_all_mean - ability_all_sd_se, ymax = ability_all_mean + ability_all_sd_se),
-# #                     position = position_dodge(0.9), width = 0.5, lwd = 0.25) +
-# #       scale_color_discrete(name = NULL) +
-# #       scale_y_continuous(name = "Predictive ability", breaks = pretty) +
-# #       scale_x_discrete(name = NULL, labels = function(x) str_replace(f_validation_replace(x), " ", "\n")) +
-# #       facet_grid(trait ~ model + selection, switch = "y", scales = "free_y",
-# #                  labeller = labeller(model = f_model_replace, selection = f_ec_selection_replace)) +
-# #       facet_grid(trait ~ model, switch = "y", labeller = labeller(model = f_model_replace, trait = str_add_space)) +
-# #       theme_genetics(base_size = 8) +
-# #       theme(legend.position = "top", panel.border = element_rect(colour = "grey85", fill = alpha("white", 0)))
-# #   })
-# #
-# #
-# # # Combine
-# # g_cv_loeo_compare_acc <- plot_grid(plotlist = map(g_cv_loeo_compare_acc_list, ~.+theme(legend.position = "none")), ncol = 1,
-# #                                labels = subfigure_labels, label_size = subfigure_label_size)
-# # g_cv_loeo_compare_acc1 <- plot_grid(get_legend(g_cv_loeo_compare_acc_list[[1]]), g_cv_loeo_compare_acc, ncol = 1, rel_heights = c(0.05, 1))
-# #
-# # ggsave(filename = "figure_S13_compare_loo_and_cv.jpg", plot = g_cv_loeo_compare_acc1,
-# #        path = fig_dir, height = 7, width = 4, dpi = 1000)
-# #
-# 
-# g_cv_loeo_compare_rmse_list <- loo_cv_compare %>%
-#   # Filter for relevant models and variable selections
-#   filter(selection %in% c("rfa_cv_adhoc", "none"), model %in% c("model1", "model2_cov", "model3_cov")) %>%
-#   split(.$target) %>%
-#   map(~{
-#     ggplot(data = .x, aes(x = pop, y = rmse_all_mean, fill = type)) +
-#       geom_col(position = position_dodge(0.9)) +
-#       geom_errorbar(aes(ymin = rmse_all_mean - rmse_all_sd_se, ymax = rmse_all_mean + rmse_all_sd_se),
-#                     position = position_dodge(0.9), width = 0.5, lwd = 0.25) +
-#       scale_fill_paletteer_d(package = "wesanderson", palette = "Royal1", name = NULL) +
-#       scale_y_continuous(name = "RMSE", breaks = pretty) +
-#       scale_x_discrete(name = NULL, labels = function(x) str_replace(f_validation_replace(x), " ", "\n")) +
-#       facet_grid(trait ~ model, switch = "y", scales = "free_y", labeller = labeller(model = f_model_replace, trait = str_add_space)) +
-#       labs(subtitle = paste0("Prediction target: ", unique(.x$target), "s")) +
-#       theme_genetics(base_size = 8) +
-#       theme(legend.position = "top", panel.border = element_rect(colour = "grey85", fill = alpha("white", 0)))
-#   })
-# 
-# 
-# # Combine
-# g_cv_loeo_compare_rmse <- plot_grid(plotlist = map(g_cv_loeo_compare_rmse_list, ~.+theme(legend.position = "none")), nrow = 1,
-#                                    labels = subfigure_labels, label_size = subfigure_label_size)
-# g_cv_loeo_compare_rmse1 <- plot_grid(get_legend(g_cv_loeo_compare_rmse_list[[1]]), g_cv_loeo_compare_rmse, ncol = 1, rel_heights = c(0.05, 1))
-# 
-# ggsave(filename = "figure_S14_compare_loo_and_cv.jpg", plot = g_cv_loeo_compare_rmse1,
-#        path = fig_dir, height = 4, width = 8, dpi = 1000)
-
-
-
-
-
-
-
-
 
 
 
@@ -2779,59 +2641,7 @@ ggsave(filename = "figure_s13_location_covariate_heatmap.svg", plot = g_heatmap_
 
 
 
-# Table S1: Variance component breakdown ----------------------------------
-
-# Load the initial variance component partition
-load(file.path(result_dir, "stage_two_phenotypic_analysis.RData"))
-
-## Create a table for the partition of environment-specific variance components
-ge_var_comp <- stage_two_varcomp_env %>% 
-  unnest(var_comp) %>%
-  # Calculate proportions of variance
-  group_by(trait, population) %>%
-  mutate(prop_var = (variance / sum(variance)) * 100) %>%
-  ungroup() %>%
-  mutate_if(is.numeric, format_numbers) %>% 
-  # mutate(annotation = paste0(variance, " (", se, ") / ", prop_var, "%")) %>% 
-  mutate(annotation = paste0(variance, " (", prop_var, "%)")) %>% 
-  select(trait, population, term, annotation) %>% 
-  spread(trait, annotation) %>%
-  mutate(analysis = "environment")
-
-
-## Create a table for the partition of location-specific variance components
-gl_var_comp <- stage_two_varcomp_loc %>% 
-  unnest(var_comp) %>%
-  # Calculate proportions of variance
-  group_by(trait, population) %>%
-  mutate(prop_var = (variance / sum(variance)) * 100) %>%
-  ungroup() %>%
-  mutate_if(is.numeric, format_numbers) %>% 
-  # mutate(annotation = paste0(variance, " (", se, ") / ", prop_var, "%")) %>% 
-  mutate(annotation = paste0(variance, " (", prop_var, "%)")) %>% 
-  select(trait, population, term, annotation) %>% 
-  spread(trait, annotation) %>%
-  mutate(analysis = "location")
-
-## Combine amd save
-var_comp_print <- bind_rows(ge_var_comp, gl_var_comp) %>%
-  mutate(population = f_pop_replace(population),
-         term = str_replace_all(term, c("environment" = "Environment", "location" = "Location", "gxe" = "GxE", 
-                                        "line_name" = "Genotype", "units" = "Residual")),
-         term = ifelse(analysis == "location" & term == "GxE", "GxL", term),
-         term = fct_relevel(term, "Genotype", "Location"),
-         analysis = str_to_title(analysis)) %>%
-  arrange(analysis, population, term) %>%
-  rename_at(vars(matches("^[A-Z]", ignore.case = FALSE)), str_add_space) %>%
-  select(analysis, Population = population, Term = term, names(.))
-
-# Save
-write_csv(x = var_comp_print, path = file.path(fig_dir, "table_s1_variance_partition.csv"))
-
-
-
-
-# Table S2: Name, definition, and source of variables -------------------
+# Table S1: Name, definition, and source of variables -------------------
 
 ## Load the environmental covariates
 load(file.path(result_dir, "environmental_covariates.RData"))
@@ -2846,12 +2656,12 @@ variable_names <- bind_rows(
   arrange(desc(type), variable)
   
 ## Save table
-write_csv(x = variable_names, path = file.path(fig_dir, "table_s2_variable_names_definitions_draft1.csv"))
+write_csv(x = variable_names, path = file.path(fig_dir, "table_s1_variable_names_definitions_draft1.csv"))
 
 
 
 
-# Table S3: ECs selected per trait - concurrent and historical -----------------
+# Table S2: ECs selected per trait - concurrent and historical -----------------
 
 selected_features <- bind_rows(
   mutate(concurrent_features, analysis = "concurrent"),
@@ -2859,24 +2669,30 @@ selected_features <- bind_rows(
 ) %>%
   mutate(covariate = map(features, "optVariables")) %>%
   filter(model %in% c("model3", "model5"),
-         str_detect(feat_sel_type, "apriori|stepwise"), str_detect(feat_sel_type, "nosoil", negate = TRUE)) %>%
+         str_detect(feat_sel_type, "all|apriori|stepwise"), str_detect(feat_sel_type, "nosoil", negate = TRUE)) %>%
   select(-source, -model, -selection, -features) %>%
   unnest(covariate) %>%
   filter(covariate != "line_name") %>%
   mutate(feature_type = ifelse(str_detect(covariate, "line_name"), "gxe", "main"),
          feature_type = fct_rev(feature_type),
          covariate = str_remove(covariate, "line_name:"),
-         obs = "X")
+         obs = "X") %>%
+  # Reshape
+  spread(feature_type, obs) %>% 
+  mutate(use = ifelse(is.na(gxe), "E", "E & GE")) %>% 
+  select(-main, -gxe) %>% 
+  # Edit trait and feat_sel_type
+  mutate(trait = str_add_space(trait),
+         feat_sel_type = f_ec_selection_replace(feat_sel_type, parse = FALSE),
+         feat_sel_type = str_extract(feat_sel_type, "EC\\[.*\\]")) %>%
+  unite(var, trait, feat_sel_type, sep = ":") %>%
+  spread(var, use)
 
 # Output a table
 selected_features %>%
-  select(analysis, trait, names(.)) %>%
-  spread(feature_type, obs) %>%
-  mutate(analysis = f_timeframe_replace(analysis), trait = str_add_space(trait),
-         feat_sel_type = f_ec_selection_replace(feat_sel_type)) %>%
-  rename_at(vars(matches("^[a-z]")), str_to_title) %>%
-  rename(Interaction = Gxe, CovariateSet = Feat_sel_type) %>%
-  write_csv(x = ., path = file.path(fig_dir, "table_s3_ecs_per_trait.csv"), na = "")
+  mutate(analysis = f_timeframe_replace(analysis)) %>%
+  rename_at(vars(analysis, covariate), str_to_title) %>%
+  write_csv(x = ., file = file.path(fig_dir, "table_s2_ecs_per_trait.csv"), na = "")
 
 
 # Table S4: Holdout environment/location accuracy --------------------------
@@ -3127,7 +2943,7 @@ S2_MET_BLUEs %>%
 loeo_predictions_per_location <- predictions_df %>%
   filter(type == "loeo", model %in% models_use, str_detect(selection, "nosoil|lasso", negate = TRUE)) %>%
   # Convert GY to Mg ha
-  mutate_at(vars(value, pred_complete), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
+  mutate_at(vars(value, predicted_value), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
   # Remove all NA columns
   select_if(map_lgl(., ~any(!is.na(.)))) %>%
   # add location information
@@ -3141,7 +2957,7 @@ loo_pred_obs_df1 <- predictions_df %>%
   filter(type == "lolo", model %in% models_use, str_detect(selection, "nosoil|lasso", negate = TRUE),
          (is.na(time_frame_selection) | time_frame_selection == "bestOverall")) %>%
   # convert grain yield to Mg/ha
-  mutate_at(vars(value, pred_complete), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
+  mutate_at(vars(value, predicted_value), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
   select_if(map_lgl(., ~any(!is.na(.))))
 
 # Add and trim the correct time frames for each trait and model
@@ -3159,7 +2975,7 @@ loeo_average_location_predictions <- loeo_predictions_per_location %>%
   
 loeo_average_location_predictions_accuracy_byLoc <- loeo_average_location_predictions %>%
   group_by(trait, model, selection, time_frame, time_frame_selection, pop, location) %>%
-  summarize(ability = cor(pred_complete, loc_mean_value)) %>%
+  summarize(ability = cor(predicted_value, loc_mean_value)) %>%
   # Take the average accuracy of all locations
   summarize_at(vars(ability), list(mean = mean, min = min, max = max)) %>%
   ungroup()
@@ -3180,7 +2996,7 @@ loeo_average_location_predictions_accuracy_byLoc1 %>%
   
 loeo_average_location_predictions_accuracy_acrossLoc <- loeo_average_location_predictions %>%
   group_by(trait, model, selection, time_frame, time_frame_selection, pop) %>%
-  summarize(ability = cor(pred_complete, loc_mean_value), .groups = "drop")
+  summarize(ability = cor(predicted_value, loc_mean_value), .groups = "drop")
 
 
 
@@ -3192,12 +3008,12 @@ outlier_env_yield <- predictive_ability %>%
 # Plot pred vs obs values
 predictions_df %>%
   left_join(outlier_env_yield, .) %>%
-  plot(value ~ pred_complete, .)
+  plot(value ~ predicted_value, .)
 
 predictions_df %>%
   left_join(select(outlier_env_yield, trait, type, model, selection, pop), .) %>%
   filter(str_detect(site, "WLI")) %>%
-  ggplot(aes(x = pred_complete, y = value, color = site))+
+  ggplot(aes(x = predicted_value, y = value, color = site))+
   geom_point()
 
 left_join(outlier_env_yield, within_environment_prediction_accuracy) %>%
