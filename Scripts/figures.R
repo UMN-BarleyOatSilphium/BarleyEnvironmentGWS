@@ -2883,149 +2883,151 @@ lolo_envExternal_accuracy_summary <- full_join(lolo_prediction_accuracy_summary,
 
 
 
-# Other notes to reference in the manuscript -------
 
-# Number of covariates per selection type and trait
-concurrent_features %>% 
-  unnest(features) %>% 
-  filter(model == "model2", str_detect(feat_sel_type, "soil", negate = TRUE)) %>% 
-  mutate(nFeatures = sapply(features, length)) %>%
-  group_by(trait, feat_sel_type) %>% 
-  summarize_at(vars(nFeatures), list(~min, ~max)) %>%
-  arrange(feat_sel_type)
+# Compare accuracy with ad-hoc model versus var comps ---------------------
 
 
-# Prediction accuracy within environments
-accuracy_within_env_toplot %>%
-  group_by(trait, model, selection, type, pop) %>%
-  summarize_at(vars(ability, accuracy, bias, rmse), mean) %>%
-  ungroup() %>%
-  arrange(type, model, selection, pop, trait) %>%
-  as.data.frame()
+# Rename the ad-hoc prediction objects: these were from models where
+# variance components were estimated using REML.
 
-accuracy_within_loc_toplot %>%
-  group_by(trait, model, selection, type, pop) %>%
-  summarize_at(vars(ability, bias, rmse), mean) %>%
-  ungroup() %>%
-  arrange(trait, model, pop, desc(ability)) %>%
-  as.data.frame() %>% filter(model == "model5_cov", selection == "stepwise_cv_adhoc") %>% arrange(pop)
+for (object in prediction_accuracy_contents) {
+  assign(x = paste0(object, "_reml"), value = get(object))
+}
 
+# Load the variance component prediction results
+file_load <- sort(list.files(path = result_dir, pattern = "prediction_accuracy_compiled_varcomp", full.names = TRUE), decreasing = TRUE)[1]
+# Load the file and list the contents
+prediction_accuracy_varcomp_contents <- load(file = file_load)
 
-predictive_ability %>%
-  filter(type == "lolo", selection %in% c("none", "stepwise_cv_adhoc"))
+# Rename the objects
+for (object in prediction_accuracy_varcomp_contents) {
+  assign(x = paste0(object, "_varcomp"), value = get(object))
+}
 
 
+## Compare prediction accuracies across environments/locations
 
+predictive_ability <- bind_rows(
+  mutate(predictive_ability_reml, method = "reml"),
+  mutate(predictive_ability_varcomp, method = "varcomp")
+)
+  
+# Across environments/locations
+predictive_ability_across_sites <- predictive_ability %>%
+  select(method, type, model, selection, time_frame, time_frame_selection, pop, trait, ability_all, rmse_all) %>%
+  distinct() %>%
+  # Subset time_frames
+  inner_join(., add_row(distinct(timeframe_used_df, trait, time_frame), trait = traits)) %>%
+  # Subset selections
+  filter(str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
+  mutate(model = str_extract(model, "model[0-9]"),
+         selection = f_ec_selection_replace(selection, parse = FALSE),
+         selection = str_extract(selection, "EC\\[.*\\]"),
+         selection = ifelse(is.na(selection), "None", selection),
+         selection = factor(selection, levels = c("None", "EC[all]", "EC[known]", "EC[stepwise]")),
+         model = case_when(model == "model4" ~ "model2", model == "model5" ~ "model3", TRUE ~ model))
 
-
-# Summarize best model by trait
-
-
-predictive_ability %>%
-  filter(type == "loc_external", selection == "stepwise_cv_adhoc", (is.na(time_frame_selection) | time_frame_selection == "bestOverall"),
-         model == "model3_cov") %>%
-  distinct(trait, site, model, pop, ability, bias, rmse) %>% 
-  group_by(trait, pop, model) %>%
-  summarize_at(vars(ability, bias, rmse), mean) %>%
-  ungroup() %>%
-  arrange(model, pop, trait)
-
-
-# Number of trials per trait
-S2_MET_BLUEs %>%
-  group_by(trait) %>% 
-  summarize(nEnv = n_distinct(environment))
-
-
-# How do LOLO predictions compared to LOEO averages over years?
-# 
-# First calculate LOEO predictions averaged over years
-loeo_predictions_per_location <- predictions_df %>%
-  filter(type == "loeo", model %in% models_use, str_detect(selection, "nosoil|lasso", negate = TRUE)) %>%
-  # Convert GY to Mg ha
-  mutate_at(vars(value, predicted_value), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
-  # Remove all NA columns
-  select_if(map_lgl(., ~any(!is.na(.)))) %>%
-  # add location information
-  left_join(., distinct(select(trial_info, site = environment, location))) %>%
-  group_by(trait, location, model, selection, pop, line_name) %>%
-  summarize_at(vars(contains("pred")), mean, na.rm = TRUE) %>%
+# Within environments/locations
+predictive_ability_within_sites <- predictive_ability %>%
+  select(method, type, model, selection, time_frame, time_frame_selection, pop, trait, site, ability, rmse) %>%
+  distinct() %>%
+  # Subset time_frames
+  inner_join(., add_row(distinct(timeframe_used_df, trait, time_frame), trait = traits)) %>%
+  # Subset selections
+  filter(str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
+  mutate(model = str_extract(model, "model[0-9]"),
+         selection = f_ec_selection_replace(selection, parse = FALSE),
+         selection = str_extract(selection, "EC\\[.*\\]"),
+         selection = ifelse(is.na(selection), "None", selection),
+         selection = factor(selection, levels = c("None", "EC[all]", "EC[known]", "EC[stepwise]")),
+         model = case_when(model == "model4" ~ "model2", model == "model5" ~ "model3", TRUE ~ model)) %>%
+  # Summarize
+  group_by_at(vars(-site, -ability, -rmse)) %>%
+  summarize_at(vars(ability, rmse), list(mean = mean, sd = sd), na.rm = TRUE) %>%
   ungroup()
 
-# New df to merge
-loo_pred_obs_df1 <- predictions_df %>%
-  filter(type == "lolo", model %in% models_use, str_detect(selection, "nosoil|lasso", negate = TRUE),
-         (is.na(time_frame_selection) | time_frame_selection == "bestOverall")) %>%
-  # convert grain yield to Mg/ha
-  mutate_at(vars(value, predicted_value), ~ifelse(trait == "GrainYield", . / 1000, .)) %>%
-  select_if(map_lgl(., ~any(!is.na(.))))
+# Define a common plot modifier
+g_mod <- list(
+  geom_col(position = position_dodge(0.9)),
+  scale_alpha_manual(values = c("tp" = 1, "vp" = 0.7)),
+  scale_y_continuous(name = "Predictive ability", breaks = pretty),
+  facet_grid(model ~ trait),
+  theme_bw(),
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+)
 
-# Add and trim the correct time frames for each trait and model
-loo_pred_obs_df2 <- loo_pred_obs_df1 %>%
-  filter(selection %in% c("none", "stepwise_cv_adhoc")) %>%
-  distinct(trait, model, time_frame) %>%
-  # Inner join
-  inner_join(loo_pred_obs_df1, .)
-  
-loeo_average_location_predictions <- loeo_predictions_per_location %>%
-  left_join(., select(loo_pred_obs_df2, trait, location = site, model, selection, time_frame, 
-                      time_frame_selection, pop, line_name, loc_mean_value = value)) %>%
-  # This removes Aberdeen as a location - dryland
-  filter(!is.na(loc_mean_value))
-  
-loeo_average_location_predictions_accuracy_byLoc <- loeo_average_location_predictions %>%
-  group_by(trait, model, selection, time_frame, time_frame_selection, pop, location) %>%
-  summarize(ability = cor(predicted_value, loc_mean_value)) %>%
-  # Take the average accuracy of all locations
-  summarize_at(vars(ability), list(mean = mean, min = min, max = max)) %>%
-  ungroup()
+# LOEO
+predictive_ability_across_sites %>%
+  filter(str_detect(type, "loeo"), str_detect(type, "interval", negate = TRUE)) %>%
+  # filter(pop == "tp") %>%
+  ggplot(aes(x = selection, y = ability_all, fill = method, alpha = pop)) +
+  geom_col(position = position_dodge(0.9)) +
+  scale_alpha_manual(values = c("tp" = 1, "vp" = 0.7)) +
+  scale_y_continuous(name = "Predictive ability", breaks = pretty) +
+  facet_grid(model ~ trait, switch = "y") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-## Compare average predictive abilities
-
-loeo_average_location_predictions_accuracy_byLoc1 <- predictive_ability %>% 
-  filter(type == "lolo") %>%
-  group_by(trait, model, selection, time_frame, pop) %>%
-  summarize_at(vars(ability), list(lolo_mean = mean, lolo_min = min, lolo_max = max)) %>%
-  ungroup() %>%
-  left_join(loeo_average_location_predictions_accuracy_byLoc, .)
-
-# Plot
-loeo_average_location_predictions_accuracy_byLoc1 %>%
-  ggplot(aes(x = ))
-  
-  
-loeo_average_location_predictions_accuracy_acrossLoc <- loeo_average_location_predictions %>%
-  group_by(trait, model, selection, time_frame, time_frame_selection, pop) %>%
-  summarize(ability = cor(predicted_value, loc_mean_value), .groups = "drop")
+# Env external
+predictive_ability_across_sites %>%
+  filter(str_detect(type, "env_external"), str_detect(type, "interval", negate = TRUE)) %>%
+  # filter(pop == "tp") %>%
+  ggplot(aes(x = selection, y = ability_all, fill = method, alpha = pop)) +
+  geom_col(position = position_dodge(0.9)) +
+  scale_alpha_manual(values = c("tp" = 1, "vp" = 0.7)) +
+  facet_grid(model ~ trait) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 
+# LOLO
+predictive_ability_across_sites %>%
+  filter(str_detect(type, "lolo"), str_detect(type, "interval", negate = TRUE)) %>%
+  # filter(pop == "tp") %>%
+  ggplot(aes(x = selection, y = ability_all, fill = method, alpha = pop)) +
+  geom_col(position = position_dodge(0.9)) +
+  scale_alpha_manual(values = c("tp" = 1, "vp" = 0.7)) +
+  facet_grid(model ~ trait) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-# Examine outlier environments for rmsep for yield
-outlier_env_yield <- predictive_ability %>%
-  filter(trait == "GrainYield", type == "loeo", model == "model3_cov", selection == "stepwise_cv_adhoc", pop == "tp") %>%
-  filter(rmse == max(rmse))
-
-# Plot pred vs obs values
-predictions_df %>%
-  left_join(outlier_env_yield, .) %>%
-  plot(value ~ predicted_value, .)
-
-predictions_df %>%
-  left_join(select(outlier_env_yield, trait, type, model, selection, pop), .) %>%
-  filter(str_detect(site, "WLI")) %>%
-  ggplot(aes(x = predicted_value, y = value, color = site))+
-  geom_point()
-
-left_join(outlier_env_yield, within_environment_prediction_accuracy) %>%
-  as.data.frame()
+# Loc external
+predictive_ability_across_sites %>%
+  filter(str_detect(type, "loc_external"), str_detect(type, "interval", negate = TRUE)) %>%
+  # filter(pop == "tp") %>%
+  ggplot(aes(x = selection, y = ability_all, fill = method, alpha = pop)) +
+  geom_col(position = position_dodge(0.9)) +
+  scale_alpha_manual(values = c("tp" = 1, "vp" = 0.7)) +
+  facet_grid(model ~ trait) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 
-env_means %>%
-  filter(str_detect(environment, "WLI")) %>%
-  mutate(mean = mu + effect)
-  
-ec_tomodel_centered$daymet %>% 
-  filter(str_detect(environment, "WLI")) %>% 
-  gather(covariate, value, -source, -environment) %>%
-  spread(environment, value) %>%
-  as.data.frame()
+
+# Compare accuracy with interval or CGM covariates --------
+
+# LOEO
+predictive_ability_across_sites %>%
+  filter(str_detect(type, "loeo"), method == "varcomp") %>%
+  # filter(pop == "tp") %>%
+  ggplot(aes(x = selection, y = ability_all, fill = type, alpha = pop)) +
+  geom_col(position = position_dodge(0.9)) +
+  scale_alpha_manual(values = c("tp" = 1, "vp" = 0.7)) +
+  facet_grid(model ~ trait) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# LOEO within environment
+predictive_ability_within_sites %>%
+  filter(str_detect(type, "loeo"), method == "varcomp") %>%
+  # filter(pop == "tp") %>%
+  ggplot(aes(x = selection, y = ability_mean, fill = type, alpha = pop)) +
+  geom_col(position = position_dodge(0.9)) +
+  scale_alpha_manual(values = c("tp" = 1, "vp" = 0.7)) +
+  facet_grid(model ~ trait) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+
+
+
+
+
+
