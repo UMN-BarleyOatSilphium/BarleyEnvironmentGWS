@@ -1265,6 +1265,12 @@ ggsave(filename = "figure_S5_lolo_bias_within_locations.png", plot = g_rmsep_wit
 ## Plot predicted vs observed phenotypic values for LOLO for all models, traits,
 ## EC selections, etc.
 
+loo_pred_obs_df <- loo_pred_obs_df %>%
+  # Adjust model name
+  mutate(model = str_replace(model, " e", " l"),
+         model = str_replace(model, "ge", "gl"),
+         model = fct_inorder(model))
+
 # For predictions that used the variable selection procedure, only choose the correct
 # time_frame
 loo_pred_obs_df_stepwise <- historical_feature_selection %>%
@@ -1273,6 +1279,7 @@ loo_pred_obs_df_stepwise <- historical_feature_selection %>%
   mutate(selection = f_ec_selection_replace(selection, parse = FALSE)) %>%
   distinct() %>%
   inner_join(loo_pred_obs_df, .)
+
 
 # Just the model without ECs
 loo_pred_obs_df_noECs <- loo_pred_obs_df %>%
@@ -1902,6 +1909,152 @@ ggsave(filename = "figure_S8_location_covariate_heatmap.png", plot = g_heatmap_c
 
 
 
+# Figure S9 - Compare accuracy with interval or CGM covariates --------
+
+
+# Rename the ad-hoc prediction objects: these were from models where
+# variance components were estimated using REML.
+
+for (object in prediction_accuracy_contents) {
+  assign(x = paste0(object, "_reml"), value = get(object))
+}
+
+# Load the variance component prediction results
+file_load <- sort(list.files(path = result_dir, pattern = "prediction_accuracy_compiled_varcomp", full.names = TRUE), decreasing = TRUE)[1]
+# Load the file and list the contents
+prediction_accuracy_varcomp_contents <- load(file = file_load)
+
+# Rename the objects
+for (object in prediction_accuracy_varcomp_contents) {
+  assign(x = paste0(object, "_varcomp"), value = get(object))
+}
+
+
+## Compare prediction accuracies across environments/locations
+
+predictive_ability <- bind_rows(
+  mutate(predictive_ability_reml, method = "reml"),
+  mutate(predictive_ability_varcomp, method = "varcomp")
+)
+
+# Across environments/locations
+predictive_ability_across_sites <- predictive_ability %>%
+  select(method, type, model, selection, time_frame, time_frame_selection, pop, trait, ability_all, rmse_all) %>%
+  distinct() %>%
+  # Subset time_frames
+  inner_join(., add_row(distinct(timeframe_used_df, trait, time_frame), trait = traits)) %>%
+  # Subset selections
+  filter(str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
+  mutate(model = str_extract(model, "model[0-9]"),
+         model = ifelse(selection == "none", paste0(model, "_id"), paste0(model, "_cov")),
+         model = ifelse(str_detect(model, "model1"), "model1", model),
+         model = f_model_replace(model),
+         selection = fct_inorder(selection))
+
+# Within environments/locations
+predictive_ability_within_sites <- predictive_ability %>%
+  select(method, type, model, selection, time_frame, time_frame_selection, pop, trait, site, ability, rmse) %>%
+  distinct() %>%
+  # Subset time_frames
+  inner_join(., add_row(distinct(timeframe_used_df, trait, time_frame), trait = traits)) %>%
+  # Subset selections
+  filter(str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
+  mutate(model = str_extract(model, "model[0-9]"),
+         model = ifelse(selection == "none", paste0(model, "_id"), paste0(model, "_cov")),
+         model = ifelse(str_detect(model, "model1"), "model1", model),
+         model = f_model_replace(model),
+         selection = fct_inorder(selection)) %>%
+  # Summarize
+  group_by_at(vars(-site, -ability, -rmse)) %>%
+  summarize_at(vars(ability, rmse), list(mean = mean, sd = sd), na.rm = TRUE) %>%
+  ungroup()
+
+# Define a common plot modifier
+g_mod <- list(
+  geom_col(position = position_dodge(0.9)),
+  scale_alpha_manual(values = c("tp" = 1, "vp" = 0.7), labels = f_pop_replace, name = "Population"),
+  scale_x_discrete(name = "Covariate set", labels = f_ec_selection_replace),
+  scale_y_continuous(name = "Predictive ability", breaks = pretty),
+  facet_grid(model ~ trait, switch = "y", labeller = labeller(trait = str_add_space)),
+  theme_bw(),
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+)
+
+# # LOEO
+# predictive_ability_across_sites %>%
+#   filter(str_detect(type, "loeo"), str_detect(type, "interval", negate = TRUE)) %>%
+#   # filter(pop == "tp") %>%
+#   ggplot(aes(x = selection, y = ability_all, fill = method, alpha = pop)) +
+#   g_mod
+# 
+# # Env external
+# predictive_ability_across_sites %>%
+#   filter(str_detect(type, "env_external"), str_detect(type, "interval", negate = TRUE)) %>%
+#   # filter(pop == "tp") %>%
+#   ggplot(aes(x = selection, y = ability_all, fill = method, alpha = pop)) +
+#   g_mod
+
+
+# # LOLO
+# predictive_ability_across_sites %>%
+#   filter(str_detect(type, "lolo"), str_detect(type, "interval", negate = TRUE)) %>%
+#   # filter(pop == "tp") %>%
+#   ggplot(aes(x = selection, y = ability_all, fill = method, alpha = pop)) +
+#   g_mod
+# 
+# # Loc external
+# predictive_ability_across_sites %>%
+#   filter(str_detect(type, "loc_external"), str_detect(type, "interval", negate = TRUE)) %>%
+#   # filter(pop == "tp") %>%
+#   ggplot(aes(x = selection, y = ability_all, fill = method, alpha = pop)) +
+#   g_mod
+
+
+
+# LOEO
+g_loeo_across_cgm_vs_interval <- predictive_ability_across_sites %>%
+  filter(str_detect(type, "loeo"), method == "varcomp") %>%
+  mutate(type = ifelse(type == "loeo_varcomp", "Crop growth model", "20-day interval")) %>%
+  # filter(pop == "tp") %>%
+  ggplot(aes(x = selection, y = ability_all, fill = type, alpha = pop)) +
+  g_mod +
+  scale_fill_discrete(name = "EC summary\nmethod") +
+  labs(subtitle = "LOEO predictive ability across environments")
+
+
+# LOEO within environment
+g_loeo_within_cgm_vs_interval <- predictive_ability_within_sites %>%
+  filter(str_detect(type, "loeo"), method == "varcomp") %>%
+  mutate(type = ifelse(type == "loeo_varcomp", "Crop growth model", "20-day interval")) %>%
+  # filter(pop == "tp") %>%
+  ggplot(aes(x = selection, y = ability_mean, fill = type, alpha = pop)) +
+  g_mod +
+  scale_fill_discrete(name = "EC summary\nmethod") +
+  labs(subtitle = "LOEO predictive ability within environments")
+
+# Merge figures
+g_figure_S9 <- plot_grid(g_loeo_across_cgm_vs_interval + theme(legend.position = "none"), 
+                         g_loeo_within_cgm_vs_interval,
+                         nrow = 1, rel_widths = c(0.8, 1), labels = subfigure_labels[1:2])
+
+
+# Save
+ggsave(filename = "figure_S9_loeo_environment_accuracy_cgm_vs_interval.png", plot = g_figure_S9,
+       width = 12, height = 6, path = fig_dir)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Supplementary tables ----------------------------------------
 
 
@@ -2327,146 +2480,6 @@ lolo_envExternal_accuracy_summary <- full_join(lolo_prediction_accuracy_summary,
 
 
 
-
-# Compare accuracy with ad-hoc model versus var comps ---------------------
-
-
-# Rename the ad-hoc prediction objects: these were from models where
-# variance components were estimated using REML.
-
-for (object in prediction_accuracy_contents) {
-  assign(x = paste0(object, "_reml"), value = get(object))
-}
-
-# Load the variance component prediction results
-file_load <- sort(list.files(path = result_dir, pattern = "prediction_accuracy_compiled_varcomp", full.names = TRUE), decreasing = TRUE)[1]
-# Load the file and list the contents
-prediction_accuracy_varcomp_contents <- load(file = file_load)
-
-# Rename the objects
-for (object in prediction_accuracy_varcomp_contents) {
-  assign(x = paste0(object, "_varcomp"), value = get(object))
-}
-
-
-## Compare prediction accuracies across environments/locations
-
-predictive_ability <- bind_rows(
-  mutate(predictive_ability_reml, method = "reml"),
-  mutate(predictive_ability_varcomp, method = "varcomp")
-)
-  
-# Across environments/locations
-predictive_ability_across_sites <- predictive_ability %>%
-  select(method, type, model, selection, time_frame, time_frame_selection, pop, trait, ability_all, rmse_all) %>%
-  distinct() %>%
-  # Subset time_frames
-  inner_join(., add_row(distinct(timeframe_used_df, trait, time_frame), trait = traits)) %>%
-  # Subset selections
-  filter(str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
-  mutate(model = str_extract(model, "model[0-9]"),
-         selection = f_ec_selection_replace(selection, parse = FALSE),
-         selection = str_extract(selection, "EC\\[.*\\]"),
-         selection = ifelse(is.na(selection), "None", selection),
-         selection = factor(selection, levels = c("None", "EC[all]", "EC[known]", "EC[stepwise]")),
-         model = case_when(model == "model4" ~ "model2", model == "model5" ~ "model3", TRUE ~ model))
-
-# Within environments/locations
-predictive_ability_within_sites <- predictive_ability %>%
-  select(method, type, model, selection, time_frame, time_frame_selection, pop, trait, site, ability, rmse) %>%
-  distinct() %>%
-  # Subset time_frames
-  inner_join(., add_row(distinct(timeframe_used_df, trait, time_frame), trait = traits)) %>%
-  # Subset selections
-  filter(str_detect(selection, "lasso|nosoil", negate = TRUE)) %>%
-  mutate(model = str_extract(model, "model[0-9]"),
-         selection = f_ec_selection_replace(selection, parse = FALSE),
-         selection = str_extract(selection, "EC\\[.*\\]"),
-         selection = ifelse(is.na(selection), "None", selection),
-         selection = factor(selection, levels = c("None", "EC[all]", "EC[known]", "EC[stepwise]")),
-         model = case_when(model == "model4" ~ "model2", model == "model5" ~ "model3", TRUE ~ model)) %>%
-  # Summarize
-  group_by_at(vars(-site, -ability, -rmse)) %>%
-  summarize_at(vars(ability, rmse), list(mean = mean, sd = sd), na.rm = TRUE) %>%
-  ungroup()
-
-# Define a common plot modifier
-g_mod <- list(
-  geom_col(position = position_dodge(0.9)),
-  scale_alpha_manual(values = c("tp" = 1, "vp" = 0.7)),
-  scale_y_continuous(name = "Predictive ability", breaks = pretty),
-  facet_grid(model ~ trait, switch = "y"),
-  theme_bw(),
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-)
-
-# LOEO
-predictive_ability_across_sites %>%
-  filter(str_detect(type, "loeo"), str_detect(type, "interval", negate = TRUE)) %>%
-  # filter(pop == "tp") %>%
-  ggplot(aes(x = selection, y = ability_all, fill = method, alpha = pop)) +
-  g_mod
-
-# Env external
-predictive_ability_across_sites %>%
-  filter(str_detect(type, "env_external"), str_detect(type, "interval", negate = TRUE)) %>%
-  # filter(pop == "tp") %>%
-  ggplot(aes(x = selection, y = ability_all, fill = method, alpha = pop)) +
-  g_mod
-
-
-# LOLO
-predictive_ability_across_sites %>%
-  filter(str_detect(type, "lolo"), str_detect(type, "interval", negate = TRUE)) %>%
-  # filter(pop == "tp") %>%
-  ggplot(aes(x = selection, y = ability_all, fill = method, alpha = pop)) +
-  g_mod
-
-# Loc external
-predictive_ability_across_sites %>%
-  filter(str_detect(type, "loc_external"), str_detect(type, "interval", negate = TRUE)) %>%
-  # filter(pop == "tp") %>%
-  ggplot(aes(x = selection, y = ability_all, fill = method, alpha = pop)) +
-  g_mod
-
-
-
-
-
-
-
-
-
-# Compare accuracy with interval or CGM covariates --------
-
-# LOEO
-g_loeo_across_cgm_vs_interval <- predictive_ability_across_sites %>%
-  filter(str_detect(type, "loeo"), method == "varcomp") %>%
-  mutate(type = ifelse(type == "loeo_varcomp", "Crop growth model", "20-day interval")) %>%
-  # filter(pop == "tp") %>%
-  ggplot(aes(x = selection, y = ability_all, fill = type, alpha = pop)) +
-  g_mod +
-  labs(subtitle = "LOEO predictive ability across environments")
-
-# Save
-ggsave(filename = "loeo_across_environment_accuracy_cgm_vs_interval.png", plot = g_loeo_across_cgm_vs_interval,
-       width = 8, height = 6, path = fig_dir)
-
-
-
-# LOEO within environment
-g_loeo_within_cgm_vs_interval <- predictive_ability_within_sites %>%
-  filter(str_detect(type, "loeo"), method == "varcomp") %>%
-  mutate(type = ifelse(type == "loeo_varcomp", "Crop growth model", "20-day interval")) %>%
-  # filter(pop == "tp") %>%
-  ggplot(aes(x = selection, y = ability_mean, fill = type, alpha = pop)) +
-  g_mod +
-  labs(subtitle = "LOEO predictive ability within environments")
-
-
-# Save
-ggsave(filename = "loeo_within_environment_accuracy_cgm_vs_interval.png", plot = g_loeo_within_cgm_vs_interval,
-       width = 8, height = 6, path = fig_dir)
 
 
 
