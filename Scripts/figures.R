@@ -25,7 +25,7 @@ subfigure_labels <- LETTERS
 subfigure_label_size <- 9
 
 # Set resolution
-dpi_use <- 2000
+dpi_use <- 1000
 
 
 # Define heat colors

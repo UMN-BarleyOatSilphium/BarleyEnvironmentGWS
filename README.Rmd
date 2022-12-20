@@ -20,9 +20,9 @@ library(tidyverse)
 This repository contains information and code for replicating the analyses performed in the article below:
 
 Article Title: *Accurate genomewide predictions of barley phenotypes across North American environments*  
-Journal: *Science* (under review)  
+Journal: *Crop Science*  
 Authors: Jeffrey L. Neyhart, Kevin A.T. Silverstein, and Kevin P. Smith  
-Link to article  
+Article doi: https://acsess.onlinelibrary.wiley.com/doi/10.1002/csc2.20782
 
 
 
@@ -41,6 +41,8 @@ Three scripts in this directory are used by all other scripts:
 1. `source.R` - loads packages, creates directory links, and loads data.
 2. `source_MSI.R` - runs script #1 with modifications for high-performance computing supported by the [Minnesota Supercomputing Institute](https://www.msi.umn.edu/).
 3. `source_functions.R` - loads additional functions into the environment. 
+
+The `figures.R` script in the "Scripts" subfolder produces the figures found in the paper.
 
 
 ## Software/package versions

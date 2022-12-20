@@ -16,7 +16,7 @@ proj_dir <- repo_dir
 root <- proj_dir %>% 
   str_split("/") %>% 
   .[[1]] %>% 
-  {.[seq_len(which(. == "OldProjects"))]} %>% 
+  {.[seq_len(which(. == "SideProjects"))]} %>% 
   paste0(collapse = "/")
 
 # Geno, pheno, and enviro data
