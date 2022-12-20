@@ -8,8 +8,8 @@
 This repository contains information and code for replicating the
 analyses performed in the article below:
 
-Article Title: *Accurate genomewide predictions of barley phenotypes
-across North American environments*  
+Article Title: *Accurate predictions of barley phenotypes using
+genomewide markers and environmental covariates*  
 Journal: *Crop Science*  
 Authors: Jeffrey L. Neyhart, Kevin A.T. Silverstein, and Kevin P.
 Smith  
